@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Track / Cancel · Hospital</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href="/"><span class="brand-mark">+</span><span data-hospital>Hospital</span></a>
+  <nav class="topnav">
+    <a href="/">Home</a>
+    <a href="/request-records">Request Records</a>
+    <a href="/book-opd">Book OPD</a>
+    <a href="/track" class="active">Track / Cancel</a>
+  </nav>
+</div></header>
+<main class="narrow">
+  <h1>Track or Cancel</h1>
+  <p class="muted">Enter the reference number from your SMS (starts with <b>R-</b> for records, <b>A-</b> for appointments) and the mobile number you used.</p>
+  <form class="card" id="form" novalidate>
+    <div class="grid grid-2">
+      <label class="field"><span class="req">Reference number</span><input name="ref_no" placeholder="R-261027-ABCDE" style="text-transform:uppercase" required></label>
+      <label class="field"><span class="req">Mobile number</span><input name="mobile" type="tel" placeholder="09XXXXXXXXX" required></label>
+    </div>
+    <div class="alert error hidden" id="error" role="alert"></div>
+    <div class="actions"><button class="btn" type="submit">Look up</button></div>
+  </form>
+  <section class="card hidden" id="result"></section>
+</main>
+<footer><span data-hospital>Hospital</span> · Online Scheduling · <a href="/admin">Staff login</a></footer>
+<script src="/js/common.js"></script>
+<script src="/js/track.js"></script>
+</body></html>

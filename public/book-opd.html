@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Book OPD Appointment · Hospital</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href="/"><span class="brand-mark">+</span><span data-hospital>Hospital</span></a>
+  <nav class="topnav">
+    <a href="/">Home</a>
+    <a href="/request-records">Request Records</a>
+    <a href="/book-opd" class="active">Book OPD</a>
+    <a href="/track">Track / Cancel</a>
+  </nav>
+</div></header>
+<main class="narrow">
+  <h1>Book an OPD Appointment</h1>
+  <p class="muted">Choose a clinic and schedule. You'll get an SMS confirmation and reminders before your appointment.</p>
+  <div class="steps" id="steps"><span data-step="1">1 · Clinic & schedule</span><span data-step="2">2 · Patient details</span><span data-step="3">3 · Review</span></div>
+  <div class="alert error hidden" id="error" role="alert"></div>
+
+  <form id="form" novalidate>
+    <section class="card" data-panel="1">
+      <label class="field"><span class="req">Clinic / Department</span><select name="department" id="department" required></select></label>
+      <p class="muted small" id="clinicDays" style="margin-top:6px"></p>
+      <div id="datePicker" class="hidden">
+        <h3 style="margin-top:16px">Date</h3>
+        <div class="chip-grid" id="dateGrid"></div>
+      </div>
+      <div id="slotPicker" class="hidden">
+        <h3 style="margin-top:16px">Time</h3>
+        <div class="chip-grid" id="slotGrid"></div>
+      </div>
+      <div class="actions"><button type="button" class="btn" data-next>Next</button></div>
+    </section>
+
+    <section class="card hidden" data-panel="2">
+      <div class="grid grid-2">
+        <label class="field"><span class="req">Patient type</span>
+          <select name="patient_type" required><option value="">Select…</option><option value="NEW">New patient (first visit)</option><option value="OLD">Returning patient</option></select></label>
+        <label class="field">Hospital / OPD no.<span class="hint">For returning patients, if known</span><input name="hospital_no"></label>
+      </div>
+      <div class="grid grid-3" style="margin-top:14px">
+        <label class="field"><span class="req">Last name</span><input name="patient_last" autocomplete="family-name" required></label>
+        <label class="field"><span class="req">First name</span><input name="patient_first" autocomplete="given-name" required></label>
+        <label class="field">Middle name<input name="patient_middle" autocomplete="additional-name"></label>
+        <label class="field"><span class="req">Birthdate</span><input type="date" name="birthdate" required></label>
+        <label class="field"><span class="req">Sex</span><select name="sex" required><option value="">Select…</option><option value="F">Female</option><option value="M">Male</option></select></label>
+        <span></span>
+        <label class="field"><span class="req">Mobile number</span><span class="hint">Reminders are sent here</span><input name="mobile" type="tel" inputmode="tel" placeholder="09XXXXXXXXX" autocomplete="tel" required></label>
+        <label class="field">Email<input name="email" type="email" autocomplete="email"></label>
+      </div>
+      <label class="field" style="margin-top:14px"><span class="req">Reason for consultation / chief complaint</span><textarea name="complaint" maxlength="500" required></textarea></label>
+      <div class="actions"><button type="button" class="btn secondary" data-prev>Back</button><button type="button" class="btn" data-next>Next</button></div>
+    </section>
+
+    <section class="card hidden" data-panel="3">
+      <h2>Review your appointment</h2>
+      <div id="review"></div>
+      <div class="alert info small" style="margin-top:16px">For emergencies, go directly to the Emergency Room. OPD appointments are for non-urgent consultations.</div>
+      <label style="display:flex;gap:10px;margin-top:14px;align-items:flex-start">
+        <input type="checkbox" name="consent" id="consent" style="margin-top:4px">
+        <span class="small" id="consentText"></span>
+      </label>
+      <div class="actions"><button type="button" class="btn secondary" data-prev>Back</button><button type="submit" class="btn" id="submitBtn">Confirm booking</button></div>
+    </section>
+  </form>
+
+  <section class="card confirm-box hidden" id="done"></section>
+</main>
+<footer><span data-hospital>Hospital</span> · Online Scheduling · <a href="/admin">Staff login</a></footer>
+<script src="/js/common.js"></script>
+<script src="/js/wizard.js"></script>
+<script src="/js/opd.js"></script>
+</body></html>

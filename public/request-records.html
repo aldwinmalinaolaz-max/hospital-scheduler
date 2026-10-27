@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Request Records · Hospital</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href="/"><span class="brand-mark">+</span><span data-hospital>Hospital</span></a>
+  <nav class="topnav">
+    <a href="/">Home</a>
+    <a href="/request-records" class="active">Request Records</a>
+    <a href="/book-opd">Book OPD</a>
+    <a href="/track">Track / Cancel</a>
+  </nav>
+</div></header>
+<main class="narrow">
+  <h1>Request Hospital Records</h1>
+  <p class="muted">Fill out the form below. You'll receive an SMS with your reference number, and another when your documents are ready.</p>
+  <div class="steps" id="steps"><span data-step="1">1 · Documents</span><span data-step="2">2 · Patient & requester</span><span data-step="3">3 · Pickup date</span><span data-step="4">4 · Review</span></div>
+  <div class="alert error hidden" id="error" role="alert"></div>
+
+  <form id="form" novalidate>
+    <section class="card" data-panel="1">
+      <h2>Which documents do you need?</h2>
+      <p class="muted small">Select all that apply. Processing time is shown for each.</p>
+      <div class="doc-list" id="docList"></div>
+      <div class="actions"><button type="button" class="btn" data-next>Next</button></div>
+    </section>
+
+    <section class="card hidden" data-panel="2">
+      <h2>Patient information</h2>
+      <div class="grid grid-3">
+        <label class="field"><span class="req">Last name</span><input name="patient_last" autocomplete="family-name" required></label>
+        <label class="field"><span class="req">First name</span><input name="patient_first" autocomplete="given-name" required></label>
+        <label class="field">Middle name<input name="patient_middle" autocomplete="additional-name"></label>
+        <label class="field"><span class="req">Birthdate</span><input type="date" name="birthdate" required></label>
+        <label class="field">Hospital / Case no.<span class="hint">If known</span><input name="hospital_no"></label>
+        <span></span>
+        <label class="field">Date of admission / visit<input type="date" name="admission_date"></label>
+        <label class="field">Date of discharge<input type="date" name="discharge_date"></label>
+      </div>
+      <h2 style="margin-top:22px">Requester</h2>
+      <div class="grid grid-2">
+        <label class="field"><span class="req">Relationship to patient</span>
+          <select name="requester_relation" required>
+            <option value="">Select…</option>
+            <option>Self (patient)</option><option>Parent</option><option>Spouse</option><option>Child</option>
+            <option>Sibling</option><option>Guardian</option><option>Authorized representative</option>
+            <option>Legal counsel / Law enforcement</option><option>Insurance / HMO / Employer</option>
+          </select></label>
+        <label class="field"><span class="req">Requester full name</span><input name="requester_name" autocomplete="name" required></label>
+        <label class="field"><span class="req">Mobile number</span><span class="hint">SMS updates are sent here</span><input name="mobile" type="tel" inputmode="tel" placeholder="09XXXXXXXXX" autocomplete="tel" required></label>
+        <label class="field">Email<input name="email" type="email" autocomplete="email"></label>
+        <label class="field span-2"><span class="req">Purpose of request</span>
+          <input name="purpose" list="purposes" placeholder="e.g. PhilHealth, insurance claim, employment, legal" required>
+          <datalist id="purposes"><option>PhilHealth claim</option><option>HMO / Insurance claim</option><option>Employment / Work</option><option>School requirement</option><option>Travel / Visa</option><option>Legal / Court</option><option>Personal copy</option><option>Referral to another hospital</option></datalist>
+        </label>
+      </div>
+      <div class="alert info small hidden" id="repNote">Representatives must present an authorization letter signed by the patient and valid IDs of both the patient and representative upon pickup.</div>
+      <div class="actions"><button type="button" class="btn secondary" data-prev>Back</button><button type="button" class="btn" data-next>Next</button></div>
+    </section>
+
+    <section class="card hidden" data-panel="3">
+      <h2>Choose your pickup date</h2>
+      <p class="muted small" id="pickupHint"></p>
+      <div class="chip-grid" id="dateGrid"></div>
+      <div class="actions"><button type="button" class="btn secondary" data-prev>Back</button><button type="button" class="btn" data-next>Next</button></div>
+    </section>
+
+    <section class="card hidden" data-panel="4">
+      <h2>Review your request</h2>
+      <div id="review"></div>
+      <h3 style="margin-top:18px">Requirements upon pickup</h3>
+      <ul class="list-tight muted small" id="reqList"></ul>
+      <label style="display:flex;gap:10px;margin-top:18px;align-items:flex-start">
+        <input type="checkbox" name="consent" id="consent" style="margin-top:4px">
+        <span class="small" id="consentText"></span>
+      </label>
+      <div class="actions"><button type="button" class="btn secondary" data-prev>Back</button><button type="submit" class="btn" id="submitBtn">Submit request</button></div>
+    </section>
+  </form>
+
+  <section class="card confirm-box hidden" id="done"></section>
+</main>
+<footer><span data-hospital>Hospital</span> · Online Scheduling · <a href="/admin">Staff login</a></footer>
+<script src="/js/common.js"></script>
+<script src="/js/wizard.js"></script>
+<script src="/js/records.js"></script>
+</body></html>

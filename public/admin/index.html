@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Staff Panel · Hospital</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href="/admin"><span class="brand-mark">+</span><span><span data-hospital>Hospital</span> · Staff</span></a>
+  <nav class="topnav"><a href="/" target="_blank">Public site ↗</a><a href="#" id="logoutBtn" class="hidden">Log out</a></nav>
+</div></header>
+
+<main class="admin-shell">
+  <section class="card login-box hidden" id="login">
+    <h2>Staff login</h2>
+    <form id="loginForm" class="grid">
+      <label class="field">Username<input name="username" autocomplete="username" required></label>
+      <label class="field">Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <div class="alert error hidden" id="loginError"></div>
+      <button class="btn" type="submit">Log in</button>
+    </form>
+  </section>
+
+  <section id="app" class="hidden">
+    <nav class="tabs no-print" id="tabs">
+      <button data-tab="dashboard" class="on">Dashboard</button>
+      <button data-tab="records">Records Requests</button>
+      <button data-tab="appointments">OPD Appointments</button>
+      <button data-tab="sms">SMS Log</button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+
+    <div data-view="dashboard">
+      <div class="stats" id="stats"></div>
+      <div class="grid grid-2">
+        <div class="card"><h3>Today's OPD appointments</h3><div id="dashAppts"></div></div>
+        <div class="card"><h3>Records for pickup today</h3><div id="dashPickups"></div></div>
+      </div>
+    </div>
+
+    <div data-view="records" class="hidden">
+      <form class="filters no-print" id="recFilters">
+        <input type="search" name="q" placeholder="Search ref no., name, mobile, hospital no.">
+        <select name="status"><option value="">All statuses</option></select>
+        <select name="type"><option value="">All documents</option></select>
+        <input type="date" name="pickup_date" title="Pickup date">
+        <button class="btn secondary" type="button" data-clear>Clear</button>
+        <button class="btn secondary" type="button" onclick="window.print()">Print</button>
+      </form>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Ref no.</th><th>Patient</th><th>Documents</th><th>Requester</th><th>Pickup</th><th>Status</th><th class="no-print"></th></tr></thead>
+        <tbody id="recRows"></tbody>
+      </table></div>
+    </div>
+
+    <div data-view="appointments" class="hidden">
+      <form class="filters no-print" id="apptFilters">
+        <input type="search" name="q" placeholder="Search ref no., name, mobile, hospital no.">
+        <input type="date" name="date" title="Appointment date">
+        <select name="department"><option value="">All clinics</option></select>
+        <select name="status"><option value="">All statuses</option></select>
+        <button class="btn secondary" type="button" data-clear>Clear</button>
+        <button class="btn secondary" type="button" onclick="window.print()">Print list</button>
+      </form>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Time</th><th>Ref no.</th><th>Patient</th><th>Clinic</th><th>Reason</th><th>Status</th><th class="no-print"></th></tr></thead>
+        <tbody id="apptRows"></tbody>
+      </table></div>
+    </div>
+
+    <div data-view="sms" class="hidden">
+      <p class="muted small" id="smsProvider"></p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Sent</th><th>To</th><th>Type</th><th>Message</th><th>Status</th><th></th></tr></thead>
+        <tbody id="smsRows"></tbody>
+      </table></div>
+    </div>
+
+    <div data-view="settings" class="hidden">
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>Closed dates / holidays</h3>
+          <p class="muted small">No pickups or OPD bookings are offered on these dates. Existing bookings on a newly closed date are not cancelled automatically.</p>
+          <form id="closedForm" class="grid grid-2">
+            <label class="field">Date<input type="date" name="date" required></label>
+            <label class="field">Reason<input name="reason" placeholder="e.g. Rizal Day" required></label>
+            <div class="span-2"><button class="btn" type="submit">Add closed date</button></div>
+          </form>
+          <div class="alert warn hidden" id="closedWarn"></div>
+          <div id="closedList" style="margin-top:12px"></div>
+        </div>
+        <div>
+          <div class="card">
+            <h3>Send a test SMS</h3>
+            <form id="smsTestForm" class="grid">
+              <label class="field">Mobile number<input name="to" type="tel" placeholder="09XXXXXXXXX" required></label>
+              <button class="btn secondary" type="submit">Send test</button>
+              <div class="small" id="smsTestResult"></div>
+            </form>
+          </div>
+          <div class="card">
+            <h3>Change password</h3>
+            <form id="pwForm" class="grid">
+              <label class="field">Current password<input name="current" type="password" autocomplete="current-password" required></label>
+              <label class="field">New password<span class="hint">At least 8 characters</span><input name="next" type="password" autocomplete="new-password" minlength="8" required></label>
+              <button class="btn secondary" type="submit">Update password</button>
+              <div class="small" id="pwResult"></div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<dialog id="dlg"><form method="dialog" class="dlg-body" id="dlgForm"></form></dialog>
+
+<script src="/js/common.js"></script>
+<script src="/js/admin.js"></script>
+</body>
+</html>
