@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 
 process.env.SMS_PROVIDER = 'console';
 process.env.OPD_PATIENTS_PER_SLOT = '2';
+process.env.DATABASE_URL = '';
+process.env.CRON_SECRET = 'test-cron-secret';
 const { open } = require('../src/db');
 const { createApp } = require('../src/server');
 const { runReminders } = require('../src/reminders');
@@ -16,13 +18,23 @@ const realLog = console.log;
 
 before(async () => {
   console.log = () => {}; // silence console SMS provider
-  db = open(':memory:');
+  // Set TEST_DATABASE_URL to run against a real (throwaway!) Postgres; it is wiped first.
+  const url = process.env.TEST_DATABASE_URL;
+  if (url) {
+    const { Client } = require('pg');
+    const c = new Client({ connectionString: url });
+    await c.connect();
+    await c.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
+    await c.end();
+  }
+  db = await open(url ? { url } : { url: '', dataDir: 'memory' });
   server = createApp(db).listen(0);
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}/api`;
 });
-after(() => {
+after(async () => {
   server.close();
+  await db.close();
   console.log = realLog;
 });
 
@@ -67,13 +79,13 @@ test('catalog lists all 8 record types', async () => {
   assert.ok(data.departments.length > 0);
 });
 
-test('pickup dates respect processing time and skip weekends', () => {
+test('pickup dates respect processing time and skip weekends', async () => {
   const now = new Date(2026, 9, 30, 10); // Fri 30 Oct 2026
-  assert.equal(sched.earliestPickupDate(db, ['MEDICAL_CERTIFICATE'], now), '2026-11-02'); // Mon
-  assert.equal(sched.earliestPickupDate(db, ['MEDICAL_CERTIFICATE', 'MEDICO_LEGAL'], now), '2026-11-06'); // 5 working days
-  db.prepare("INSERT INTO closed_dates VALUES ('2026-11-02', 'Test holiday')").run();
-  assert.equal(sched.earliestPickupDate(db, ['MEDICAL_CERTIFICATE'], now), '2026-11-03');
-  db.prepare("DELETE FROM closed_dates WHERE date = '2026-11-02'").run();
+  assert.equal(await sched.earliestPickupDate(db, ['MEDICAL_CERTIFICATE'], now), '2026-11-02'); // Mon
+  assert.equal(await sched.earliestPickupDate(db, ['MEDICAL_CERTIFICATE', 'MEDICO_LEGAL'], now), '2026-11-06'); // 5 working days
+  await db.query("INSERT INTO closed_dates VALUES ('2026-11-02', 'Test holiday')");
+  assert.equal(await sched.earliestPickupDate(db, ['MEDICAL_CERTIFICATE'], now), '2026-11-03');
+  await db.query("DELETE FROM closed_dates WHERE date = '2026-11-02'");
 });
 
 test('records request: validation, creation, SMS, tracking', async () => {
@@ -104,7 +116,7 @@ test('records request: validation, creation, SMS, tracking', async () => {
   assert.equal(res.data.items.length, 2);
   const ref = res.data.ref_no;
 
-  const sms = db.prepare('SELECT * FROM sms_log WHERE ref_no = ?').all(ref);
+  const sms = await db.query('SELECT * FROM sms_log WHERE ref_no = $1', [ref]);
   assert.equal(sms.length, 1);
   assert.equal(sms[0].recipient, '+639171234567');
 
@@ -116,10 +128,10 @@ test('records request: validation, creation, SMS, tracking', async () => {
 
   // Staff marks it READY → SMS sent; requester can no longer cancel
   const cookie = await login();
-  const id = db.prepare('SELECT id FROM record_requests WHERE ref_no = ?').get(ref).id;
+  const { id } = await db.one('SELECT id FROM record_requests WHERE ref_no = $1', [ref]);
   res = await call(`/admin/records/${id}`, { method: 'PATCH', cookie, body: { status: 'READY' } });
   assert.equal(res.status, 200);
-  assert.ok(db.prepare("SELECT 1 FROM sms_log WHERE ref_no = ? AND kind = 'RECORD_READY'").get(ref));
+  assert.ok(await db.one("SELECT 1 FROM sms_log WHERE ref_no = $1 AND kind = 'RECORD_READY'", [ref]));
   res = await call('/track/cancel', { method: 'POST', body: { ref_no: ref, mobile: '09171234567' } });
   assert.equal(res.status, 400);
 
@@ -138,7 +150,7 @@ test('OPD booking: capacity, duplicates, cancel frees slot', async () => {
   const a1 = await book();
   assert.equal(a1.status, 201, JSON.stringify(a1.data));
   assert.match(a1.data.ref_no, /^A-/);
-  assert.ok(db.prepare("SELECT 1 FROM sms_log WHERE ref_no = ? AND kind = 'APPT_BOOKED'").get(a1.data.ref_no));
+  assert.ok(await db.one("SELECT 1 FROM sms_log WHERE ref_no = $1 AND kind = 'APPT_BOOKED'", [a1.data.ref_no]));
 
   const dup = await book();
   assert.match(dup.data.error, /already has an appointment/);
@@ -168,42 +180,65 @@ test('admin endpoints require login', async () => {
   assert.ok(res.data.upcomingAppointments >= 1);
 });
 
-test('reminders: day-before and hours-before sent once each', async () => {
-  const insert = db.prepare(
+const insertAppt = (ref, date, time, createdAt, mobile) =>
+  db.query(
     `INSERT INTO appointments (ref_no, department, appt_date, appt_time, patient_type, patient_last, patient_first, birthdate, sex, mobile, complaint, created_at)
-     VALUES (?, 'IM', '2026-12-10', '09:00', 'OLD', 'Santos', 'Ana', '1980-01-01', 'F', '+639170000001', 'Follow-up', '2026-12-01 10:00:00')`,
+     VALUES ($1, 'IM', $2, $3, 'OLD', 'Santos', 'Ana', '1980-01-01', 'F', $4, 'Follow-up', $5)`,
+    [ref, date, time, mobile, createdAt],
   );
-  insert.run('A-TEST-REM01');
-  const kinds = () => db.prepare("SELECT kind FROM sms_log WHERE ref_no = 'A-TEST-REM01' ORDER BY id").all().map((r) => r.kind);
+const smsKinds = async (ref) => (await db.query('SELECT kind FROM sms_log WHERE ref_no = $1 ORDER BY id', [ref])).map((r) => r.kind);
+
+test('reminders: day-before and hours-before sent once each', async () => {
+  await insertAppt('A-TEST-REM01', '2026-12-10', '09:00', new Date(2026, 11, 1, 10), '+639170000001');
+  const kinds = () => smsKinds('A-TEST-REM01');
 
   await runReminders(db, new Date(2026, 11, 9, 16, 59)); // before 5 PM day-before
-  assert.deepEqual(kinds(), []);
+  assert.deepEqual(await kinds(), []);
   await runReminders(db, new Date(2026, 11, 9, 17, 0));
-  assert.deepEqual(kinds(), ['APPT_DAY_BEFORE']);
+  assert.deepEqual(await kinds(), ['APPT_DAY_BEFORE']);
   await runReminders(db, new Date(2026, 11, 9, 18, 0));
-  assert.deepEqual(kinds(), ['APPT_DAY_BEFORE']);
-  await runReminders(db, new Date(2026, 11, 10, 7, 0)); // 2h before 9 AM
-  assert.deepEqual(kinds(), ['APPT_DAY_BEFORE', 'APPT_HOURS_BEFORE']);
+  assert.deepEqual(await kinds(), ['APPT_DAY_BEFORE']);
+  // Two overlapping runs (e.g. two cron calls) must not double-send
+  await Promise.all([runReminders(db, new Date(2026, 11, 10, 7, 0)), runReminders(db, new Date(2026, 11, 10, 7, 0))]);
+  assert.deepEqual(await kinds(), ['APPT_DAY_BEFORE', 'APPT_HOURS_BEFORE']);
   await runReminders(db, new Date(2026, 11, 10, 8, 0));
-  assert.equal(kinds().length, 2);
+  assert.equal((await kinds()).length, 2);
 });
 
 test('reminders: same-day booking skips redundant reminders; records pickup reminder', async () => {
-  db.prepare(
-    `INSERT INTO appointments (ref_no, department, appt_date, appt_time, patient_type, patient_last, patient_first, birthdate, sex, mobile, complaint, created_at)
-     VALUES ('A-TEST-LATE1', 'IM', '2026-12-11', '11:00', 'NEW', 'Reyes', 'Ben', '1985-01-01', 'M', '+639170000002', 'Check-up', '2026-12-11 09:30:00')`,
-  ).run();
+  await insertAppt('A-TEST-LATE1', '2026-12-11', '11:00', new Date(2026, 11, 11, 9, 30), '+639170000002');
   await runReminders(db, new Date(2026, 11, 11, 9, 31));
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM sms_log WHERE ref_no = 'A-TEST-LATE1'").get().n, 0);
+  assert.deepEqual(await smsKinds('A-TEST-LATE1'), []);
 
-  db.prepare(
+  await db.query(
     `INSERT INTO record_requests (ref_no, patient_last, patient_first, birthdate, requester_name, requester_relation, mobile, purpose, pickup_date, status)
      VALUES ('R-TEST-PICK1', 'Cruz', 'Lea', '1970-01-01', 'Lea Cruz', 'Self (patient)', '+639170000003', 'Personal', '2026-12-14', 'READY')`,
-  ).run();
+  );
   await runReminders(db, new Date(2026, 11, 14, 6, 59));
   await runReminders(db, new Date(2026, 11, 14, 7, 0));
   await runReminders(db, new Date(2026, 11, 14, 9, 0));
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM sms_log WHERE ref_no = 'R-TEST-PICK1' AND kind = 'RECORD_PICKUP_TODAY'").get().n, 1);
+  assert.deepEqual(await smsKinds('R-TEST-PICK1'), ['RECORD_PICKUP_TODAY']);
+});
+
+test('cron endpoint requires the secret', async () => {
+  assert.equal((await call('/cron/reminders')).status, 401);
+  assert.equal((await call('/cron/reminders?key=wrong')).status, 401);
+  const res = await fetch(`${base}/cron/reminders`, { headers: { Authorization: 'Bearer test-cron-secret' } });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).ok, true);
+});
+
+test('concurrent bookings cannot overfill a slot', async () => {
+  const { date, time } = await firstOpdSlot('FAMMED');
+  const results = await Promise.all(
+    [1, 2, 3, 4, 5].map((n) =>
+      call('/appointments', {
+        method: 'POST',
+        body: { ...patient, patient_first: `P${n}`, mobile: `0917000000${n}`, department: 'FAMMED', appt_date: date, appt_time: time, patient_type: 'NEW', sex: 'F', complaint: 'x' },
+      }),
+    ),
+  );
+  assert.equal(results.filter((r) => r.status === 201).length, 2); // OPD_PATIENTS_PER_SLOT = 2
 });
 
 test('mobile normalisation', () => {

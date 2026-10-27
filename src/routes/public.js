@@ -4,7 +4,7 @@ const catalog = require('../catalog');
 const sched = require('../scheduling');
 const msg = require('../messages');
 const { sendSms } = require('../sms');
-const { tx } = require('../db');
+const { lock } = require('../db');
 const u = require('../util');
 
 class ValidationError extends Error {}
@@ -35,14 +35,14 @@ function validEmail(v) {
   return e || null;
 }
 
-function uniqueRef(db, table, prefix) {
+async function uniqueRef(db, table, prefix) {
   for (;;) {
     const ref = u.makeRef(prefix);
-    if (!db.prepare(`SELECT 1 FROM ${table} WHERE ref_no = ?`).get(ref)) return ref;
+    if (!(await db.one(`SELECT 1 FROM ${table} WHERE ref_no = $1`, [ref]))) return ref;
   }
 }
 
-// Very small in-memory limiter for public form submissions.
+// Very small in-memory limiter for public form submissions (per server instance).
 function rateLimit({ windowMs, max }) {
   const hits = new Map();
   return (req, res, next) => {
@@ -56,14 +56,12 @@ function rateLimit({ windowMs, max }) {
   };
 }
 
-function itemsFor(db, requestId) {
-  return db.prepare('SELECT record_type, details, copies FROM record_request_items WHERE request_id = ?').all(requestId).map((i) => ({
-    ...i,
-    name: catalog.recordType(i.record_type)?.name || i.record_type,
-  }));
+async function itemsFor(db, requestId) {
+  const rows = await db.query('SELECT record_type, details, copies FROM record_request_items WHERE request_id = $1 ORDER BY id', [requestId]);
+  return rows.map((i) => ({ ...i, name: catalog.recordType(i.record_type)?.name || i.record_type }));
 }
 
-function publicRecord(db, r) {
+async function publicRecord(db, r) {
   return {
     kind: 'record',
     ref_no: r.ref_no,
@@ -71,8 +69,8 @@ function publicRecord(db, r) {
     pickup_date: r.pickup_date,
     status: r.status,
     remarks: r.remarks,
-    created_at: r.created_at,
-    items: itemsFor(db, r.id),
+    created_at: u.toStamp(r.created_at),
+    items: await itemsFor(db, r.id),
   };
 }
 
@@ -87,7 +85,7 @@ function publicAppointment(a) {
     appt_time_label: u.formatTime12(a.appt_time),
     status: a.status,
     remarks: a.remarks,
-    created_at: a.created_at,
+    created_at: u.toStamp(a.created_at),
   };
 }
 
@@ -106,9 +104,9 @@ module.exports = function publicRoutes(db) {
 
   // ---- Records ----
 
-  router.get('/records/pickup-dates', (req, res) => {
+  router.get('/records/pickup-dates', async (req, res) => {
     const types = str(req.query.types, 500).split(',').filter((c) => catalog.recordType(c));
-    res.json({ dates: sched.pickupDates(db, types.length ? types : ['MEDICAL_CERTIFICATE']) });
+    res.json({ dates: await sched.pickupDates(db, types.length ? types : ['MEDICAL_CERTIFICATE']) });
   });
 
   router.post('/records', submitLimit, async (req, res) => {
@@ -149,17 +147,16 @@ module.exports = function publicRoutes(db) {
     const email = validEmail(b.email);
     const pickup = str(b.pickup_date);
 
-    const record = tx(db, () => {
-      const err = sched.checkPickupDate(db, cleanItems.map((i) => i.record_type), pickup);
+    const record = await db.tx(async (t) => {
+      await lock(t, `pickup:${pickup}`);
+      const err = await sched.checkPickupDate(t, cleanItems.map((i) => i.record_type), pickup);
       if (err) throw new ValidationError(err);
-      const ref = uniqueRef(db, 'record_requests', 'R');
-      const { lastInsertRowid } = db
-        .prepare(
-          `INSERT INTO record_requests (ref_no, patient_last, patient_first, patient_middle, birthdate, hospital_no,
-            admission_date, discharge_date, requester_name, requester_relation, mobile, email, purpose, pickup_date)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
+      const ref = await uniqueRef(t, 'record_requests', 'R');
+      const row = await t.one(
+        `INSERT INTO record_requests (ref_no, patient_last, patient_first, patient_middle, birthdate, hospital_no,
+          admission_date, discharge_date, requester_name, requester_relation, mobile, email, purpose, pickup_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+        [
           ref,
           str(b.patient_last, 80),
           str(b.patient_first, 80),
@@ -174,28 +171,35 @@ module.exports = function publicRoutes(db) {
           email,
           str(b.purpose, 300),
           pickup,
-        );
-      const insertItem = db.prepare('INSERT INTO record_request_items (request_id, record_type, details, copies) VALUES (?, ?, ?, ?)');
-      for (const it of cleanItems) insertItem.run(lastInsertRowid, it.record_type, it.details, it.copies);
-      return db.prepare('SELECT * FROM record_requests WHERE id = ?').get(lastInsertRowid);
+        ],
+      );
+      for (const it of cleanItems) {
+        await t.query('INSERT INTO record_request_items (request_id, record_type, details, copies) VALUES ($1, $2, $3, $4)', [
+          row.id,
+          it.record_type,
+          it.details,
+          it.copies,
+        ]);
+      }
+      return row;
     });
 
     await sendSms(db, { to: record.mobile, message: msg.recordSubmitted(record), kind: 'RECORD_SUBMITTED', refNo: record.ref_no });
-    res.status(201).json(publicRecord(db, record));
+    res.status(201).json(await publicRecord(db, record));
   });
 
   // ---- OPD ----
 
-  router.get('/opd/dates', (req, res) => {
+  router.get('/opd/dates', async (req, res) => {
     const dept = str(req.query.department);
     if (!catalog.department(dept)) return res.status(400).json({ error: 'Unknown department.' });
-    res.json({ dates: sched.opdDates(db, dept) });
+    res.json({ dates: await sched.opdDates(db, dept) });
   });
 
-  router.get('/opd/slots', (req, res) => {
+  router.get('/opd/slots', async (req, res) => {
     const dept = str(req.query.department);
     if (!catalog.department(dept)) return res.status(400).json({ error: 'Unknown department.' });
-    res.json({ slots: sched.opdSlots(db, dept, str(req.query.date)) });
+    res.json({ slots: await sched.opdSlots(db, dept, str(req.query.date)) });
   });
 
   router.post('/appointments', submitLimit, async (req, res) => {
@@ -225,25 +229,24 @@ module.exports = function publicRoutes(db) {
     const date = str(b.appt_date);
     const time = str(b.appt_time);
 
-    const appt = tx(db, () => {
-      const err = sched.checkOpdSlot(db, dept, date, time);
+    const appt = await db.tx(async (t) => {
+      // One lock per clinic-day covers both slot capacity and the duplicate-booking check
+      await lock(t, `opd:${dept}:${date}`);
+      const err = await sched.checkOpdSlot(t, dept, date, time);
       if (err) throw new ValidationError(err);
       // Prevent the same patient double-booking the same clinic on the same day
-      const dup = db
-        .prepare(
-          `SELECT ref_no FROM appointments WHERE department = ? AND appt_date = ? AND mobile = ?
-           AND lower(patient_last) = lower(?) AND lower(patient_first) = lower(?) AND status != 'CANCELLED'`,
-        )
-        .get(dept, date, mobile, str(b.patient_last), str(b.patient_first));
+      const dup = await t.one(
+        `SELECT ref_no FROM appointments WHERE department = $1 AND appt_date = $2 AND mobile = $3
+         AND lower(patient_last) = lower($4) AND lower(patient_first) = lower($5) AND status <> 'CANCELLED'`,
+        [dept, date, mobile, str(b.patient_last), str(b.patient_first)],
+      );
       if (dup) throw new ValidationError(`This patient already has an appointment in this clinic on that day (Ref ${dup.ref_no}).`);
-      const ref = uniqueRef(db, 'appointments', 'A');
-      const { lastInsertRowid } = db
-        .prepare(
-          `INSERT INTO appointments (ref_no, department, appt_date, appt_time, patient_type, hospital_no, patient_last,
-            patient_first, patient_middle, birthdate, sex, mobile, email, complaint)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
+      const ref = await uniqueRef(t, 'appointments', 'A');
+      return t.one(
+        `INSERT INTO appointments (ref_no, department, appt_date, appt_time, patient_type, hospital_no, patient_last,
+          patient_first, patient_middle, birthdate, sex, mobile, email, complaint)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+        [
           ref,
           dept,
           date,
@@ -258,8 +261,8 @@ module.exports = function publicRoutes(db) {
           mobile,
           email,
           str(b.complaint, 500),
-        );
-      return db.prepare('SELECT * FROM appointments WHERE id = ?').get(lastInsertRowid);
+        ],
+      );
     });
 
     await sendSms(db, { to: appt.mobile, message: msg.apptBooked(appt), kind: 'APPT_BOOKED', refNo: appt.ref_no });
@@ -268,39 +271,46 @@ module.exports = function publicRoutes(db) {
 
   // ---- Tracking (reference no. + mobile must both match) ----
 
-  function findByRef(ref, mobileInput) {
+  async function findByRef(ref, mobileInput) {
     const mobile = u.normalizeMobile(mobileInput);
     const refNo = str(ref, 40).toUpperCase();
     if (!mobile || !refNo) return null;
     if (refNo.startsWith('R-')) {
-      const r = db.prepare('SELECT * FROM record_requests WHERE ref_no = ? AND mobile = ?').get(refNo, mobile);
+      const r = await db.one('SELECT * FROM record_requests WHERE ref_no = $1 AND mobile = $2', [refNo, mobile]);
       return r && { kind: 'record', row: r };
     }
     if (refNo.startsWith('A-')) {
-      const a = db.prepare('SELECT * FROM appointments WHERE ref_no = ? AND mobile = ?').get(refNo, mobile);
+      const a = await db.one('SELECT * FROM appointments WHERE ref_no = $1 AND mobile = $2', [refNo, mobile]);
       return a && { kind: 'appointment', row: a };
     }
     return null;
   }
 
-  router.post('/track', submitLimit, (req, res) => {
-    const found = findByRef(req.body?.ref_no, req.body?.mobile);
+  router.post('/track', submitLimit, async (req, res) => {
+    const found = await findByRef(req.body?.ref_no, req.body?.mobile);
     if (!found) return res.status(404).json({ error: 'No request found with that reference number and mobile number.' });
-    res.json(found.kind === 'record' ? publicRecord(db, found.row) : publicAppointment(found.row));
+    res.json(found.kind === 'record' ? await publicRecord(db, found.row) : publicAppointment(found.row));
   });
 
   router.post('/track/cancel', submitLimit, async (req, res) => {
-    const found = findByRef(req.body?.ref_no, req.body?.mobile);
+    const found = await findByRef(req.body?.ref_no, req.body?.mobile);
     if (!found) return res.status(404).json({ error: 'No request found with that reference number and mobile number.' });
     const { kind, row } = found;
     if (kind === 'record') {
-      if (row.status !== 'PENDING') throw new ValidationError('Only pending requests can be cancelled online. Please contact the Medical Records Section.');
-      db.prepare("UPDATE record_requests SET status = 'CANCELLED', remarks = 'Cancelled by requester', updated_at = datetime('now','localtime') WHERE id = ?").run(row.id);
-      return res.json(publicRecord(db, db.prepare('SELECT * FROM record_requests WHERE id = ?').get(row.id)));
+      const updated = await db.one(
+        `UPDATE record_requests SET status = 'CANCELLED', remarks = 'Cancelled by requester', updated_at = now()
+         WHERE id = $1 AND status = 'PENDING' RETURNING *`,
+        [row.id],
+      );
+      if (!updated) throw new ValidationError('Only pending requests can be cancelled online. Please contact the Medical Records Section.');
+      return res.json(await publicRecord(db, updated));
     }
-    if (row.status !== 'BOOKED') throw new ValidationError('This appointment can no longer be cancelled online.');
-    db.prepare("UPDATE appointments SET status = 'CANCELLED', remarks = 'Cancelled by patient', updated_at = datetime('now','localtime') WHERE id = ?").run(row.id);
-    const updated = db.prepare('SELECT * FROM appointments WHERE id = ?').get(row.id);
+    const updated = await db.one(
+      `UPDATE appointments SET status = 'CANCELLED', remarks = 'Cancelled by patient', updated_at = now()
+       WHERE id = $1 AND status = 'BOOKED' RETURNING *`,
+      [row.id],
+    );
+    if (!updated) throw new ValidationError('This appointment can no longer be cancelled online.');
     await sendSms(db, { to: updated.mobile, message: msg.apptCancelled({ ...updated, remarks: '' }), kind: 'APPT_CANCELLED', refNo: updated.ref_no });
     res.json(publicAppointment(updated));
   });
@@ -309,5 +319,3 @@ module.exports = function publicRoutes(db) {
 };
 
 module.exports.ValidationError = ValidationError;
-module.exports.publicRecord = publicRecord;
-module.exports.publicAppointment = publicAppointment;

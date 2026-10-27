@@ -1,13 +1,14 @@
 // Availability rules for records pickup dates and OPD slots.
+// `db` may be the shared connection or a transaction handle from db.tx().
 const config = require('./config');
 const catalog = require('./catalog');
 const u = require('./util');
 
 const ACTIVE_RECORD = "status NOT IN ('CANCELLED','REJECTED')";
-const ACTIVE_APPT = "status NOT IN ('CANCELLED')";
+const ACTIVE_APPT = "status <> 'CANCELLED'";
 
-function closedDates(db) {
-  return new Map(db.prepare('SELECT date, reason FROM closed_dates').all().map((r) => [r.date, r.reason]));
+async function closedDates(db) {
+  return new Map((await db.query('SELECT date, reason FROM closed_dates')).map((r) => [r.date, r.reason]));
 }
 
 function isOfficeDay(dateStr, openSaturday, closed) {
@@ -19,9 +20,8 @@ function isOfficeDay(dateStr, openSaturday, closed) {
 // ---------- Records ----------
 
 // Earliest pickup date = N working days after today (today's requests are processed starting today).
-function earliestPickupDate(db, recordCodes, now = new Date()) {
+function earliestPickupDateSync(recordCodes, closed, now) {
   const days = Math.max(1, ...recordCodes.map((c) => catalog.recordType(c)?.processingDays || 1));
-  const closed = closedDates(db);
   let d = u.todayStr(now);
   let counted = 0;
   while (counted < days) {
@@ -31,25 +31,33 @@ function earliestPickupDate(db, recordCodes, now = new Date()) {
   return d;
 }
 
-function pickupCount(db, dateStr) {
-  return db.prepare(`SELECT COUNT(*) AS n FROM record_requests WHERE pickup_date = ? AND ${ACTIVE_RECORD}`).get(dateStr).n;
+async function earliestPickupDate(db, recordCodes, now = new Date()) {
+  return earliestPickupDateSync(recordCodes, await closedDates(db), now);
 }
 
-function pickupDates(db, recordCodes, now = new Date()) {
-  const closed = closedDates(db);
-  const start = earliestPickupDate(db, recordCodes, now);
+async function pickupDates(db, recordCodes, now = new Date()) {
+  const closed = await closedDates(db);
+  const start = earliestPickupDateSync(recordCodes, closed, now);
   const end = u.addDays(u.todayStr(now), config.records.maxDaysAhead);
+  const counts = new Map(
+    (
+      await db.query(
+        `SELECT pickup_date, COUNT(*)::int AS n FROM record_requests
+         WHERE pickup_date BETWEEN $1 AND $2 AND ${ACTIVE_RECORD} GROUP BY pickup_date`,
+        [start, end],
+      )
+    ).map((r) => [r.pickup_date, r.n]),
+  );
   const out = [];
   for (let d = start; d <= end; d = u.addDays(d, 1)) {
     if (!isOfficeDay(d, config.records.openSaturday, closed)) continue;
-    const remaining = config.records.dailyPickupCapacity - pickupCount(db, d);
-    out.push({ date: d, remaining: Math.max(0, remaining) });
+    out.push({ date: d, remaining: Math.max(0, config.records.dailyPickupCapacity - (counts.get(d) || 0)) });
   }
   return out;
 }
 
-function checkPickupDate(db, recordCodes, dateStr, now = new Date()) {
-  const avail = pickupDates(db, recordCodes, now).find((x) => x.date === dateStr);
+async function checkPickupDate(db, recordCodes, dateStr, now = new Date()) {
+  const avail = (await pickupDates(db, recordCodes, now)).find((x) => x.date === dateStr);
   if (!avail) return 'Selected pickup date is not available. Please choose another date.';
   if (avail.remaining <= 0) return 'Selected pickup date is fully booked. Please choose another date.';
   return null;
@@ -68,46 +76,53 @@ function slotTimes() {
 
 function isClinicDay(deptCode, dateStr, closed) {
   const dept = catalog.department(deptCode);
-  if (!dept) return false;
+  if (!dept || !u.parseDate(dateStr)) return false;
   if (!dept.days.includes(u.dayOfWeek(dateStr))) return false;
   return isOfficeDay(dateStr, config.opd.openSaturday || dept.days.includes(6), closed);
 }
 
-function opdDates(db, deptCode, now = new Date()) {
-  const closed = closedDates(db);
-  const today = u.todayStr(now);
-  const end = u.addDays(today, config.opd.maxDaysAhead);
-  const out = [];
-  for (let d = today; d <= end; d = u.addDays(d, 1)) {
-    if (!isClinicDay(deptCode, d, closed)) continue;
-    const slots = opdSlots(db, deptCode, d, now);
-    const remaining = slots.reduce((s, x) => s + x.remaining, 0);
-    if (slots.length) out.push({ date: d, remaining });
-  }
-  return out;
-}
-
-function opdSlots(db, deptCode, dateStr, now = new Date()) {
-  if (!u.parseDate(dateStr) || !isClinicDay(deptCode, dateStr, closedDates(db))) return [];
-  const counts = new Map(
-    db
-      .prepare(`SELECT appt_time, COUNT(*) AS n FROM appointments WHERE department = ? AND appt_date = ? AND ${ACTIVE_APPT} GROUP BY appt_time`)
-      .all(deptCode, dateStr)
-      .map((r) => [r.appt_time, r.n]),
-  );
+function buildSlots(dateStr, counts, now) {
   return slotTimes()
     .filter((t) => u.localDateTime(dateStr, t) > now) // no past slots
     .map((t) => ({
       time: t,
       label: u.formatTime12(t),
-      remaining: Math.max(0, config.opd.patientsPerSlot - (counts.get(t) || 0)),
+      remaining: Math.max(0, config.opd.patientsPerSlot - (counts.get(`${dateStr} ${t}`) || 0)),
     }));
 }
 
-function checkOpdSlot(db, deptCode, dateStr, timeStr, now = new Date()) {
+async function slotCounts(db, deptCode, from, to) {
+  const rows = await db.query(
+    `SELECT appt_date, appt_time, COUNT(*)::int AS n FROM appointments
+     WHERE department = $1 AND appt_date BETWEEN $2 AND $3 AND ${ACTIVE_APPT}
+     GROUP BY appt_date, appt_time`,
+    [deptCode, from, to],
+  );
+  return new Map(rows.map((r) => [`${r.appt_date} ${r.appt_time}`, r.n]));
+}
+
+async function opdDates(db, deptCode, now = new Date()) {
+  const closed = await closedDates(db);
   const today = u.todayStr(now);
-  if (dateStr > u.addDays(today, config.opd.maxDaysAhead)) return 'Selected date is too far ahead.';
-  const slot = opdSlots(db, deptCode, dateStr, now).find((s) => s.time === timeStr);
+  const end = u.addDays(today, config.opd.maxDaysAhead);
+  const counts = await slotCounts(db, deptCode, today, end);
+  const out = [];
+  for (let d = today; d <= end; d = u.addDays(d, 1)) {
+    if (!isClinicDay(deptCode, d, closed)) continue;
+    const slots = buildSlots(d, counts, now);
+    if (slots.length) out.push({ date: d, remaining: slots.reduce((s, x) => s + x.remaining, 0) });
+  }
+  return out;
+}
+
+async function opdSlots(db, deptCode, dateStr, now = new Date()) {
+  if (!isClinicDay(deptCode, dateStr, await closedDates(db))) return [];
+  return buildSlots(dateStr, await slotCounts(db, deptCode, dateStr, dateStr), now);
+}
+
+async function checkOpdSlot(db, deptCode, dateStr, timeStr, now = new Date()) {
+  if (dateStr > u.addDays(u.todayStr(now), config.opd.maxDaysAhead)) return 'Selected date is too far ahead.';
+  const slot = (await opdSlots(db, deptCode, dateStr, now)).find((s) => s.time === timeStr);
   if (!slot) return 'Selected schedule is not available. Please choose another date/time.';
   if (slot.remaining <= 0) return 'Selected time slot is fully booked. Please choose another time.';
   return null;

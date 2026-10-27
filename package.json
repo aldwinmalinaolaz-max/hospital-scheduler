@@ -4,14 +4,16 @@
   "description": "Online scheduling for hospital records requests and OPD appointments, with SMS reminders",
   "main": "src/server.js",
   "scripts": {
-    "start": "node --no-warnings=ExperimentalWarning src/server.js",
-    "test": "node --no-warnings=ExperimentalWarning --test test/*.test.js"
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
-    "node": ">=22.13"
+    "node": "22.x"
   },
   "license": "MIT",
   "dependencies": {
-    "express": "^5.3.0"
+    "@electric-sql/pglite": "^0.5.12",
+    "express": "^5.3.0",
+    "pg": "^8.23.1"
   }
 }

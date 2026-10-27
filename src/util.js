@@ -7,6 +7,13 @@ function toDateStr(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// Local 'YYYY-MM-DD HH:MM' for display of timestamps
+function toStamp(d) {
+  if (!d) return null;
+  const date = d instanceof Date ? d : new Date(d);
+  return `${toDateStr(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function parseDate(s) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s || '')) return null;
   const [y, m, d] = s.split('-').map(Number);
@@ -73,6 +80,7 @@ function makeRef(prefix) {
 
 module.exports = {
   toDateStr,
+  toStamp,
   parseDate,
   addDays,
   dayOfWeek,

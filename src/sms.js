@@ -48,7 +48,7 @@ async function sendSms(db, { to, message, kind, refNo = null }) {
     error = err.message;
     console.error(`SMS to ${to} failed: ${err.message}`);
   }
-  db.prepare('INSERT INTO sms_log (recipient, message, kind, ref_no, provider, status, error) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+  await db.query('INSERT INTO sms_log (recipient, message, kind, ref_no, provider, status, error) VALUES ($1, $2, $3, $4, $5, $6, $7)', [
     to,
     message,
     kind,
@@ -56,7 +56,7 @@ async function sendSms(db, { to, message, kind, refNo = null }) {
     config.sms.provider,
     status,
     error,
-  );
+  ]);
   return status === 'SENT';
 }
 

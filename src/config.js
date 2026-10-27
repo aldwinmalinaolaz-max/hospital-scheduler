@@ -1,8 +1,11 @@
-const fs = require('node:fs');
 const path = require('node:path');
 
 const envFile = path.join(__dirname, '..', '.env');
-if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
+try {
+  process.loadEnvFile(envFile);
+} catch {
+  // no .env file (e.g. on Vercel, where settings come from the dashboard)
+}
 
 // All dates/times in the system are hospital-local. Set TZ before any Date is used.
 process.env.TZ = process.env.HOSPITAL_TZ || 'Asia/Manila';
@@ -12,7 +15,11 @@ const int = (v, d) => (v === undefined || v === '' ? d : parseInt(v, 10));
 
 module.exports = {
   port: int(env.PORT, 3000),
-  dbPath: env.DB_PATH || path.join(__dirname, '..', 'data', 'hospital.db'),
+  // Supabase/Postgres connection string. Leave empty to use a local embedded database.
+  databaseUrl: env.DATABASE_URL || '',
+  localDataDir: env.LOCAL_DATA_DIR || path.join(__dirname, '..', 'data', 'pglite'),
+  // Shared secret for the /api/cron/reminders endpoint (sent as "Authorization: Bearer …" or ?key=)
+  cronSecret: env.CRON_SECRET || '',
   hospitalName: env.HOSPITAL_NAME || 'General Hospital',
   sessionSecret: env.SESSION_SECRET || 'change-me-in-production',
   admin: {
