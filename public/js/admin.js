@@ -15,6 +15,7 @@
   async function start() {
     try {
       me = await api('/admin/me');
+      document.body.classList.add('signed-in');
       document.body.classList.toggle('is-admin', me.role === 'ADMIN');
       document.body.classList.toggle('can-records', me.access.records);
       document.body.classList.toggle('can-opd', me.access.opd);
@@ -26,7 +27,7 @@
       showTab(location.hash.slice(1) || 'dashboard');
     } catch {
       me = null;
-      document.body.classList.remove('is-admin', 'can-records', 'can-opd');
+      document.body.classList.remove('signed-in', 'is-admin', 'can-records', 'can-opd');
       $('#whoami').classList.add('hidden');
       $('#login').classList.remove('hidden');
       $('#app').classList.add('hidden');

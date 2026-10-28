@@ -20,7 +20,7 @@ module.exports = {
   localDataDir: env.LOCAL_DATA_DIR || path.join(__dirname, '..', 'data', 'pglite'),
   // Shared secret for the /api/cron/reminders endpoint (sent as "Authorization: Bearer …" or ?key=)
   cronSecret: env.CRON_SECRET || '',
-  hospitalName: env.HOSPITAL_NAME || 'General Hospital',
+  hospitalName: env.HOSPITAL_NAME || 'Zamboanga Regional Medical Center',
   sessionSecret: env.SESSION_SECRET || 'change-me-in-production',
   admin: {
     username: env.ADMIN_USERNAME || 'admin',
