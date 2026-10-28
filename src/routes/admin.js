@@ -62,7 +62,18 @@ module.exports = function adminRoutes(db) {
   const adminOnly = (req, res, next) =>
     req.user.role === 'ADMIN' ? next() : res.status(403).json({ error: 'Only administrators can do this.' });
 
-  router.get('/me', (req, res) => res.json({ username: req.user.username, full_name: req.user.full_name, role: req.user.role }));
+  // Which sections a user may work in. Administrators have everything.
+  const access = (user) => ({
+    records: user.role === 'ADMIN' || user.can_records,
+    opd: user.role === 'ADMIN' || user.can_opd,
+  });
+  const SECTION_NAMES = { records: 'Records Requests', opd: 'OPD Appointments' };
+  const requireAccess = (section) => (req, res, next) =>
+    access(req.user)[section] ? next() : res.status(403).json({ error: `You don't have access to ${SECTION_NAMES[section]}.` });
+
+  router.get('/me', (req, res) =>
+    res.json({ username: req.user.username, full_name: req.user.full_name, role: req.user.role, access: access(req.user) }),
+  );
 
   router.post('/password', async (req, res) => {
     const { current, next: newPassword } = req.body || {};
@@ -86,9 +97,18 @@ module.exports = function adminRoutes(db) {
     full_name: row.full_name,
     role: row.role,
     active: row.active,
+    can_records: row.can_records,
+    can_opd: row.can_opd,
     last_login_at: row.last_login_at ? u.toStamp(row.last_login_at) : null,
     created_at: u.toStamp(row.created_at),
   });
+
+  // Staff need at least one section; Administrators always get both
+  function checkAccess(role, canRecords, canOpd) {
+    if (role === 'ADMIN') return { canRecords: true, canOpd: true };
+    if (!canRecords && !canOpd) throw new ValidationError('Give the user access to Records Requests, OPD Appointments, or both.');
+    return { canRecords: !!canRecords, canOpd: !!canOpd };
+  }
 
   function checkPassword(pw) {
     if (String(pw || '').length < 8) throw new ValidationError('Password must be at least 8 characters.');
@@ -113,10 +133,11 @@ module.exports = function adminRoutes(db) {
     if (!fullName) throw new ValidationError('Please enter the full name.');
     if (!ROLES.includes(role)) throw new ValidationError('Invalid role.');
     checkPassword(b.password);
+    const { canRecords, canOpd } = checkAccess(role, b.can_records ?? true, b.can_opd ?? true);
     if (await db.one('SELECT 1 FROM admins WHERE lower(username) = $1', [username])) throw new ValidationError('That username is already taken.');
     const user = await db.one(
-      'INSERT INTO admins (username, password_hash, full_name, role) VALUES ($1, $2, $3, $4) RETURNING *',
-      [username, auth.hashPassword(b.password), fullName, role],
+      'INSERT INTO admins (username, password_hash, full_name, role, can_records, can_opd) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [username, auth.hashPassword(b.password), fullName, role, canRecords, canOpd],
     );
     res.status(201).json(publicUser(user));
   });
@@ -136,12 +157,14 @@ module.exports = function adminRoutes(db) {
         throw new ValidationError('You cannot change your own role or deactivate your own account.');
       }
       if (before.role === 'ADMIN' && before.active && (role !== 'ADMIN' || !active)) await ensureAnotherAdmin(t, id);
-      // Deactivating or changing role signs the user out so it takes effect immediately
+      const { canRecords, canOpd } = checkAccess(role, b.can_records ?? before.can_records, b.can_opd ?? before.can_opd);
+      // Deactivating or changing role signs the user out so it takes effect immediately.
+      // (Access changes apply on the user's next request without signing them out.)
       const revoke = role !== before.role || active !== before.active;
       return t.one(
-        `UPDATE admins SET full_name = $1, role = $2, active = $3,
-          session_version = session_version + CASE WHEN $4 THEN 1 ELSE 0 END WHERE id = $5 RETURNING *`,
-        [fullName, role, !!active, revoke, id],
+        `UPDATE admins SET full_name = $1, role = $2, active = $3, can_records = $4, can_opd = $5,
+          session_version = session_version + CASE WHEN $6 THEN 1 ELSE 0 END WHERE id = $7 RETURNING *`,
+        [fullName, role, !!active, canRecords, canOpd, revoke, id],
       );
     });
     if (!user) return res.status(404).json({ error: 'Not found.' });
@@ -172,12 +195,18 @@ module.exports = function adminRoutes(db) {
         (SELECT COUNT(*)::int FROM sms_log WHERE status = 'FAILED' AND created_at >= now() - interval '7 days') AS "smsFailed"`,
       [today],
     );
-    res.json({ today, ...s, smsProvider: config.sms.provider });
+    // Only report numbers for the sections this user can see
+    const a = access(req.user);
+    const visible = {
+      ...(a.opd && { appointmentsToday: s.appointmentsToday, checkedInToday: s.checkedInToday, upcomingAppointments: s.upcomingAppointments }),
+      ...(a.records && { recordsPending: s.recordsPending, recordsReady: s.recordsReady, pickupsToday: s.pickupsToday }),
+    };
+    res.json({ today, ...visible, smsFailed: s.smsFailed, smsProvider: config.sms.provider });
   });
 
   // ---------- Records ----------
 
-  router.get('/records', async (req, res) => {
+  router.get('/records', requireAccess('records'), async (req, res) => {
     const conds = [];
     if (req.query.status) conds.push(['r.status = ?', String(req.query.status)]);
     if (req.query.pickup_date) conds.push(['r.pickup_date = ?', String(req.query.pickup_date)]);
@@ -201,7 +230,7 @@ module.exports = function adminRoutes(db) {
     });
   });
 
-  router.patch('/records/:id', async (req, res) => {
+  router.patch('/records/:id', requireAccess('records'), async (req, res) => {
     const id = Number(req.params.id);
     const b = req.body || {};
     const before = await db.one('SELECT * FROM record_requests WHERE id = $1', [id]);
@@ -236,7 +265,7 @@ module.exports = function adminRoutes(db) {
 
   // ---------- Appointments ----------
 
-  router.get('/appointments', async (req, res) => {
+  router.get('/appointments', requireAccess('opd'), async (req, res) => {
     const conds = [];
     if (req.query.date) conds.push(['appt_date = ?', String(req.query.date)]);
     if (req.query.department) conds.push(['department = ?', String(req.query.department)]);
@@ -250,7 +279,7 @@ module.exports = function adminRoutes(db) {
     res.json({ rows: rows.map((a) => ({ ...stamp(a), department_name: catalog.department(a.department)?.name || a.department })) });
   });
 
-  router.patch('/appointments/:id', async (req, res) => {
+  router.patch('/appointments/:id', requireAccess('opd'), async (req, res) => {
     const id = Number(req.params.id);
     const b = req.body || {};
     const before = await db.one('SELECT * FROM appointments WHERE id = $1', [id]);
@@ -288,20 +317,34 @@ module.exports = function adminRoutes(db) {
     res.json(stamp(after));
   });
 
-  router.get('/opd/slots', async (req, res) => {
+  router.get('/opd/slots', requireAccess('opd'), async (req, res) => {
     res.json({ slots: await sched.opdSlots(db, String(req.query.department || ''), String(req.query.date || '')) });
   });
 
   // ---------- SMS ----------
 
+  // SMS messages belong to a section by their kind (RECORD_… / APPT_…); test messages are admin-only
+  function smsKindsFor(user) {
+    if (user.role === 'ADMIN') return null; // everything
+    const a = access(user);
+    return [a.records && 'RECORD_%', a.opd && 'APPT_%'].filter(Boolean);
+  }
+  const canSeeSms = (user, kind) => {
+    const kinds = smsKindsFor(user);
+    return !kinds || kinds.some((k) => kind.startsWith(k.slice(0, -1)));
+  };
+
   router.get('/sms', async (req, res) => {
-    const rows = await db.query('SELECT * FROM sms_log ORDER BY id DESC LIMIT 300');
+    const kinds = smsKindsFor(req.user);
+    const rows = kinds
+      ? await db.query('SELECT * FROM sms_log WHERE kind LIKE ANY($1::text[]) ORDER BY id DESC LIMIT 300', [kinds])
+      : await db.query('SELECT * FROM sms_log ORDER BY id DESC LIMIT 300');
     res.json({ rows: rows.map(stamp), provider: config.sms.provider });
   });
 
   router.post('/sms/:id/resend', async (req, res) => {
     const row = await db.one('SELECT * FROM sms_log WHERE id = $1', [Number(req.params.id)]);
-    if (!row) return res.status(404).json({ error: 'Not found.' });
+    if (!row || !canSeeSms(req.user, row.kind)) return res.status(404).json({ error: 'Not found.' });
     const ok = await sendSms(db, { to: row.recipient, message: row.message, kind: row.kind, refNo: row.ref_no });
     res.json({ ok });
   });

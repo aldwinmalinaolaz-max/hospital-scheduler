@@ -26,8 +26,8 @@
   <section id="app" class="hidden">
     <nav class="tabs no-print" id="tabs">
       <button data-tab="dashboard" class="on">Dashboard</button>
-      <button data-tab="records">Records Requests</button>
-      <button data-tab="appointments">OPD Appointments</button>
+      <button data-tab="records" class="needs-records">Records Requests</button>
+      <button data-tab="appointments" class="needs-opd">OPD Appointments</button>
       <button data-tab="sms">SMS Log</button>
       <button data-tab="users" class="admin-only">Users</button>
       <button data-tab="settings">Settings</button>
@@ -36,8 +36,8 @@
     <div data-view="dashboard">
       <div class="stats" id="stats"></div>
       <div class="grid grid-2">
-        <div class="card"><h3>Today's OPD appointments</h3><div id="dashAppts"></div></div>
-        <div class="card"><h3>Records for pickup today</h3><div id="dashPickups"></div></div>
+        <div class="card needs-opd"><h3>Today's OPD appointments</h3><div id="dashAppts"></div></div>
+        <div class="card needs-records"><h3>Records for claiming today</h3><div id="dashPickups"></div></div>
       </div>
     </div>
 
@@ -85,7 +85,7 @@
         <button class="btn" type="button" id="addUserBtn">+ Add user</button>
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Username</th><th>Full name</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead>
+        <thead><tr><th>Username</th><th>Full name</th><th>Role</th><th>Access</th><th>Status</th><th>Last login</th><th></th></tr></thead>
         <tbody id="userRows"></tbody>
       </table></div>
     </div>

@@ -97,6 +97,9 @@ const SCHEMA = `
   ALTER TABLE admins ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE admins ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
   ALTER TABLE admins ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+  -- Per-user access for Staff (Administrators always have both)
+  ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_records BOOLEAN NOT NULL DEFAULT TRUE;
+  ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_opd BOOLEAN NOT NULL DEFAULT TRUE;
 
   -- Which staff member last changed a request
   ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS updated_by TEXT;

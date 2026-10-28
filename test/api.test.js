@@ -301,6 +301,49 @@ test('user management: roles, deactivation, password reset, last admin', async (
   adminCookie = null;
 });
 
+test('per-user access: records-only and OPD-only staff', async () => {
+  const admin = await login();
+  const mk = (username, access) =>
+    call('/admin/users', { method: 'POST', cookie: admin, body: { username, full_name: username, role: 'STAFF', password: 'password123', ...access } });
+
+  assert.match((await mk('nobody', { can_records: false, can_opd: false })).data.error, /access/);
+  assert.equal((await mk('rec.only', { can_records: true, can_opd: false })).status, 201);
+  const opdUser = await mk('opd.only', { can_records: false, can_opd: true });
+  assert.equal(opdUser.status, 201);
+
+  const rec = (await loginAs('rec.only', 'password123')).cookie;
+  const opd = (await loginAs('opd.only', 'password123')).cookie;
+
+  // /me tells the browser which tabs to show
+  assert.deepEqual((await call('/admin/me', { cookie: rec })).data.access, { records: true, opd: false });
+
+  // Records-only user
+  assert.equal((await call('/admin/records', { cookie: rec })).status, 200);
+  assert.equal((await call('/admin/appointments', { cookie: rec })).status, 403);
+  assert.equal((await call('/admin/appointments/1', { method: 'PATCH', cookie: rec, body: { status: 'CANCELLED' } })).status, 403);
+  let stats = (await call('/admin/stats', { cookie: rec })).data;
+  assert.ok('recordsPending' in stats && !('appointmentsToday' in stats));
+  let sms = (await call('/admin/sms', { cookie: rec })).data.rows;
+  assert.ok(sms.length > 0 && sms.every((m) => m.kind.startsWith('RECORD_')));
+
+  // OPD-only user
+  assert.equal((await call('/admin/appointments', { cookie: opd })).status, 200);
+  assert.equal((await call('/admin/records', { cookie: opd })).status, 403);
+  stats = (await call('/admin/stats', { cookie: opd })).data;
+  assert.ok('appointmentsToday' in stats && !('recordsPending' in stats));
+  sms = (await call('/admin/sms', { cookie: opd })).data.rows;
+  assert.ok(sms.length > 0 && sms.every((m) => m.kind.startsWith('APPT_')));
+  const recordSms = await db.one("SELECT id FROM sms_log WHERE kind LIKE 'RECORD_%' LIMIT 1");
+  assert.equal((await call(`/admin/sms/${recordSms.id}/resend`, { method: 'POST', cookie: opd })).status, 404);
+
+  // Granting access takes effect on the next request, without logging out
+  await call(`/admin/users/${opdUser.data.id}`, { method: 'PATCH', cookie: admin, body: { can_records: true } });
+  assert.equal((await call('/admin/records', { cookie: opd })).status, 200);
+
+  // Administrators always have both
+  assert.deepEqual((await call('/admin/me', { cookie: admin })).data.access, { records: true, opd: true });
+});
+
 test('patient-entered text is stored in capitals', async () => {
   const { date, time } = await firstOpdSlot('ENT');
   const res = await call('/appointments', {

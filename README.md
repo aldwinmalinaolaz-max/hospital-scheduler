@@ -97,7 +97,9 @@ Patients look up a request with its reference number and their mobile number. Re
 ### Users and roles
 Staff accounts are managed in **Admin → Users** by administrators. There are two roles:
 - **Administrator:** everything, plus managing users, holidays/closed dates and the test SMS.
-- **Staff:** processing records requests and OPD appointments, viewing the SMS log, and changing their own password.
+- **Staff:** works only in the sections they're given access to, can view the SMS log for those sections, and can change their own password.
+
+Each Staff user has two access checkboxes: **Records Requests** and **OPD Appointments**. They need at least one. A Records-only user doesn't see the OPD tab, OPD dashboard numbers or OPD text messages, and the server refuses OPD requests from them; the same applies the other way round. Access changes take effect on the user's next click, without logging them out. Administrators always have both.
 
 Usernames aren't case-sensitive. Resetting a user's password, changing their role or deactivating them signs them out of every device immediately. You can't deactivate or demote yourself, and there is always at least one active administrator. Each records request and appointment shows which user last changed it.
 

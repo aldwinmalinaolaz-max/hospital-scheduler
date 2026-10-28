@@ -114,6 +114,7 @@ p { margin: 0 0 1em; }
 .topnav .who { padding: 6px 10px; font-size: 0.9rem; opacity: 0.9; }
 .topnav .who b { color: var(--accent); font-weight: 600; }
 body:not(.is-admin) .admin-only { display: none !important; }
+body:not(.can-records) .needs-records, body:not(.can-opd) .needs-opd { display: none !important; }
 .topnav a.active { background: var(--accent); color: var(--accent-ink); opacity: 1; font-weight: 600; }
 
 main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
@@ -331,3 +332,10 @@ dialog h2 { margin-top: 0; }
   body { background: #fff; }
   .card { box-shadow: none; border: none; }
 }
+
+/* Access checkboxes in the user dialog */
+fieldset.access { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px 10px; margin: 0; display: grid; gap: 6px; }
+fieldset.access legend { font-weight: 600; font-size: 0.9rem; padding: 0 4px; }
+fieldset.access label { display: flex; gap: 8px; align-items: center; }
+fieldset.access .hint { margin: 0; color: var(--muted); font-size: 0.82rem; }
+fieldset.access:disabled label { opacity: 0.55; }

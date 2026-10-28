@@ -16,6 +16,8 @@
     try {
       me = await api('/admin/me');
       document.body.classList.toggle('is-admin', me.role === 'ADMIN');
+      document.body.classList.toggle('can-records', me.access.records);
+      document.body.classList.toggle('can-opd', me.access.opd);
       $('#whoami').innerHTML = `${esc(me.full_name || me.username)} · <b>${me.role === 'ADMIN' ? 'Administrator' : 'Staff'}</b>`;
       $('#whoami').classList.remove('hidden');
       $('#login').classList.add('hidden');
@@ -24,7 +26,7 @@
       showTab(location.hash.slice(1) || 'dashboard');
     } catch {
       me = null;
-      document.body.classList.remove('is-admin');
+      document.body.classList.remove('is-admin', 'can-records', 'can-opd');
       $('#whoami').classList.add('hidden');
       $('#login').classList.remove('hidden');
       $('#app').classList.add('hidden');
@@ -60,7 +62,8 @@
   // ---------- Tabs ----------
   const loaders = {};
   function showTab(name) {
-    if (!loaders[name] || (name === 'users' && me?.role !== 'ADMIN')) name = 'dashboard';
+    const allowed = { users: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
+    if (!loaders[name] || allowed[name] === false) name = 'dashboard';
     $$('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $$('[data-view]').forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
     history.replaceState(null, '', `#${name}`);
@@ -75,16 +78,19 @@
     const s = await api('/admin/stats');
     const stat = (n, l) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`;
     $('#stats').innerHTML = [
-      stat(s.appointmentsToday, 'OPD appointments today'),
-      stat(s.checkedInToday, 'Checked in / seen today'),
-      stat(s.upcomingAppointments, 'Upcoming appointments'),
-      stat(s.recordsPending, 'Records pending / processing'),
-      stat(s.recordsReady, 'Records ready for pickup'),
+      me.access.opd && stat(s.appointmentsToday, 'OPD appointments today'),
+      me.access.opd && stat(s.checkedInToday, 'Checked in / seen today'),
+      me.access.opd && stat(s.upcomingAppointments, 'Upcoming appointments'),
+      me.access.records && stat(s.recordsPending, 'Records pending / processing'),
+      me.access.records && stat(s.recordsReady, 'Records ready for claiming'),
       stat(s.smsFailed, `Failed SMS (7 days) · ${esc(s.smsProvider)}`),
-    ].join('');
+    ]
+      .filter(Boolean)
+      .join('');
+    const none = { rows: [] };
     const [{ rows: appts }, { rows: recs }] = await Promise.all([
-      api(`/admin/appointments?date=${s.today}`),
-      api(`/admin/records?pickup_date=${s.today}`),
+      me.access.opd ? api(`/admin/appointments?date=${s.today}`) : none,
+      me.access.records ? api(`/admin/records?pickup_date=${s.today}`) : none,
     ]);
     const active = appts.filter((a) => a.status !== 'CANCELLED');
     $('#dashAppts').innerHTML = active.length
@@ -93,7 +99,7 @@
     const pick = recs.filter((r) => !['CANCELLED', 'REJECTED'].includes(r.status));
     $('#dashPickups').innerHTML = pick.length
       ? `<table><tbody>${pick.map((r) => `<tr><td class="mono">${esc(r.ref_no)}</td><td>${esc(r.patient_last)}, ${esc(r.patient_first)}<div class="sub">${r.items.map((i) => esc(i.name)).join(', ')}</div></td><td>${badge(r.status)}</td></tr>`).join('')}</tbody></table>`
-      : '<p class="muted">No pickups scheduled today.</p>';
+      : '<p class="muted">No records to be claimed today.</p>';
   });
 
   // ---------- Records ----------
@@ -303,6 +309,26 @@
   let userRows = [];
   const roleLabel = (r) => (r === 'ADMIN' ? 'Administrator' : 'Staff');
   const roleOpts = (sel) => ['STAFF', 'ADMIN'].map((r) => `<option value="${r}"${r === sel ? ' selected' : ''}>${roleLabel(r)}</option>`).join('');
+  const accessLabel = (x) =>
+    x.role === 'ADMIN' ? 'All' : [x.can_records && 'Records Requests', x.can_opd && 'OPD Appointments'].filter(Boolean).join('<br>');
+  // Access checkboxes; disabled for Administrators, who always have both
+  const accessFields = (x) => `
+    <fieldset class="access" ${x.role === 'ADMIN' ? 'disabled' : ''}>
+      <legend>Access</legend>
+      <label><input type="checkbox" name="can_records" ${x.can_records !== false ? 'checked' : ''}> Records Requests</label>
+      <label><input type="checkbox" name="can_opd" ${x.can_opd !== false ? 'checked' : ''}> OPD Appointments</label>
+      <p class="hint">Administrators always have access to both.</p>
+    </fieldset>`;
+  const wireAccess = () => {
+    const role = $('#dlgForm [name=role]');
+    const fs = $('#dlgForm fieldset.access');
+    role.addEventListener('change', () => (fs.disabled = role.value === 'ADMIN'));
+  };
+  const readAccess = () => ({
+    can_records: $('#dlgForm [name=can_records]').checked,
+    can_opd: $('#dlgForm [name=can_opd]').checked,
+  });
+
   loaders.users = guard(async () => {
     userRows = (await api('/admin/users')).rows;
     $('#userRows').innerHTML = userRows
@@ -311,6 +337,7 @@
         <td class="mono">${esc(x.username)}${x.username === me.username ? ' <span class="sub">(you)</span>' : ''}</td>
         <td>${esc(x.full_name || '')}</td>
         <td>${roleLabel(x.role)}</td>
+        <td class="small">${accessLabel(x)}</td>
         <td>${x.active ? '<span class="badge COMPLETED">Active</span>' : '<span class="badge CANCELLED">Inactive</span>'}</td>
         <td class="small nowrap">${esc(x.last_login_at || 'Never')}</td>
         <td class="nowrap"><button class="btn sm secondary" data-edit-user="${x.id}">Edit</button> <button class="btn sm secondary" data-pw-user="${x.id}">Reset password</button></td>
@@ -319,21 +346,23 @@
       .join('');
   });
 
-  $('#addUserBtn').addEventListener('click', () =>
+  $('#addUserBtn').addEventListener('click', () => {
     openDialog(
       `<h2>Add user</h2>
        <div class="grid">
          <label class="field">Full name<input name="full_name" required></label>
          <label class="field">Username<span class="hint">Used to log in. Letters, numbers, dot, dash or underscore.</span><input name="username" autocomplete="off" required></label>
          <label class="field">Role<select name="role">${roleOpts('STAFF')}</select></label>
+         ${accessFields({ role: 'STAFF' })}
          <label class="field">Temporary password<span class="hint">At least 8 characters. Ask the user to change it after logging in.</span><input name="password" type="password" autocomplete="new-password" required></label>
        </div>`,
       async (d) => {
-        await api('/admin/users', { method: 'POST', body: d });
+        await api('/admin/users', { method: 'POST', body: { ...d, ...readAccess() } });
         loaders.users();
       },
-    ),
-  );
+    );
+    wireAccess();
+  });
 
   $('#userRows').addEventListener('click', (e) => {
     const edit = e.target.closest('[data-edit-user]');
@@ -347,17 +376,19 @@
          <div class="grid">
            <label class="field">Full name<input name="full_name" value="${esc(x.full_name || '')}" required></label>
            <label class="field">Role<select name="role" ${self ? 'disabled' : ''}>${roleOpts(x.role)}</select></label>
+           ${accessFields(x)}
            <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="active" ${x.active ? 'checked' : ''} ${self ? 'disabled' : ''}> Active (can log in)</label>
            ${self ? '<p class="muted small">You can’t change your own role or deactivate yourself.</p>' : ''}
          </div>`,
         async (d) => {
-          const body = { full_name: d.full_name };
+          const body = { full_name: d.full_name, ...readAccess() };
           if (!self) Object.assign(body, { role: d.role, active: $('#dlgForm [name=active]').checked });
           await api(`/admin/users/${x.id}`, { method: 'PATCH', body });
           loaders.users();
           if (self) start();
         },
       );
+      wireAccess();
     } else {
       openDialog(
         `<h2>Reset password for <span class="mono">${esc(x.username)}</span></h2>
