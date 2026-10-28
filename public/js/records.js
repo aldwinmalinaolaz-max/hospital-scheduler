@@ -12,7 +12,6 @@
         <input type="checkbox" id="doc-${esc(t.code)}">
         <label for="doc-${esc(t.code)}" class="doc-name">${esc(t.name)}</label>
         <span class="doc-copies hidden"><label for="copies-${esc(t.code)}">Copies</label><input type="number" id="copies-${esc(t.code)}" min="1" max="10" value="1"></span>
-        <span class="doc-meta">Ready in about ${t.processingDays} working day${t.processingDays > 1 ? 's' : ''}</span>
         ${t.requiresDetails ? `<input class="doc-details hidden" placeholder="Please specify the document you need" maxlength="300">` : ''}
       </div>`,
     )
@@ -29,7 +28,6 @@
       details?.classList.toggle('hidden', !cb.checked);
       if (cb.checked) selected.set(code, { copies: Number(copies.value) || 1, details: details?.value.trim() || '' });
       else selected.delete(code);
-      pickupDate = ''; // processing time may change
     };
     cb.addEventListener('change', sync);
     copies.addEventListener('input', sync);
@@ -47,10 +45,8 @@
   async function loadDates() {
     const grid = $('#dateGrid');
     grid.innerHTML = '<span class="muted">Loading available dates…</span>';
-    const types = [...selected.keys()].join(',');
-    const { dates } = await api(`/records/pickup-dates?types=${encodeURIComponent(types)}`);
-    const maxDays = Math.max(...[...selected.keys()].map((c) => cat.recordTypes.find((t) => t.code === c).processingDays));
-    $('#pickupHint').textContent = `Your documents need about ${maxDays} working day${maxDays > 1 ? 's' : ''} to process. Earliest pickup is ${fmtDate(dates[0]?.date)}. Pickup hours: 8:00 AM – 5:00 PM.`;
+    const { dates } = await api('/records/pickup-dates');
+    $('#pickupHint').textContent = `Earliest claiming date is ${fmtDate(dates[0]?.date)}. Claiming hours: 8:00 AM – 5:00 PM.`;
     grid.innerHTML = dates
       .map(
         (d) => `<button type="button" class="chip${d.date === pickupDate ? ' selected' : ''}" data-date="${d.date}" ${d.remaining ? '' : 'disabled'}>

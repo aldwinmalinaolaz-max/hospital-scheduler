@@ -206,7 +206,6 @@ input[type='checkbox'], input[type='radio'] { width: auto; min-height: 0; accent
 }
 .doc.selected { border-color: var(--primary); background: var(--primary-soft); }
 .doc .doc-name { font-weight: 600; }
-.doc .doc-meta { grid-column: 2; color: var(--muted); font-size: 0.82rem; }
 .doc .doc-copies { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; }
 .doc .doc-copies input { width: 64px; min-height: 32px; padding: 4px 8px; }
 .doc .doc-details { grid-column: 2 / -1; }

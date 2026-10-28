@@ -79,17 +79,19 @@ test('catalog lists all 8 record types', async () => {
   assert.ok(data.departments.length > 0);
 });
 
-test('pickup dates respect processing time and skip weekends', async () => {
+test('claiming date is 3 days after request, moved to the next working day', async () => {
   const now = new Date(2026, 9, 30, 10); // Fri 30 Oct 2026
-  assert.equal(await sched.earliestPickupDate(db, ['MEDICAL_CERTIFICATE'], now), '2026-11-02'); // Mon
-  assert.equal(await sched.earliestPickupDate(db, ['MEDICAL_CERTIFICATE', 'MEDICO_LEGAL'], now), '2026-11-06'); // 5 working days
+  assert.equal(await sched.earliestPickupDate(db, now), '2026-11-02'); // Fri + 3 = Mon
+  assert.equal(await sched.earliestPickupDate(db, new Date(2026, 9, 26, 10)), '2026-10-29'); // Mon + 3 = Thu
+  assert.equal(await sched.earliestPickupDate(db, new Date(2026, 9, 28, 10)), '2026-11-02'); // Wed + 3 = Sat → Mon
+  assert.equal(await sched.earliestPickupDate(db, new Date(2026, 9, 29, 10)), '2026-11-02'); // Thu + 3 = Sun → Mon
   await db.query("INSERT INTO closed_dates VALUES ('2026-11-02', 'Test holiday')");
-  assert.equal(await sched.earliestPickupDate(db, ['MEDICAL_CERTIFICATE'], now), '2026-11-03');
+  assert.equal(await sched.earliestPickupDate(db, now), '2026-11-03'); // Mon is a holiday → Tue
   await db.query("DELETE FROM closed_dates WHERE date = '2026-11-02'");
 });
 
 test('records request: validation, creation, SMS, tracking', async () => {
-  const { data: d } = await call('/records/pickup-dates?types=CLINICAL_ABSTRACT,OTHERS');
+  const { data: d } = await call('/records/pickup-dates');
   const pickup = d.dates[0].date;
   const body = {
     ...patient,

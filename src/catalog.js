@@ -1,5 +1,5 @@
-// Services offered. Edit this file to match your hospital's actual offerings,
-// processing times and requirements.
+// Services offered. Edit this file to match your hospital's actual offerings
+// and requirements. The claiming date rule is RECORDS_CLAIM_DAYS in .env.
 
 const COMMON_REQS = [
   'Valid government-issued ID of the patient',
@@ -11,31 +11,26 @@ const RECORD_TYPES = [
   {
     code: 'CLINICAL_ABSTRACT',
     name: 'Clinical Abstract / Discharge Summary',
-    processingDays: 3,
     requirements: COMMON_REQS,
   },
   {
     code: 'OPTECH',
     name: 'OPTECH Report (Operative Technique)',
-    processingDays: 3,
     requirements: COMMON_REQS,
   },
   {
     code: 'MEDICAL_CERTIFICATE',
     name: 'Medical Certificate',
-    processingDays: 1,
     requirements: COMMON_REQS,
   },
   {
     code: 'CERT_CONFINEMENT',
     name: 'Certificate of Confinement',
-    processingDays: 1,
     requirements: COMMON_REQS,
   },
   {
     code: 'MEDICO_LEGAL',
     name: 'Medico-Legal Certificate',
-    processingDays: 5,
     requirements: [
       ...COMMON_REQS,
       'Written request from the requesting party/agency (e.g. PNP, NBI, court, legal counsel) where applicable',
@@ -44,19 +39,16 @@ const RECORD_TYPES = [
   {
     code: 'DIAGNOSTIC_TEST',
     name: 'Diagnostic Test Result (X-ray, Ultrasound, CT, ECG, etc.)',
-    processingDays: 1,
     requirements: COMMON_REQS,
   },
   {
     code: 'LABORATORY_TEST',
     name: 'Laboratory Test Result',
-    processingDays: 1,
     requirements: COMMON_REQS,
   },
   {
     code: 'OTHERS',
     name: 'Others (please specify)',
-    processingDays: 3,
     requiresDetails: true,
     requirements: COMMON_REQS,
   },

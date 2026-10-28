@@ -19,25 +19,21 @@ function isOfficeDay(dateStr, openSaturday, closed) {
 
 // ---------- Records ----------
 
-// Earliest pickup date = N working days after today (today's requests are processed starting today).
-function earliestPickupDateSync(recordCodes, closed, now) {
-  const days = Math.max(1, ...recordCodes.map((c) => catalog.recordType(c)?.processingDays || 1));
-  let d = u.todayStr(now);
-  let counted = 0;
-  while (counted < days) {
-    d = u.addDays(d, 1);
-    if (isOfficeDay(d, config.records.openSaturday, closed)) counted++;
-  }
+// Earliest claiming date = RECORDS_CLAIM_DAYS calendar days after the request,
+// moved to the next working day if it falls on a weekend or holiday.
+function earliestPickupDateSync(closed, now) {
+  let d = u.addDays(u.todayStr(now), config.records.claimDays);
+  while (!isOfficeDay(d, config.records.openSaturday, closed)) d = u.addDays(d, 1);
   return d;
 }
 
-async function earliestPickupDate(db, recordCodes, now = new Date()) {
-  return earliestPickupDateSync(recordCodes, await closedDates(db), now);
+async function earliestPickupDate(db, now = new Date()) {
+  return earliestPickupDateSync(await closedDates(db), now);
 }
 
-async function pickupDates(db, recordCodes, now = new Date()) {
+async function pickupDates(db, now = new Date()) {
   const closed = await closedDates(db);
-  const start = earliestPickupDateSync(recordCodes, closed, now);
+  const start = earliestPickupDateSync(closed, now);
   const end = u.addDays(u.todayStr(now), config.records.maxDaysAhead);
   const counts = new Map(
     (
@@ -56,8 +52,8 @@ async function pickupDates(db, recordCodes, now = new Date()) {
   return out;
 }
 
-async function checkPickupDate(db, recordCodes, dateStr, now = new Date()) {
-  const avail = (await pickupDates(db, recordCodes, now)).find((x) => x.date === dateStr);
+async function checkPickupDate(db, dateStr, now = new Date()) {
+  const avail = (await pickupDates(db, now)).find((x) => x.date === dateStr);
   if (!avail) return 'Selected pickup date is not available. Please choose another date.';
   if (avail.remaining <= 0) return 'Selected pickup date is fully booked. Please choose another date.';
   return null;

@@ -105,8 +105,7 @@ module.exports = function publicRoutes(db) {
   // ---- Records ----
 
   router.get('/records/pickup-dates', async (req, res) => {
-    const types = str(req.query.types, 500).split(',').filter((c) => catalog.recordType(c));
-    res.json({ dates: await sched.pickupDates(db, types.length ? types : ['MEDICAL_CERTIFICATE']) });
+    res.json({ dates: await sched.pickupDates(db) });
   });
 
   router.post('/records', submitLimit, async (req, res) => {
@@ -149,7 +148,7 @@ module.exports = function publicRoutes(db) {
 
     const record = await db.tx(async (t) => {
       await lock(t, `pickup:${pickup}`);
-      const err = await sched.checkPickupDate(t, cleanItems.map((i) => i.record_type), pickup);
+      const err = await sched.checkPickupDate(t, pickup);
       if (err) throw new ValidationError(err);
       const ref = await uniqueRef(t, 'record_requests', 'R');
       const row = await t.one(
