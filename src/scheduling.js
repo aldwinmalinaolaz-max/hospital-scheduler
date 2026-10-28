@@ -4,7 +4,6 @@ const config = require('./config');
 const catalog = require('./catalog');
 const u = require('./util');
 
-const ACTIVE_RECORD = "status NOT IN ('CANCELLED','REJECTED')";
 const ACTIVE_APPT = "status <> 'CANCELLED'";
 
 async function closedDates(db) {
@@ -19,44 +18,13 @@ function isOfficeDay(dateStr, openSaturday, closed) {
 
 // ---------- Records ----------
 
-// Earliest claiming date = RECORDS_CLAIM_DAYS calendar days after the request,
+// Claiming date = RECORDS_CLAIM_DAYS calendar days after the request,
 // moved to the next working day if it falls on a weekend or holiday.
-function earliestPickupDateSync(closed, now) {
+async function claimingDate(db, now = new Date()) {
+  const closed = await closedDates(db);
   let d = u.addDays(u.todayStr(now), config.records.claimDays);
   while (!isOfficeDay(d, config.records.openSaturday, closed)) d = u.addDays(d, 1);
   return d;
-}
-
-async function earliestPickupDate(db, now = new Date()) {
-  return earliestPickupDateSync(await closedDates(db), now);
-}
-
-async function pickupDates(db, now = new Date()) {
-  const closed = await closedDates(db);
-  const start = earliestPickupDateSync(closed, now);
-  const end = u.addDays(u.todayStr(now), config.records.maxDaysAhead);
-  const counts = new Map(
-    (
-      await db.query(
-        `SELECT pickup_date, COUNT(*)::int AS n FROM record_requests
-         WHERE pickup_date BETWEEN $1 AND $2 AND ${ACTIVE_RECORD} GROUP BY pickup_date`,
-        [start, end],
-      )
-    ).map((r) => [r.pickup_date, r.n]),
-  );
-  const out = [];
-  for (let d = start; d <= end; d = u.addDays(d, 1)) {
-    if (!isOfficeDay(d, config.records.openSaturday, closed)) continue;
-    out.push({ date: d, remaining: Math.max(0, config.records.dailyPickupCapacity - (counts.get(d) || 0)) });
-  }
-  return out;
-}
-
-async function checkPickupDate(db, dateStr, now = new Date()) {
-  const avail = (await pickupDates(db, now)).find((x) => x.date === dateStr);
-  if (!avail) return 'Selected pickup date is not available. Please choose another date.';
-  if (avail.remaining <= 0) return 'Selected pickup date is fully booked. Please choose another date.';
-  return null;
 }
 
 // ---------- OPD ----------
@@ -124,4 +92,4 @@ async function checkOpdSlot(db, deptCode, dateStr, timeStr, now = new Date()) {
   return null;
 }
 
-module.exports = { earliestPickupDate, pickupDates, checkPickupDate, slotTimes, opdDates, opdSlots, checkOpdSlot };
+module.exports = { claimingDate, slotTimes, opdDates, opdSlots, checkOpdSlot };

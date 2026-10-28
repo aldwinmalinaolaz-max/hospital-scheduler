@@ -81,24 +81,23 @@ test('catalog lists all 8 record types', async () => {
 
 test('claiming date is 3 days after request, moved to the next working day', async () => {
   const now = new Date(2026, 9, 30, 10); // Fri 30 Oct 2026
-  assert.equal(await sched.earliestPickupDate(db, now), '2026-11-02'); // Fri + 3 = Mon
-  assert.equal(await sched.earliestPickupDate(db, new Date(2026, 9, 26, 10)), '2026-10-29'); // Mon + 3 = Thu
-  assert.equal(await sched.earliestPickupDate(db, new Date(2026, 9, 28, 10)), '2026-11-02'); // Wed + 3 = Sat → Mon
-  assert.equal(await sched.earliestPickupDate(db, new Date(2026, 9, 29, 10)), '2026-11-02'); // Thu + 3 = Sun → Mon
+  assert.equal(await sched.claimingDate(db, now), '2026-11-02'); // Fri + 3 = Mon
+  assert.equal(await sched.claimingDate(db, new Date(2026, 9, 26, 10)), '2026-10-29'); // Mon + 3 = Thu
+  assert.equal(await sched.claimingDate(db, new Date(2026, 9, 28, 10)), '2026-11-02'); // Wed + 3 = Sat → Mon
+  assert.equal(await sched.claimingDate(db, new Date(2026, 9, 29, 10)), '2026-11-02'); // Thu + 3 = Sun → Mon
   await db.query("INSERT INTO closed_dates VALUES ('2026-11-02', 'Test holiday')");
-  assert.equal(await sched.earliestPickupDate(db, now), '2026-11-03'); // Mon is a holiday → Tue
+  assert.equal(await sched.claimingDate(db, now), '2026-11-03'); // Mon is a holiday → Tue
   await db.query("DELETE FROM closed_dates WHERE date = '2026-11-02'");
 });
 
 test('records request: validation, creation, SMS, tracking', async () => {
-  const { data: d } = await call('/records/pickup-dates');
-  const pickup = d.dates[0].date;
+  const { data: claim } = await call('/records/claim-date');
   const body = {
     ...patient,
     requester_name: 'Juan Dela Cruz',
     requester_relation: 'Self (patient)',
     purpose: 'PhilHealth claim',
-    pickup_date: pickup,
+    pickup_date: '2020-01-01', // ignored: the server sets the claiming date
     items: [
       { record_type: 'CLINICAL_ABSTRACT', copies: 2 },
       { record_type: 'OTHERS', details: 'Operating room record' },
@@ -109,13 +108,12 @@ test('records request: validation, creation, SMS, tracking', async () => {
   assert.equal(res.status, 400);
   res = await call('/records', { method: 'POST', body: { ...body, items: [{ record_type: 'OTHERS' }] } });
   assert.match(res.data.error, /specify/);
-  res = await call('/records', { method: 'POST', body: { ...body, pickup_date: u.todayStr() } });
-  assert.match(res.data.error, /not available/);
 
   res = await call('/records', { method: 'POST', body });
   assert.equal(res.status, 201, JSON.stringify(res.data));
   assert.match(res.data.ref_no, /^R-\d{6}-[A-Z0-9]{5}$/);
   assert.equal(res.data.items.length, 2);
+  assert.equal(res.data.pickup_date, claim.date);
   const ref = res.data.ref_no;
 
   const sms = await db.query('SELECT * FROM sms_log WHERE ref_no = $1', [ref]);

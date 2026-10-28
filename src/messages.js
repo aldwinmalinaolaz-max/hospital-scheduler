@@ -8,7 +8,7 @@ const dept = (code) => catalog.department(code)?.name || code;
 
 module.exports = {
   recordSubmitted: (r) =>
-    `${H()}: Records request ${r.ref_no} received. Pickup date: ${formatDateLong(r.pickup_date)}. Bring valid ID. We'll text you when it's ready.`,
+    `${H()}: Records request ${r.ref_no} received. Claiming date: ${formatDateLong(r.pickup_date)}. Bring valid ID. We'll text you when it's ready.`,
   recordReady: (r) =>
     `${H()}: Your requested records (${r.ref_no}) are READY for pickup at the Medical Records Section. Bring valid ID and this reference no.`,
   recordRejected: (r) =>
@@ -16,7 +16,7 @@ module.exports = {
   recordPickupToday: (r) =>
     `${H()}: Reminder - your records (${r.ref_no}) are ready for pickup TODAY at the Medical Records Section. Bring valid ID.`,
   recordRescheduled: (r) =>
-    `${H()}: Pickup for records request ${r.ref_no} moved to ${formatDateLong(r.pickup_date)}.${r.remarks ? ` Note: ${r.remarks}` : ''}`,
+    `${H()}: Claiming date for records request ${r.ref_no} moved to ${formatDateLong(r.pickup_date)}.${r.remarks ? ` Note: ${r.remarks}` : ''}`,
 
   apptBooked: (a) =>
     `${H()}: OPD appointment ${a.ref_no} confirmed - ${dept(a.department)}, ${formatDateLong(a.appt_date)} ${formatTime12(a.appt_time)}. Please arrive 15 mins early.`,

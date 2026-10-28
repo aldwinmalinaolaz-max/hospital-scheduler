@@ -104,8 +104,8 @@ module.exports = function publicRoutes(db) {
 
   // ---- Records ----
 
-  router.get('/records/pickup-dates', async (req, res) => {
-    res.json({ dates: await sched.pickupDates(db) });
+  router.get('/records/claim-date', async (req, res) => {
+    res.json({ date: await sched.claimingDate(db) });
   });
 
   router.post('/records', submitLimit, async (req, res) => {
@@ -118,7 +118,6 @@ module.exports = function publicRoutes(db) {
       ['requester_relation', 'Relationship to patient'],
       ['mobile', 'Mobile number'],
       ['purpose', 'Purpose'],
-      ['pickup_date', 'Pickup date'],
     ]);
     if (b.consent !== true) throw new ValidationError('You must agree to the Data Privacy consent to continue.');
 
@@ -144,12 +143,10 @@ module.exports = function publicRoutes(db) {
     if (admission && discharge && discharge < admission) throw new ValidationError('Discharge date cannot be before admission date.');
     const mobile = validMobile(b.mobile);
     const email = validEmail(b.email);
-    const pickup = str(b.pickup_date);
 
     const record = await db.tx(async (t) => {
-      await lock(t, `pickup:${pickup}`);
-      const err = await sched.checkPickupDate(t, pickup);
-      if (err) throw new ValidationError(err);
+      // Claiming date follows the posted rule; the requester does not choose it
+      const pickup = await sched.claimingDate(t);
       const ref = await uniqueRef(t, 'record_requests', 'R');
       const row = await t.one(
         `INSERT INTO record_requests (ref_no, patient_last, patient_first, patient_middle, birthdate, hospital_no,

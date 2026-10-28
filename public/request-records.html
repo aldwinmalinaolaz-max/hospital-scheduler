@@ -19,7 +19,7 @@
 <main class="narrow">
   <h1>Request Hospital Records</h1>
   <p class="muted">Fill out the form below. You'll receive an SMS with your reference number, and another when your documents are ready.</p>
-  <div class="steps" id="steps"><span data-step="1">1 · Documents</span><span data-step="2">2 · Patient & requester</span><span data-step="3">3 · Pickup date</span><span data-step="4">4 · Review</span></div>
+  <div class="steps" id="steps"><span data-step="1">1 · Documents</span><span data-step="2">2 · Patient & requester</span><span data-step="3">3 · Review</span></div>
   <div class="alert error hidden" id="error" role="alert"></div>
 
   <form id="form" novalidate>
@@ -69,16 +69,9 @@
     </section>
 
     <section class="card hidden" data-panel="3">
-      <h2>Choose your pickup date</h2>
-      <p class="muted small" id="pickupHint"></p>
-      <div class="chip-grid" id="dateGrid"></div>
-      <div class="actions"><button type="button" class="btn secondary" data-prev>Back</button><button type="button" class="btn" data-next>Next</button></div>
-    </section>
-
-    <section class="card hidden" data-panel="4">
       <h2>Review your request</h2>
       <div id="review"></div>
-      <h3 style="margin-top:18px">Requirements upon pickup</h3>
+      <h3 style="margin-top:18px">Requirements when claiming</h3>
       <ul class="list-tight muted small" id="reqList"></ul>
       <label style="display:flex;gap:10px;margin-top:18px;align-items:flex-start">
         <input type="checkbox" name="consent" id="consent" style="margin-top:4px">

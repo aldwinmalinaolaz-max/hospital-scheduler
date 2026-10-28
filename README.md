@@ -76,7 +76,7 @@ Each call sends any reminders that are due. A reminder is never sent twice, even
 
 ### Records requests
 - Documents may be claimed 3 calendar days after the request (`RECORDS_CLAIM_DAYS`). If that date falls on a weekend or a closed date set in Settings, it moves to the next working day, so a Friday request is claimable on Monday.
-- Each day has a pickup capacity (`RECORDS_DAILY_CAPACITY`). Full days can't be chosen.
+- The requester doesn't choose a date: the claiming date is set automatically and shown on the Review step, the confirmation screen and the SMS. Staff can still move it from the admin panel.
 - Statuses run **Pending → Processing → Ready → Released**. A request can also end as **Rejected** (a reason is required) or **Cancelled** (by the requester, only while Pending).
 - SMS is sent when the request is submitted, when it's Ready, when it's Rejected, and when staff move the pickup date. A pickup reminder goes out at 7:00 AM on the pickup date if the request is Ready.
 

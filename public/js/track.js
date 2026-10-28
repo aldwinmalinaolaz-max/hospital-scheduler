@@ -19,7 +19,7 @@
         <dl class="kv" style="margin-top:14px">
           <dt>Patient</dt><dd>${esc(r.patient)}</dd>
           <dt>Documents</dt><dd><ul class="list-tight">${r.items.map((i) => `<li>${esc(i.name)}${i.details ? ` — ${esc(i.details)}` : ''} × ${i.copies}</li>`).join('')}</ul></dd>
-          <dt>Pickup date</dt><dd>${esc(fmtDate(r.pickup_date))}</dd>
+          <dt>Claiming date</dt><dd>${esc(fmtDate(r.pickup_date))}</dd>
           ${r.remarks ? `<dt>Remarks</dt><dd>${esc(r.remarks)}</dd>` : ''}
           <dt>Submitted</dt><dd>${esc(r.created_at)}</dd>
         </dl>

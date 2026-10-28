@@ -29,12 +29,10 @@ module.exports = {
 
   // Records section office hours / pickup capacity
   records: {
-    dailyPickupCapacity: int(env.RECORDS_DAILY_CAPACITY, 60),
     // Documents may be claimed this many calendar days after the request,
     // moved to the next working day if that falls on a weekend or holiday.
     claimDays: int(env.RECORDS_CLAIM_DAYS, 3),
     openSaturday: env.RECORDS_OPEN_SATURDAY === 'true',
-    maxDaysAhead: int(env.RECORDS_MAX_DAYS_AHEAD, 30),
   },
 
   // OPD clinic slots
