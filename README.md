@@ -94,10 +94,23 @@ Each call sends any reminders that are due. A reminder is never sent twice, even
 ### Tracking
 Patients look up a request with its reference number and their mobile number. Records references start with `R-` and appointment references start with `A-`.
 
+### Users and roles
+Staff accounts are managed in **Admin → Users** by administrators. There are two roles:
+- **Administrator:** everything, plus managing users, holidays/closed dates and the test SMS.
+- **Staff:** processing records requests and OPD appointments, viewing the SMS log, and changing their own password.
+
+Usernames aren't case-sensitive. Resetting a user's password, changing their role or deactivating them signs them out of every device immediately. You can't deactivate or demote yourself, and there is always at least one active administrator. Each records request and appointment shows which user last changed it.
+
+The first administrator is created from `ADMIN_USERNAME` / `ADMIN_PASSWORD` the first time the app starts.
+
+### Capital letters
+Everything typed into the forms is converted to capital letters, both in the browser and when it's saved. Passwords, usernames and email addresses are kept exactly as typed.
+
 ### Staff panel
 - **Dashboard:** today's counts, today's OPD list and today's pickups.
 - **Records and Appointments:** search and filter, one-click status buttons, an edit dialog for rescheduling and remarks (with an option to notify the patient), and a printable daily list.
 - **SMS Log:** every message sent, with failures shown and a **Resend** button.
+- **Users** (administrators only): add users, change roles, deactivate, reset passwords.
 - **Settings:** holidays and closed dates, a test SMS, and password change.
 
 ## SMS setup

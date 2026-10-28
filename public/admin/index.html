@@ -9,7 +9,7 @@
 <body>
 <header class="topbar"><div class="inner">
   <a class="brand" href="/admin"><span class="brand-mark">+</span><span><span data-hospital>Hospital</span> · Staff</span></a>
-  <nav class="topnav"><a href="/" target="_blank">Public site ↗</a><a href="#" id="logoutBtn" class="hidden">Log out</a></nav>
+  <nav class="topnav"><span id="whoami" class="who hidden"></span><a href="/" target="_blank">Public site ↗</a><a href="#" id="logoutBtn" class="hidden">Log out</a></nav>
 </div></header>
 
 <main class="admin-shell">
@@ -29,6 +29,7 @@
       <button data-tab="records">Records Requests</button>
       <button data-tab="appointments">OPD Appointments</button>
       <button data-tab="sms">SMS Log</button>
+      <button data-tab="users" class="admin-only">Users</button>
       <button data-tab="settings">Settings</button>
     </nav>
 
@@ -78,12 +79,23 @@
       </table></div>
     </div>
 
+    <div data-view="users" class="hidden">
+      <div class="filters no-print" style="justify-content:space-between">
+        <p class="muted small" style="margin:0">Administrators can manage users, holidays and SMS settings. Staff can process records requests and appointments.</p>
+        <button class="btn" type="button" id="addUserBtn">+ Add user</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Username</th><th>Full name</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead>
+        <tbody id="userRows"></tbody>
+      </table></div>
+    </div>
+
     <div data-view="settings" class="hidden">
       <div class="grid grid-2">
         <div class="card">
           <h3>Closed dates / holidays</h3>
           <p class="muted small">No pickups or OPD bookings are offered on these dates. Existing bookings on a newly closed date are not cancelled automatically.</p>
-          <form id="closedForm" class="grid grid-2">
+          <form id="closedForm" class="grid grid-2 admin-only">
             <label class="field">Date<input type="date" name="date" required></label>
             <label class="field">Reason<input name="reason" placeholder="e.g. Rizal Day" required></label>
             <div class="span-2"><button class="btn" type="submit">Add closed date</button></div>
@@ -92,7 +104,7 @@
           <div id="closedList" style="margin-top:12px"></div>
         </div>
         <div>
-          <div class="card">
+          <div class="card admin-only">
             <h3>Send a test SMS</h3>
             <form id="smsTestForm" class="grid">
               <label class="field">Mobile number<input name="to" type="tel" placeholder="09XXXXXXXXX" required></label>

@@ -90,6 +90,18 @@ const SCHEMA = `
     password_hash TEXT NOT NULL
   );
 
+  -- Staff accounts (table name kept as "admins" for existing databases)
+  ALTER TABLE admins ADD COLUMN IF NOT EXISTS full_name TEXT;
+  ALTER TABLE admins ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'ADMIN';
+  ALTER TABLE admins ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+  ALTER TABLE admins ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE admins ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+  ALTER TABLE admins ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+  -- Which staff member last changed a request
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS updated_by TEXT;
+  ALTER TABLE appointments ADD COLUMN IF NOT EXISTS updated_by TEXT;
+
   -- Supabase exposes the public schema through its REST API. Enabling RLS with no
   -- policies blocks that access; this server connects as the table owner and is unaffected.
   ALTER TABLE record_requests ENABLE ROW LEVEL SECURITY;
@@ -153,10 +165,10 @@ async function open({ url = config.databaseUrl, dataDir } = {}) {
   await db.tx(async (t) => {
     await t.query("SELECT pg_advisory_xact_lock(hashtext('hospital-scheduler-schema'))");
     await t.exec(SCHEMA);
-    await t.query('INSERT INTO admins (username, password_hash) SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM admins)', [
-      config.admin.username,
-      hashPassword(config.admin.password),
-    ]);
+    await t.query(
+      "INSERT INTO admins (username, password_hash, full_name, role) SELECT $1, $2, 'ADMINISTRATOR', 'ADMIN' WHERE NOT EXISTS (SELECT 1 FROM admins)",
+      [config.admin.username.toLowerCase(), hashPassword(config.admin.password)],
+    );
   });
   return db;
 }

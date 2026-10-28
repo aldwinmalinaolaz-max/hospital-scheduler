@@ -10,6 +10,8 @@ const u = require('../util');
 class ValidationError extends Error {}
 
 const str = (v, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+// Patient-entered text is stored in capital letters
+const up = (v, max) => str(v, max).toUpperCase();
 
 function required(body, fields) {
   const missing = fields.filter(([key]) => !str(body[key]));
@@ -130,7 +132,7 @@ module.exports = function publicRoutes(db) {
       if (!type) throw new ValidationError('Unknown document type.');
       if (seen.has(type.code)) throw new ValidationError(`${type.name} was selected twice.`);
       seen.add(type.code);
-      const details = str(it.details, 300);
+      const details = up(it.details, 300);
       if (type.requiresDetails && !details) throw new ValidationError('Please specify the document for "Others".');
       const copies = parseInt(it.copies, 10) || 1;
       if (copies < 1 || copies > 10) throw new ValidationError('Number of copies must be 1 to 10.');
@@ -154,18 +156,18 @@ module.exports = function publicRoutes(db) {
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
         [
           ref,
-          str(b.patient_last, 80),
-          str(b.patient_first, 80),
-          str(b.patient_middle, 80) || null,
+          up(b.patient_last, 80),
+          up(b.patient_first, 80),
+          up(b.patient_middle, 80) || null,
           birthdate,
-          str(b.hospital_no, 40) || null,
+          up(b.hospital_no, 40) || null,
           admission,
           discharge,
-          str(b.requester_name, 160),
+          up(b.requester_name, 160),
           str(b.requester_relation, 60),
           mobile,
           email,
-          str(b.purpose, 300),
+          up(b.purpose, 300),
           pickup,
         ],
       );
@@ -234,7 +236,7 @@ module.exports = function publicRoutes(db) {
       const dup = await t.one(
         `SELECT ref_no FROM appointments WHERE department = $1 AND appt_date = $2 AND mobile = $3
          AND lower(patient_last) = lower($4) AND lower(patient_first) = lower($5) AND status <> 'CANCELLED'`,
-        [dept, date, mobile, str(b.patient_last), str(b.patient_first)],
+        [dept, date, mobile, up(b.patient_last), up(b.patient_first)],
       );
       if (dup) throw new ValidationError(`This patient already has an appointment in this clinic on that day (Ref ${dup.ref_no}).`);
       const ref = await uniqueRef(t, 'appointments', 'A');
@@ -248,15 +250,15 @@ module.exports = function publicRoutes(db) {
           date,
           time,
           patientType,
-          str(b.hospital_no, 40) || null,
-          str(b.patient_last, 80),
-          str(b.patient_first, 80),
-          str(b.patient_middle, 80) || null,
+          up(b.hospital_no, 40) || null,
+          up(b.patient_last, 80),
+          up(b.patient_first, 80),
+          up(b.patient_middle, 80) || null,
           birthdate,
           sex,
           mobile,
           email,
-          str(b.complaint, 500),
+          up(b.complaint, 500),
         ],
       );
     });
@@ -315,3 +317,4 @@ module.exports = function publicRoutes(db) {
 };
 
 module.exports.ValidationError = ValidationError;
+module.exports.rateLimit = rateLimit;

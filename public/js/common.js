@@ -72,3 +72,16 @@ async function loadCatalog() {
 
 const DATA_PRIVACY_TEXT =
   'I consent to the collection and processing of my personal and health information for the purpose of this request/appointment, in accordance with the Data Privacy Act of 2012 (RA 10173).';
+
+// Force capital letters in every typed text field. Passwords, usernames and email
+// addresses are excluded because they must be kept exactly as typed.
+const CAPS_FIELDS = ":is(input:not([type]), input[type='text'], input[type='search'], textarea):not([name='username']):not([data-nocaps])";
+document.addEventListener('input', (e) => {
+  const el = e.target;
+  if (!el.matches?.(CAPS_FIELDS)) return;
+  const upper = el.value.toUpperCase();
+  if (upper === el.value) return;
+  const { selectionStart, selectionEnd } = el;
+  el.value = upper;
+  el.setSelectionRange?.(selectionStart, selectionEnd);
+});

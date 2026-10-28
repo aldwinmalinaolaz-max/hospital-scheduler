@@ -11,14 +11,21 @@
   };
 
   // ---------- Auth ----------
+  let me = null;
   async function start() {
     try {
-      await api('/admin/me');
+      me = await api('/admin/me');
+      document.body.classList.toggle('is-admin', me.role === 'ADMIN');
+      $('#whoami').innerHTML = `${esc(me.full_name || me.username)} · <b>${me.role === 'ADMIN' ? 'Administrator' : 'Staff'}</b>`;
+      $('#whoami').classList.remove('hidden');
       $('#login').classList.add('hidden');
       $('#app').classList.remove('hidden');
       $('#logoutBtn').classList.remove('hidden');
       showTab(location.hash.slice(1) || 'dashboard');
     } catch {
+      me = null;
+      document.body.classList.remove('is-admin');
+      $('#whoami').classList.add('hidden');
       $('#login').classList.remove('hidden');
       $('#app').classList.add('hidden');
       $('#logoutBtn').classList.add('hidden');
@@ -53,13 +60,15 @@
   // ---------- Tabs ----------
   const loaders = {};
   function showTab(name) {
-    if (!loaders[name]) name = 'dashboard';
+    if (!loaders[name] || (name === 'users' && me?.role !== 'ADMIN')) name = 'dashboard';
     $$('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $$('[data-view]').forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
     history.replaceState(null, '', `#${name}`);
     loaders[name]();
   }
   $$('#tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+  const updatedBy = (row) => (row.updated_by ? `<div class="sub">by ${esc(row.updated_by)} · ${esc(row.updated_at)}</div>` : '');
 
   // ---------- Dashboard ----------
   loaders.dashboard = guard(async () => {
@@ -107,7 +116,7 @@
           <div class="sub">Purpose: ${esc(r.purpose)}</div></td>
         <td>${esc(r.requester_name)}<div class="sub">${esc(r.requester_relation)}</div><div class="sub">${esc(r.mobile)}</div></td>
         <td class="nowrap">${esc(fmtDate(r.pickup_date, { month: 'short', day: 'numeric', weekday: 'short' }))}</td>
-        <td>${badge(r.status)}${r.remarks ? `<div class="sub">${esc(r.remarks)}</div>` : ''}</td>
+        <td>${badge(r.status)}${r.remarks ? `<div class="sub">${esc(r.remarks)}</div>` : ''}${updatedBy(r)}</td>
         <td class="no-print nowrap">${quickRec(r)}<button class="btn sm secondary" data-edit-rec="${r.id}">Edit</button></td>
       </tr>`,
         )
@@ -169,7 +178,7 @@
           <div class="sub">${esc(a.mobile)}</div></td>
         <td>${esc(a.department_name)}</td>
         <td>${esc(a.complaint)}</td>
-        <td>${badge(a.status)}${a.remarks ? `<div class="sub">${esc(a.remarks)}</div>` : ''}</td>
+        <td>${badge(a.status)}${a.remarks ? `<div class="sub">${esc(a.remarks)}</div>` : ''}${updatedBy(a)}</td>
         <td class="no-print nowrap">${quickAppt(a)}<button class="btn sm secondary" data-edit-appt="${a.id}">Edit</button></td>
       </tr>`,
         )
@@ -259,7 +268,7 @@
   loaders.settings = guard(async () => {
     const { rows } = await api('/admin/closed-dates');
     $('#closedList').innerHTML = rows.length
-      ? `<table><tbody>${rows.map((r) => `<tr><td class="nowrap">${esc(fmtDate(r.date))}</td><td>${esc(r.reason)}</td><td><button class="btn sm secondary" data-del-closed="${r.date}">Remove</button></td></tr>`).join('')}</tbody></table>`
+      ? `<table><tbody>${rows.map((r) => `<tr><td class="nowrap">${esc(fmtDate(r.date))}</td><td>${esc(r.reason)}</td><td><button class="btn sm secondary admin-only" data-del-closed="${r.date}">Remove</button></td></tr>`).join('')}</tbody></table>`
       : '<p class="muted small">No closed dates set.</p>';
   });
   $('#closedForm').addEventListener('submit', guard(async (e) => {
@@ -289,6 +298,77 @@
     e.target.reset();
     $('#pwResult').textContent = 'Password updated.';
   }));
+
+  // ---------- Users ----------
+  let userRows = [];
+  const roleLabel = (r) => (r === 'ADMIN' ? 'Administrator' : 'Staff');
+  const roleOpts = (sel) => ['STAFF', 'ADMIN'].map((r) => `<option value="${r}"${r === sel ? ' selected' : ''}>${roleLabel(r)}</option>`).join('');
+  loaders.users = guard(async () => {
+    userRows = (await api('/admin/users')).rows;
+    $('#userRows').innerHTML = userRows
+      .map(
+        (x) => `<tr>
+        <td class="mono">${esc(x.username)}${x.username === me.username ? ' <span class="sub">(you)</span>' : ''}</td>
+        <td>${esc(x.full_name || '')}</td>
+        <td>${roleLabel(x.role)}</td>
+        <td>${x.active ? '<span class="badge COMPLETED">Active</span>' : '<span class="badge CANCELLED">Inactive</span>'}</td>
+        <td class="small nowrap">${esc(x.last_login_at || 'Never')}</td>
+        <td class="nowrap"><button class="btn sm secondary" data-edit-user="${x.id}">Edit</button> <button class="btn sm secondary" data-pw-user="${x.id}">Reset password</button></td>
+      </tr>`,
+      )
+      .join('');
+  });
+
+  $('#addUserBtn').addEventListener('click', () =>
+    openDialog(
+      `<h2>Add user</h2>
+       <div class="grid">
+         <label class="field">Full name<input name="full_name" required></label>
+         <label class="field">Username<span class="hint">Used to log in. Letters, numbers, dot, dash or underscore.</span><input name="username" autocomplete="off" required></label>
+         <label class="field">Role<select name="role">${roleOpts('STAFF')}</select></label>
+         <label class="field">Temporary password<span class="hint">At least 8 characters. Ask the user to change it after logging in.</span><input name="password" type="password" autocomplete="new-password" required></label>
+       </div>`,
+      async (d) => {
+        await api('/admin/users', { method: 'POST', body: d });
+        loaders.users();
+      },
+    ),
+  );
+
+  $('#userRows').addEventListener('click', (e) => {
+    const edit = e.target.closest('[data-edit-user]');
+    const pw = e.target.closest('[data-pw-user]');
+    const x = userRows.find((r) => r.id === Number((edit || pw)?.dataset.editUser || (edit || pw)?.dataset.pwUser));
+    if (!x) return;
+    const self = x.username === me.username;
+    if (edit) {
+      openDialog(
+        `<h2>Edit user <span class="mono">${esc(x.username)}</span></h2>
+         <div class="grid">
+           <label class="field">Full name<input name="full_name" value="${esc(x.full_name || '')}" required></label>
+           <label class="field">Role<select name="role" ${self ? 'disabled' : ''}>${roleOpts(x.role)}</select></label>
+           <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="active" ${x.active ? 'checked' : ''} ${self ? 'disabled' : ''}> Active (can log in)</label>
+           ${self ? '<p class="muted small">You can’t change your own role or deactivate yourself.</p>' : ''}
+         </div>`,
+        async (d) => {
+          const body = { full_name: d.full_name };
+          if (!self) Object.assign(body, { role: d.role, active: $('#dlgForm [name=active]').checked });
+          await api(`/admin/users/${x.id}`, { method: 'PATCH', body });
+          loaders.users();
+          if (self) start();
+        },
+      );
+    } else {
+      openDialog(
+        `<h2>Reset password for <span class="mono">${esc(x.username)}</span></h2>
+         <p class="muted small">They will be signed out of all devices and must log in with the new password.</p>
+         <label class="field">New password<span class="hint">At least 8 characters</span><input name="password" type="password" autocomplete="new-password" required></label>`,
+        async (d) => {
+          await api(`/admin/users/${x.id}/password`, { method: 'POST', body: { password: d.password } });
+        },
+      );
+    }
+  });
 
   // ---------- Dialog ----------
   function openDialog(html, onSave) {

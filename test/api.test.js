@@ -241,6 +241,77 @@ test('concurrent bookings cannot overfill a slot', async () => {
   assert.equal(results.filter((r) => r.status === 201).length, 2); // OPD_PATIENTS_PER_SLOT = 2
 });
 
+async function loginAs(username, password) {
+  const res = await call('/admin/login', { method: 'POST', body: { username, password } });
+  return { status: res.status, cookie: res.headers.get('set-cookie')?.split(';')[0], data: res.data };
+}
+
+test('user management: roles, deactivation, password reset, last admin', async () => {
+  const admin = await login();
+  const me = await call('/admin/me', { cookie: admin });
+  assert.equal(me.data.role, 'ADMIN');
+
+  // Create a staff user (username is case-insensitive, stored lowercase)
+  let res = await call('/admin/users', { method: 'POST', cookie: admin, body: { username: 'Maria.S', full_name: 'Maria Santos', role: 'STAFF', password: 'short' } });
+  assert.match(res.data.error, /8 characters/);
+  res = await call('/admin/users', { method: 'POST', cookie: admin, body: { username: 'Maria.S', full_name: 'Maria Santos', role: 'STAFF', password: 'records123' } });
+  assert.equal(res.status, 201);
+  assert.equal(res.data.username, 'maria.s');
+  assert.equal(res.data.full_name, 'MARIA SANTOS');
+  const staffId = res.data.id;
+  res = await call('/admin/users', { method: 'POST', cookie: admin, body: { username: 'maria.s', full_name: 'X', password: 'records123' } });
+  assert.match(res.data.error, /taken/);
+
+  // Staff can work on requests but not manage users or settings
+  let staff = await loginAs('MARIA.S', 'records123');
+  assert.equal(staff.status, 200);
+  assert.equal((await call('/admin/records', { cookie: staff.cookie })).status, 200);
+  assert.equal((await call('/admin/users', { cookie: staff.cookie })).status, 403);
+  assert.equal((await call('/admin/closed-dates', { method: 'POST', cookie: staff.cookie, body: { date: '2026-12-25', reason: 'Christmas' } })).status, 403);
+
+  // Changes are attributed to the staff member
+  const { id: recId } = await db.one("SELECT id FROM record_requests ORDER BY id LIMIT 1");
+  res = await call(`/admin/records/${recId}`, { method: 'PATCH', cookie: staff.cookie, body: { remarks: 'Checked', notify: false } });
+  assert.equal(res.data.updated_by, 'maria.s');
+
+  // Password reset signs the user out everywhere
+  await call(`/admin/users/${staffId}/password`, { method: 'POST', cookie: admin, body: { password: 'newpass123' } });
+  assert.equal((await call('/admin/me', { cookie: staff.cookie })).status, 401);
+  staff = await loginAs('maria.s', 'newpass123');
+  assert.equal(staff.status, 200);
+
+  // Deactivation signs them out and blocks login
+  await call(`/admin/users/${staffId}`, { method: 'PATCH', cookie: admin, body: { active: false } });
+  assert.equal((await call('/admin/me', { cookie: staff.cookie })).status, 401);
+  assert.equal((await loginAs('maria.s', 'newpass123')).status, 403);
+
+  // The only admin can't demote or deactivate themselves
+  const adminId = (await db.one("SELECT id FROM admins WHERE username = 'admin'")).id;
+  res = await call(`/admin/users/${adminId}`, { method: 'PATCH', cookie: admin, body: { role: 'STAFF' } });
+  assert.equal(res.status, 400);
+  // ...and another admin can't remove the last remaining admin either
+  await call(`/admin/users/${staffId}`, { method: 'PATCH', cookie: admin, body: { active: true, role: 'ADMIN' } });
+  const second = await loginAs('maria.s', 'newpass123');
+  res = await call(`/admin/users/${adminId}`, { method: 'PATCH', cookie: second.cookie, body: { active: false } });
+  assert.equal(res.status, 200);
+  res = await call(`/admin/users/${staffId}`, { method: 'PATCH', cookie: second.cookie, body: { role: 'STAFF' } });
+  assert.match(res.data.error, /own role/);
+  // restore for other tests
+  await call(`/admin/users/${adminId}`, { method: 'PATCH', cookie: second.cookie, body: { active: true } });
+  adminCookie = null;
+});
+
+test('patient-entered text is stored in capitals', async () => {
+  const { date, time } = await firstOpdSlot('ENT');
+  const res = await call('/appointments', {
+    method: 'POST',
+    body: { ...patient, patient_last: 'Reyes', patient_first: 'ana', department: 'ENT', appt_date: date, appt_time: time, patient_type: 'NEW', sex: 'F', complaint: 'ear pain', mobile: '09175550000' },
+  });
+  assert.equal(res.status, 201);
+  const row = await db.one('SELECT patient_last, patient_first, complaint FROM appointments WHERE ref_no = $1', [res.data.ref_no]);
+  assert.deepEqual(row, { patient_last: 'REYES', patient_first: 'ANA', complaint: 'EAR PAIN' });
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');

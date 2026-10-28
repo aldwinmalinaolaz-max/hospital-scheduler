@@ -7,7 +7,7 @@ const auth = require('../auth');
 const { sendSms } = require('../sms');
 const { lock } = require('../db');
 const u = require('../util');
-const { ValidationError } = require('./public');
+const { ValidationError, rateLimit } = require('./public');
 
 const COOKIE = 'hs_admin';
 
@@ -28,18 +28,21 @@ const stamp = (row) => ({ ...row, created_at: u.toStamp(row.created_at), updated
 module.exports = function adminRoutes(db) {
   const router = express.Router();
 
-  router.post('/login', async (req, res) => {
+  const sessionCookie = (req, user) =>
+    `${COOKIE}=${auth.createToken(user.username, user.session_version, config.sessionSecret)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${
+      auth.SESSION_HOURS * 3600
+    }${req.secure ? '; Secure' : ''}`;
+
+  router.post('/login', rateLimit({ windowMs: 10 * 60e3, max: 10 }), async (req, res) => {
     const { username, password } = req.body || {};
-    const admin = await db.one('SELECT * FROM admins WHERE username = $1', [String(username || '')]);
-    if (!admin || !auth.verifyPassword(String(password || ''), admin.password_hash)) {
+    const user = await db.one('SELECT * FROM admins WHERE lower(username) = lower($1)', [String(username || '').trim()]);
+    if (!user || !auth.verifyPassword(String(password || ''), user.password_hash)) {
       return res.status(401).json({ error: 'Invalid username or password.' });
     }
-    const secure = req.secure ? '; Secure' : '';
-    res.setHeader(
-      'Set-Cookie',
-      `${COOKIE}=${auth.createToken(admin.username, config.sessionSecret)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${auth.SESSION_HOURS * 3600}${secure}`,
-    );
-    res.json({ username: admin.username });
+    if (!user.active) return res.status(403).json({ error: 'This account has been deactivated. Please contact an administrator.' });
+    await db.query('UPDATE admins SET last_login_at = now() WHERE id = $1', [user.id]);
+    res.setHeader('Set-Cookie', sessionCookie(req, user));
+    res.json({ username: user.username });
   });
 
   router.post('/logout', (req, res) => {
@@ -47,22 +50,112 @@ module.exports = function adminRoutes(db) {
     res.json({ ok: true });
   });
 
-  // Everything below requires a session
-  router.use((req, res, next) => {
-    const user = auth.readToken(auth.parseCookies(req.headers.cookie)[COOKIE], config.sessionSecret);
-    if (!user) return res.status(401).json({ error: 'Please log in.' });
-    req.admin = user;
+  // Everything below requires a signed-in, active user whose session hasn't been revoked
+  router.use(async (req, res, next) => {
+    const token = auth.readToken(auth.parseCookies(req.headers.cookie)[COOKIE], config.sessionSecret);
+    const user = token && (await db.one('SELECT * FROM admins WHERE username = $1', [token.username]));
+    if (!user || !user.active || user.session_version !== token.version) return res.status(401).json({ error: 'Please log in.' });
+    req.user = user;
     next();
   });
 
-  router.get('/me', (req, res) => res.json({ username: req.admin }));
+  const adminOnly = (req, res, next) =>
+    req.user.role === 'ADMIN' ? next() : res.status(403).json({ error: 'Only administrators can do this.' });
+
+  router.get('/me', (req, res) => res.json({ username: req.user.username, full_name: req.user.full_name, role: req.user.role }));
 
   router.post('/password', async (req, res) => {
     const { current, next: newPassword } = req.body || {};
-    const admin = await db.one('SELECT * FROM admins WHERE username = $1', [req.admin]);
-    if (!auth.verifyPassword(String(current || ''), admin.password_hash)) throw new ValidationError('Current password is incorrect.');
-    if (String(newPassword || '').length < 8) throw new ValidationError('New password must be at least 8 characters.');
-    await db.query('UPDATE admins SET password_hash = $1 WHERE id = $2', [auth.hashPassword(newPassword), admin.id]);
+    if (!auth.verifyPassword(String(current || ''), req.user.password_hash)) throw new ValidationError('Current password is incorrect.');
+    checkPassword(newPassword);
+    // Signs out other devices; this one gets a fresh cookie
+    const user = await db.one(
+      'UPDATE admins SET password_hash = $1, session_version = session_version + 1 WHERE id = $2 RETURNING *',
+      [auth.hashPassword(newPassword), req.user.id],
+    );
+    res.setHeader('Set-Cookie', sessionCookie(req, user));
+    res.json({ ok: true });
+  });
+
+  // ---------- Users (administrators only) ----------
+
+  const ROLES = ['ADMIN', 'STAFF'];
+  const publicUser = (row) => ({
+    id: row.id,
+    username: row.username,
+    full_name: row.full_name,
+    role: row.role,
+    active: row.active,
+    last_login_at: row.last_login_at ? u.toStamp(row.last_login_at) : null,
+    created_at: u.toStamp(row.created_at),
+  });
+
+  function checkPassword(pw) {
+    if (String(pw || '').length < 8) throw new ValidationError('Password must be at least 8 characters.');
+  }
+
+  // Refuse changes that would leave nobody able to manage users
+  async function ensureAnotherAdmin(t, exceptId) {
+    const n = (await t.one("SELECT COUNT(*)::int AS n FROM admins WHERE role = 'ADMIN' AND active AND id <> $1", [exceptId])).n;
+    if (!n) throw new ValidationError('There must always be at least one active administrator.');
+  }
+
+  router.get('/users', adminOnly, async (req, res) => {
+    res.json({ rows: (await db.query('SELECT * FROM admins ORDER BY active DESC, role, username')).map(publicUser) });
+  });
+
+  router.post('/users', adminOnly, async (req, res) => {
+    const b = req.body || {};
+    const username = String(b.username || '').trim().toLowerCase();
+    const fullName = String(b.full_name || '').trim().toUpperCase().slice(0, 120);
+    const role = String(b.role || 'STAFF');
+    if (!/^[a-z0-9._-]{3,30}$/.test(username)) throw new ValidationError('Username must be 3–30 characters: letters, numbers, dot, dash or underscore.');
+    if (!fullName) throw new ValidationError('Please enter the full name.');
+    if (!ROLES.includes(role)) throw new ValidationError('Invalid role.');
+    checkPassword(b.password);
+    if (await db.one('SELECT 1 FROM admins WHERE lower(username) = $1', [username])) throw new ValidationError('That username is already taken.');
+    const user = await db.one(
+      'INSERT INTO admins (username, password_hash, full_name, role) VALUES ($1, $2, $3, $4) RETURNING *',
+      [username, auth.hashPassword(b.password), fullName, role],
+    );
+    res.status(201).json(publicUser(user));
+  });
+
+  router.patch('/users/:id', adminOnly, async (req, res) => {
+    const id = Number(req.params.id);
+    const b = req.body || {};
+    const user = await db.tx(async (t) => {
+      const before = await t.one('SELECT * FROM admins WHERE id = $1 FOR UPDATE', [id]);
+      if (!before) return null;
+      const fullName = b.full_name !== undefined ? String(b.full_name).trim().toUpperCase().slice(0, 120) : before.full_name;
+      const role = b.role ?? before.role;
+      const active = b.active ?? before.active;
+      if (!fullName) throw new ValidationError('Please enter the full name.');
+      if (!ROLES.includes(role)) throw new ValidationError('Invalid role.');
+      if (id === req.user.id && (role !== before.role || active !== before.active)) {
+        throw new ValidationError('You cannot change your own role or deactivate your own account.');
+      }
+      if (before.role === 'ADMIN' && before.active && (role !== 'ADMIN' || !active)) await ensureAnotherAdmin(t, id);
+      // Deactivating or changing role signs the user out so it takes effect immediately
+      const revoke = role !== before.role || active !== before.active;
+      return t.one(
+        `UPDATE admins SET full_name = $1, role = $2, active = $3,
+          session_version = session_version + CASE WHEN $4 THEN 1 ELSE 0 END WHERE id = $5 RETURNING *`,
+        [fullName, role, !!active, revoke, id],
+      );
+    });
+    if (!user) return res.status(404).json({ error: 'Not found.' });
+    res.json(publicUser(user));
+  });
+
+  router.post('/users/:id/password', adminOnly, async (req, res) => {
+    checkPassword(req.body?.password);
+    const user = await db.one(
+      'UPDATE admins SET password_hash = $1, session_version = session_version + 1 WHERE id = $2 RETURNING *',
+      [auth.hashPassword(req.body.password), Number(req.params.id)],
+    );
+    if (!user) return res.status(404).json({ error: 'Not found.' });
+    if (user.id === req.user.id) res.setHeader('Set-Cookie', sessionCookie(req, user));
     res.json({ ok: true });
   });
 
@@ -124,8 +217,8 @@ module.exports = function adminRoutes(db) {
     const after = await db.one(
       `UPDATE record_requests SET status = $1, remarks = $2, pickup_date = $3,
         reminded_pickup = CASE WHEN $3 <> pickup_date THEN FALSE ELSE reminded_pickup END,
-        updated_at = now() WHERE id = $4 RETURNING *`,
-      [status, remarks, pickup, id],
+        updated_at = now(), updated_by = $5 WHERE id = $4 RETURNING *`,
+      [status, remarks, pickup, id, req.user.username],
     );
 
     // Notify on meaningful changes
@@ -180,8 +273,8 @@ module.exports = function adminRoutes(db) {
         `UPDATE appointments SET status = $1, remarks = $2, appt_date = $3, appt_time = $4,
           reminded_day_before = CASE WHEN $5 THEN FALSE ELSE reminded_day_before END,
           reminded_hours_before = CASE WHEN $5 THEN FALSE ELSE reminded_hours_before END,
-          updated_at = now() WHERE id = $6 RETURNING *`,
-        [status, remarks, date, time, rescheduled, id],
+          updated_at = now(), updated_by = $7 WHERE id = $6 RETURNING *`,
+        [status, remarks, date, time, rescheduled, id, req.user.username],
       );
     });
 
@@ -213,7 +306,7 @@ module.exports = function adminRoutes(db) {
     res.json({ ok });
   });
 
-  router.post('/sms/test', async (req, res) => {
+  router.post('/sms/test', adminOnly, async (req, res) => {
     const to = u.normalizeMobile(req.body?.to);
     if (!to) throw new ValidationError('Invalid mobile number.');
     const message = String(req.body?.message || `${config.hospitalName}: test message from the scheduling system.`).slice(0, 480);
@@ -227,7 +320,7 @@ module.exports = function adminRoutes(db) {
     res.json({ rows: await db.query('SELECT * FROM closed_dates WHERE date >= $1 ORDER BY date', [u.addDays(u.todayStr(), -30)]) });
   });
 
-  router.post('/closed-dates', async (req, res) => {
+  router.post('/closed-dates', adminOnly, async (req, res) => {
     const date = String(req.body?.date || '');
     const reason = String(req.body?.reason || '').trim().slice(0, 120);
     if (!u.parseDate(date)) throw new ValidationError('Invalid date.');
@@ -242,7 +335,7 @@ module.exports = function adminRoutes(db) {
     res.json({ ok: true, affected });
   });
 
-  router.delete('/closed-dates/:date', async (req, res) => {
+  router.delete('/closed-dates/:date', adminOnly, async (req, res) => {
     await db.query('DELETE FROM closed_dates WHERE date = $1', [req.params.date]);
     res.json({ ok: true });
   });

@@ -18,8 +18,9 @@ function sign(value, secret) {
   return crypto.createHmac('sha256', secret).update(value).digest('base64url');
 }
 
-function createToken(username, secret) {
-  const payload = Buffer.from(JSON.stringify({ u: username, exp: Date.now() + SESSION_HOURS * 3600e3 })).toString('base64url');
+// `version` is the user's session_version; bumping it in the database signs the user out everywhere.
+function createToken(username, version, secret) {
+  const payload = Buffer.from(JSON.stringify({ u: username, v: version, exp: Date.now() + SESSION_HOURS * 3600e3 })).toString('base64url');
   return `${payload}.${sign(payload, secret)}`;
 }
 
@@ -30,7 +31,7 @@ function readToken(token, secret) {
   if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
   try {
     const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
-    return data.exp > Date.now() ? data.u : null;
+    return data.exp > Date.now() ? { username: data.u, version: data.v ?? 0 } : null;
   } catch {
     return null;
   }
