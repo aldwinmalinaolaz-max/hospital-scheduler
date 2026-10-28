@@ -27,6 +27,10 @@
       <h2>Which documents do you need?</h2>
       <p class="muted small">Select all that apply.</p>
       <div class="doc-list" id="docList"></div>
+      <label class="field" style="margin-top:16px"><span class="req">Purpose of request</span>
+        <input name="purpose" list="purposes" placeholder="e.g. PhilHealth, insurance claim, employment, legal" required>
+        <datalist id="purposes"><option>PhilHealth claim</option><option>HMO / Insurance claim</option><option>Employment / Work</option><option>School requirement</option><option>Travel / Visa</option><option>Legal / Court</option><option>Personal copy</option><option>Referral to another hospital</option></datalist>
+      </label>
       <div class="alert info small" role="note">
         <b>NOTE:</b> All requested medical documents may be claimed three (3) days after the date of request.
         Requests made on Friday that fall within the weekend will be available on Monday.
@@ -59,10 +63,6 @@
         <label class="field"><span class="req">Requester full name</span><input name="requester_name" autocomplete="name" required></label>
         <label class="field"><span class="req">Mobile number</span><span class="hint">SMS updates are sent here</span><input name="mobile" type="tel" inputmode="tel" placeholder="09XXXXXXXXX" autocomplete="tel" required></label>
         <label class="field">Email<input name="email" type="email" autocomplete="email"></label>
-        <label class="field span-2"><span class="req">Purpose of request</span>
-          <input name="purpose" list="purposes" placeholder="e.g. PhilHealth, insurance claim, employment, legal" required>
-          <datalist id="purposes"><option>PhilHealth claim</option><option>HMO / Insurance claim</option><option>Employment / Work</option><option>School requirement</option><option>Travel / Visa</option><option>Legal / Court</option><option>Personal copy</option><option>Referral to another hospital</option></datalist>
-        </label>
       </div>
       <div class="alert info small hidden" id="repNote">Representatives must present an authorization letter signed by the patient and valid IDs of both the patient and representative upon pickup.</div>
       <div class="actions"><button type="button" class="btn secondary" data-prev>Back</button><button type="button" class="btn" data-next>Next</button></div>

@@ -89,6 +89,7 @@
         if (!selected.size) return 'Please select at least one document.';
         if (selected.has('OTHERS') && !selected.get('OTHERS').details) return 'Please specify the document you need under "Others".';
         if ([...selected.values()].some((v) => v.copies < 1 || v.copies > 10)) return 'Copies must be between 1 and 10.';
+        if (!form.purpose.value.trim()) return 'Please enter the purpose of your request.';
       }
       if (step === 2) {
         const panel = $('[data-panel="2"]');
