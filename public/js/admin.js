@@ -181,7 +181,7 @@
         <td class="nowrap"><b>${fmtTime(a.appt_time)}</b><div class="sub">${esc(fmtDate(a.appt_date, { month: 'short', day: 'numeric', weekday: 'short' }))}</div></td>
         <td class="mono">${esc(a.ref_no)}</td>
         <td>${esc(a.patient_last)}, ${esc(a.patient_first)} ${esc(a.patient_middle || '')}
-          <div class="sub">${a.patient_type === 'NEW' ? 'New' : 'Returning'} · ${esc(a.sex)} · DOB ${esc(a.birthdate)}${a.hospital_no ? ` · #${esc(a.hospital_no)}` : ''}</div>
+          <div class="sub">${a.patient_type === 'NEW' ? 'New' : 'Returning'} · ${esc(a.sex)} · DOB ${esc(a.birthdate)}${a.hospital_no ? ` · HRN ${esc(a.hospital_no)}` : ''}</div>
           <div class="sub">${esc(a.mobile)}</div></td>
         <td>${esc(a.department_name)}</td>
         <td>${esc(a.complaint)}</td>
