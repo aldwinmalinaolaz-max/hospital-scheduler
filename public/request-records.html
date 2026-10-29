@@ -32,8 +32,7 @@
       <p class="muted small">Select all that apply.</p>
       <div class="doc-list" id="docList"></div>
       <label class="field" style="margin-top:16px"><span class="req">Purpose of request</span>
-        <input name="purpose" list="purposes" placeholder="e.g. PhilHealth, insurance claim, employment, legal" required>
-        <datalist id="purposes"><option>PhilHealth claim</option><option>HMO / Insurance claim</option><option>Employment / Work</option><option>School requirement</option><option>Travel / Visa</option><option>Legal / Court</option><option>Personal copy</option><option>Referral to another hospital</option></datalist>
+        <input name="purpose" placeholder="e.g. PhilHealth, insurance claim, employment, legal" required>
       </label>
       <div class="alert info small" role="note">
         <b>NOTE:</b> All requested medical documents may be claimed three (3) days after the date of request.
@@ -50,7 +49,7 @@
         <label class="field"><span class="req">First name</span><input name="patient_first" autocomplete="given-name" required></label>
         <label class="field">Middle name<input name="patient_middle" autocomplete="additional-name"></label>
         <label class="field"><span class="req">Birthdate</span><input type="date" name="birthdate" required></label>
-        <label class="field">Hospital / Case no.<span class="hint">If known</span><input name="hospital_no"></label>
+        <label class="field">Hospital Reference No. (HRN)<span class="hint">If known</span><input name="hospital_no"></label>
         <span></span>
         <label class="field">Date of admission / visit<input type="date" name="admission_date"></label>
         <label class="field">Date of discharge<input type="date" name="discharge_date"></label>
@@ -68,7 +67,7 @@
         <label class="field"><span class="req">Mobile number</span><span class="hint">SMS updates are sent here</span><input name="mobile" type="tel" inputmode="tel" placeholder="09XXXXXXXXX" autocomplete="tel" required></label>
         <label class="field">Email<input name="email" type="email" autocomplete="email"></label>
       </div>
-      <div class="alert info small hidden" id="repNote">Representatives must present an authorization letter signed by the patient and valid IDs of both the patient and representative upon pickup.</div>
+      <div class="alert info small hidden" id="repNote">Representatives must present an authorization letter signed by the patient and representative, plus their valid IDs, when claiming.</div>
       <div class="actions"><button type="button" class="btn secondary" data-prev>Back</button><button type="button" class="btn" data-next>Next</button></div>
     </section>
 

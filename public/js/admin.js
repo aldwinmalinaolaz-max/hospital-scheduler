@@ -117,7 +117,7 @@
           (r) => `<tr>
         <td class="mono">${esc(r.ref_no)}<div class="sub">${esc(r.created_at)}</div></td>
         <td>${esc(r.patient_last)}, ${esc(r.patient_first)} ${esc(r.patient_middle || '')}
-          <div class="sub">DOB ${esc(r.birthdate)}${r.hospital_no ? ` · #${esc(r.hospital_no)}` : ''}</div>
+          <div class="sub">DOB ${esc(r.birthdate)}${r.hospital_no ? ` · HRN ${esc(r.hospital_no)}` : ''}</div>
           ${r.admission_date ? `<div class="sub">Adm ${esc(r.admission_date)}${r.discharge_date ? ` – ${esc(r.discharge_date)}` : ''}</div>` : ''}</td>
         <td>${r.items.map((i) => `${esc(i.name)}${i.details ? ` <i>(${esc(i.details)})</i>` : ''} ×${i.copies}`).join('<br>')}
           <div class="sub">Purpose: ${esc(r.purpose)}</div></td>

@@ -3,7 +3,7 @@
 
 const COMMON_REQS = [
   'Valid government-issued ID of the patient',
-  'If requested by a representative: authorization letter signed by the patient, plus valid IDs of both patient and representative',
+  'If requested by a representative: authorization letter signed by the patient and representative, plus their valid IDs.',
   'If the patient is a minor or deceased: proof of relationship (e.g. birth/marriage certificate)',
 ];
 
