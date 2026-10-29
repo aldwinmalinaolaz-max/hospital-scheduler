@@ -6,6 +6,7 @@ const msg = require('../messages');
 const { sendSms } = require('../sms');
 const { lock } = require('../db');
 const faq = require('../faq');
+const directory = require('../directory');
 const u = require('../util');
 
 class ValidationError extends Error {}
@@ -266,6 +267,40 @@ module.exports = function publicRoutes(db) {
 
     await sendSms(db, { to: appt.mobile, message: msg.apptBooked(appt), kind: 'APPT_BOOKED', refNo: appt.ref_no });
     res.status(201).json(publicAppointment(appt));
+  });
+
+  // ---- Hospital Directory & Navigation ----
+
+  router.get('/directory', async (req, res) => {
+    const [entries, guides, maps, info] = await Promise.all([
+      db.query(
+        `SELECT id, name, category, description, location, hours, phone, email, services, keywords, opd_code, map_id, pin_x, pin_y
+         FROM directory_entries WHERE active ORDER BY sort_order, name`,
+      ),
+      db.query('SELECT id, title, summary, steps, requirements, office_id, link_url, link_label FROM guides WHERE active ORDER BY sort_order, title'),
+      db.query("SELECT id, title, description, extract(epoch FROM updated_at)::bigint AS v FROM maps ORDER BY sort_order, title"),
+      db.query("SELECT key, value FROM site_info WHERE value <> ''"),
+    ]);
+    const contact = Object.fromEntries(info.map((r) => [r.key, r.value]));
+    // Only https links leave the site
+    for (const k of ['facebook', 'website']) if (contact[k] && !/^https:\/\//i.test(contact[k])) delete contact[k];
+    res.json({
+      hospitalName: config.hospitalName,
+      entries,
+      guides,
+      maps: maps.map((m) => ({ id: m.id, title: m.title, description: m.description, url: `/api/maps/${m.id}/image?v=${m.v}` })),
+      contact,
+      clinics: directory.clinicSchedules(),
+    });
+  });
+
+  router.get('/maps/:id/image', async (req, res) => {
+    const m = await db.one('SELECT image, mime FROM maps WHERE id = $1', [Number(req.params.id)]);
+    if (!m) return res.status(404).json({ error: 'Map not found.' });
+    res.setHeader('Content-Type', m.mime);
+    // The URL carries ?v=<last update>, so it is safe to cache for a long time
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.end(Buffer.from(m.image));
   });
 
   // ---- FAQ assistant ----

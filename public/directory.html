@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hospital Directory · Zamboanga Regional Medical Center</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="icon" type="image/png" href="/img/favicon.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href="/"><img class="brand-logo" src="/img/logo.png" alt="" width="60" height="60"><span class="brand-text"><span data-hospital>Zamboanga Regional Medical Center</span><small>Online Scheduling</small></span></a>
+</div></header>
+<div class="layout">
+<nav class="sidenav" aria-label="Main menu">
+  <a href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><span>Home</span></a>
+  <a href="/request-records"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg><span>Request Records</span></a>
+  <a href="/book-opd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4"/></svg><span>Book OPD Appointment</span></a>
+  <a href="/track"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Track / Cancel</span></a>
+  <a href="/directory" class="active" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z"/><path d="M8 2v16M16 6v16"/></svg><span>Hospital Directory</span></a>
+</nav>
+<div class="content">
+<main class="directory">
+  <h1>Hospital Directory</h1>
+  <p class="muted">Find departments, clinics and offices, their schedules and locations, and what to bring for common transactions.</p>
+  <div class="alert info hidden" id="notice"></div>
+  <nav class="dir-jump" aria-label="Sections">
+    <a href="#directory">Directory</a><a href="#schedules">Schedules</a><a href="#requirements">Requirements</a><a href="#contact">Contact</a><a href="#maps">Maps</a>
+  </nav>
+
+  <section id="directory" class="dir-section">
+    <h2>Departments, clinics &amp; offices</h2>
+    <div class="dir-search">
+      <input type="search" id="dirSearch" placeholder="Search e.g. cashier, x-ray, pediatrics" aria-label="Search the directory" data-nocaps>
+    </div>
+    <div class="dir-cats" id="dirCats" role="group" aria-label="Filter by category"></div>
+    <div class="dir-list" id="dirList"><p class="muted">Loading…</p></div>
+  </section>
+
+  <section id="schedules" class="dir-section">
+    <h2>Operating hours &amp; clinic schedules</h2>
+    <div class="card">
+      <h3>OPD clinic schedules</h3>
+      <div class="table-wrap plain"><table><thead><tr><th>Clinic</th><th>Days</th><th>Hours</th><th></th></tr></thead><tbody id="clinicRows"></tbody></table></div>
+      <p class="muted small" style="margin:8px 0 0">Closed on holidays. Book online to get a time slot.</p>
+    </div>
+    <div class="card" id="officeHoursCard">
+      <h3>Offices &amp; services</h3>
+      <div class="table-wrap plain"><table><thead><tr><th>Office / service</th><th>Hours</th></tr></thead><tbody id="officeRows"></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="requirements" class="dir-section">
+    <h2>Requirements for common transactions</h2>
+    <div id="guideList"></div>
+  </section>
+
+  <section id="contact" class="dir-section">
+    <h2>Contact information</h2>
+    <div class="card" id="contactCard"></div>
+  </section>
+
+  <section id="maps" class="dir-section">
+    <h2>Building &amp; service-area maps</h2>
+    <div class="map-grid" id="mapGrid"></div>
+  </section>
+</main>
+
+<dialog id="mapViewer" class="map-viewer" aria-labelledby="mapTitle">
+  <div class="mv-head">
+    <div><b id="mapTitle"></b><small id="mapSub"></small></div>
+    <div class="mv-tools">
+      <button type="button" class="btn sm secondary" data-zoom="-1" aria-label="Zoom out">−</button>
+      <button type="button" class="btn sm secondary" data-zoom="1" aria-label="Zoom in">+</button>
+      <button type="button" class="btn sm" id="mapClose">Close</button>
+    </div>
+  </div>
+  <div class="mv-body"><div class="mv-canvas" id="mapCanvas"><img id="mapImg" alt=""></div></div>
+  <div class="mv-places" id="mapPlaces"></div>
+</dialog>
+<footer><span data-hospital>Zamboanga Regional Medical Center</span> · Online Scheduling · <a href="/admin">Staff login</a></footer>
+</div>
+</div>
+<script src="/js/common.js"></script>
+<script src="/js/chat.js" defer></script>
+<script src="/js/directory.js"></script>
+</body></html>

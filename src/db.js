@@ -8,6 +8,7 @@ const path = require('node:path');
 const config = require('./config');
 const { hashPassword } = require('./auth');
 const { SEEDS } = require('./faq');
+const directory = require('./directory');
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS record_requests (
@@ -133,6 +134,55 @@ const SCHEMA = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
 
+  -- Hospital Directory & Navigation
+  CREATE TABLE IF NOT EXISTS maps (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    image BYTEA NOT NULL,
+    mime TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 100,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE TABLE IF NOT EXISTS directory_entries (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'Department',
+    description TEXT,
+    location TEXT,
+    hours TEXT,
+    phone TEXT,
+    email TEXT,
+    services TEXT,
+    keywords TEXT NOT NULL DEFAULT '',
+    opd_code TEXT,
+    map_id INTEGER REFERENCES maps(id) ON DELETE SET NULL,
+    pin_x REAL,
+    pin_y REAL,
+    sort_order INTEGER NOT NULL DEFAULT 100,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_by TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE TABLE IF NOT EXISTS guides (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    summary TEXT,
+    steps TEXT,
+    requirements TEXT,
+    office_id INTEGER REFERENCES directory_entries(id) ON DELETE SET NULL,
+    link_url TEXT,
+    link_label TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 100,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_by TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE TABLE IF NOT EXISTS site_info (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+  );
+
   ALTER TABLE record_requests ENABLE ROW LEVEL SECURITY;
   ALTER TABLE record_request_items ENABLE ROW LEVEL SECURITY;
   ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
@@ -141,6 +191,10 @@ const SCHEMA = `
   ALTER TABLE admins ENABLE ROW LEVEL SECURITY;
   ALTER TABLE faqs ENABLE ROW LEVEL SECURITY;
   ALTER TABLE faq_unanswered ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE maps ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE directory_entries ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE guides ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE site_info ENABLE ROW LEVEL SECURITY;
 `;
 
 function wrap(run, execRaw) {
@@ -200,6 +254,24 @@ async function open({ url = config.databaseUrl, dataDir } = {}) {
       "INSERT INTO admins (username, password_hash, full_name, role) SELECT $1, $2, 'ADMINISTRATOR', 'ADMIN' WHERE NOT EXISTS (SELECT 1 FROM admins)",
       [config.admin.username.toLowerCase(), hashPassword(config.admin.password)],
     );
+    // Starter directory entries and transaction guides, only when there are none yet
+    if (!(await t.one('SELECT 1 FROM directory_entries LIMIT 1'))) {
+      for (const e of directory.seedEntries()) {
+        await t.query(
+          `INSERT INTO directory_entries (name, category, description, hours, services, keywords, opd_code, sort_order)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [e.name, e.category, e.description || null, e.hours || null, e.services || null, e.keywords || '', e.opd_code || null, e.sort_order],
+        );
+      }
+    }
+    if (!(await t.one('SELECT 1 FROM guides LIMIT 1'))) {
+      for (const g of directory.seedGuides()) {
+        await t.query(
+          'INSERT INTO guides (title, summary, steps, requirements, link_url, link_label, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [g.title, g.summary, g.steps, g.requirements, g.link_url || null, g.link_label || null, g.sort_order],
+        );
+      }
+    }
     // Starter FAQs, only when there are none yet (staff edit them in Admin → FAQs)
     if (!(await t.one('SELECT 1 FROM faqs LIMIT 1'))) {
       for (const [i, f] of SEEDS.entries()) {

@@ -413,3 +413,88 @@ fieldset.access:disabled label { opacity: 0.55; }
   .chat.open { left: 12px; }
   .chat-panel { width: 100%; height: calc(100vh - 100px); }
 }
+
+/* ---------- Hospital Directory ---------- */
+main.directory { max-width: 980px; }
+.dir-jump {
+  position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; overflow-x: auto;
+  padding: 10px 0; margin-bottom: 8px; background: var(--bg);
+}
+.dir-jump a {
+  white-space: nowrap; text-decoration: none; font-weight: 600; font-size: 0.88rem;
+  padding: 6px 14px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); color: var(--header);
+}
+.dir-jump a:hover { border-color: var(--primary); }
+@media (prefers-color-scheme: dark) { .dir-jump a { color: var(--text); } }
+.dir-section { scroll-margin-top: 60px; margin-bottom: 28px; }
+.dir-section > h2 { border-left: 4px solid var(--accent); padding-left: 10px; }
+.dir-search input { font-size: 1rem; min-height: 46px; }
+.dir-cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
+.chip-filter {
+  font: inherit; font-size: 0.85rem; cursor: pointer; padding: 5px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+}
+.chip-filter.on { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.dir-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+.dir-list .card { margin: 0; }
+.dir-card { display: flex; flex-direction: column; gap: 6px; }
+.dir-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.dir-card-head h3 { margin: 0; }
+.dir-card p { margin: 0; }
+.dir-facts { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 4px; font-size: 0.9rem; }
+.dir-facts li { display: flex; gap: 8px; align-items: flex-start; }
+.dir-facts svg { width: 16px; height: 16px; flex: none; margin-top: 3px; color: var(--primary); }
+.dir-services summary { cursor: pointer; font-size: 0.88rem; color: var(--primary); font-weight: 600; }
+.dir-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 6px; }
+.dir-actions svg { width: 15px; height: 15px; }
+.table-wrap.plain { border: 0; }
+.guide { padding: 0; }
+.guide summary { cursor: pointer; padding: 14px 18px; display: flex; flex-direction: column; gap: 2px; list-style: none; }
+.guide summary::-webkit-details-marker { display: none; }
+.guide summary::after { content: '+'; position: absolute; right: 18px; font-size: 1.3rem; color: var(--primary); }
+.guide { position: relative; }
+.guide[open] summary::after { content: '−'; }
+.guide[open] summary { border-bottom: 1px solid var(--border); }
+.guide > :not(summary) { margin-inline: 18px; }
+.guide > ol { padding-left: 20px; }
+.guide > :last-child { margin-bottom: 16px; }
+.guide h4 { margin-block: 12px 6px; font-size: 0.92rem; }
+.checklist { list-style: none; padding: 0; margin-block: 0; display: grid; gap: 4px; }
+.checklist li::before { content: '✓'; color: var(--primary); font-weight: 700; margin-right: 8px; }
+.map-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.map-card { display: flex; flex-direction: column; gap: 4px; text-align: left; cursor: pointer; font: inherit; color: inherit; margin: 0; }
+.map-card img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; background: var(--surface-2); margin-bottom: 6px; }
+.map-card:hover { border-color: var(--primary); }
+
+dialog.map-viewer { width: min(1100px, calc(100vw - 16px)); max-width: none; height: calc(100vh - 32px); max-height: none; padding: 0; }
+dialog.map-viewer[open] { display: flex; flex-direction: column; }
+.mv-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.mv-head div:first-child { display: flex; flex-direction: column; min-width: 0; }
+.mv-head small { color: var(--muted); }
+.mv-tools { display: flex; gap: 6px; flex: none; }
+.mv-body { flex: 1; overflow: auto; background: var(--surface-2); }
+.mv-canvas { position: relative; width: 100%; margin: 0 auto; }
+.mv-canvas img { display: block; width: 100%; height: auto; }
+.mv-pin {
+  position: absolute; transform: translate(-50%, -50%); width: 28px; height: 28px; border-radius: 50%;
+  background: var(--header); color: #fff; border: 2px solid #fff; font: 700 12px/1 var(--font); cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.mv-pin.on { background: var(--accent); color: var(--accent-ink); width: 36px; height: 36px; font-size: 14px; z-index: 2; animation: pin-pulse 1.4s ease-out 3; }
+@keyframes pin-pulse { 0% { box-shadow: 0 0 0 0 rgba(242, 201, 76, 0.8); } 100% { box-shadow: 0 0 0 18px rgba(242, 201, 76, 0); } }
+@media (prefers-reduced-motion: reduce) { .mv-pin.on { animation: none; } }
+.mv-places { display: flex; gap: 6px; overflow-x: auto; padding: 10px 14px; border-top: 1px solid var(--border); }
+.mv-places button {
+  display: flex; align-items: center; gap: 6px; white-space: nowrap; font: inherit; font-size: 0.85rem; cursor: pointer;
+  padding: 5px 12px 5px 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+}
+.mv-places button span { background: var(--header); color: #fff; border-radius: 50%; width: 20px; height: 20px; display: grid; place-items: center; font-size: 0.72rem; font-weight: 700; }
+.mv-places button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, var(--surface)); }
+
+/* Staff panel: card header with an action button */
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.card-head h3 { margin: 0; }
+.pin-picker { position: relative; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; cursor: crosshair; background: var(--surface-2); }
+.pin-picker img { display: block; width: 100%; height: auto; }
+.pin-picker .mv-pin { pointer-events: none; }
+dialog.wide { width: min(760px, calc(100vw - 32px)); }

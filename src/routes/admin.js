@@ -9,6 +9,7 @@ const { lock } = require('../db');
 const u = require('../util');
 const { ValidationError, rateLimit } = require('./public');
 const faq = require('../faq');
+const directory = require('../directory');
 
 const COOKIE = 'hs_admin';
 
@@ -34,7 +35,7 @@ module.exports = function adminRoutes(db) {
       auth.SESSION_HOURS * 3600
     }${req.secure ? '; Secure' : ''}`;
 
-  router.post('/login', rateLimit({ windowMs: 10 * 60e3, max: 10 }), async (req, res) => {
+  router.post('/login', rateLimit({ windowMs: 10 * 60e3, max: config.loginRateLimit }), async (req, res) => {
     const { username, password } = req.body || {};
     const user = await db.one('SELECT * FROM admins WHERE lower(username) = lower($1)', [String(username || '').trim()]);
     if (!user || !auth.verifyPassword(String(password || ''), user.password_hash)) {
@@ -435,6 +436,188 @@ module.exports = function adminRoutes(db) {
 
   router.delete('/faq-unanswered', adminOnly, async (req, res) => {
     await db.query('DELETE FROM faq_unanswered');
+    res.json({ ok: true });
+  });
+
+  // ---------- Hospital Directory (administrators only) ----------
+
+  const text = (v, max) => {
+    const s = String(v ?? '').trim().slice(0, max);
+    return s || null;
+  };
+  const order = (v) => {
+    const n = parseInt(v ?? 100, 10);
+    if (Number.isNaN(n)) throw new ValidationError('Order must be a number.');
+    return n;
+  };
+  const checkLink = (url) => {
+    if (!directory.safeLink(url)) throw new ValidationError('Links must be a page on this site (starting with /) or an https:// address.');
+  };
+
+  async function cleanEntry(b, before = {}) {
+    const v = (k) => (b[k] !== undefined ? b[k] : before[k]);
+    const name = text(v('name'), 120);
+    if (!name) throw new ValidationError('Please enter the name.');
+    const category = String(v('category') || 'Department');
+    if (!directory.CATEGORIES.includes(category)) throw new ValidationError('Invalid category.');
+    const email = text(v('email'), 120);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ValidationError('Please enter a valid email address.');
+    const opdCode = text(v('opd_code'), 20);
+    if (opdCode && !catalog.department(opdCode)) throw new ValidationError('Unknown OPD clinic.');
+    const mapId = v('map_id') ? Number(v('map_id')) : null;
+    if (mapId && !(await db.one('SELECT 1 FROM maps WHERE id = $1', [mapId]))) throw new ValidationError('That map no longer exists.');
+    const pin = (k) => {
+      const raw = v(k);
+      if (!mapId || raw === null || raw === undefined || raw === '') return null;
+      const n = Number(raw);
+      if (!(n >= 0 && n <= 100)) throw new ValidationError('Map pin position is invalid.');
+      return n;
+    };
+    const keywords = String(v('keywords') || '')
+      .split(',')
+      .map((k) => k.trim().toLowerCase())
+      .filter(Boolean)
+      .join(', ')
+      .slice(0, 1000);
+    return [
+      name, category, text(v('description'), 1000), text(v('location'), 200), text(v('hours'), 300), text(v('phone'), 80), email,
+      text(v('services'), 3000), keywords, opdCode, mapId, pin('pin_x'), pin('pin_y'), order(v('sort_order')), v('active') ?? true,
+    ];
+  }
+
+  function cleanGuide(b, before = {}) {
+    const v = (k) => (b[k] !== undefined ? b[k] : before[k]);
+    const title = text(v('title'), 150);
+    if (!title) throw new ValidationError('Please enter the title.');
+    const linkUrl = text(v('link_url'), 300);
+    checkLink(linkUrl);
+    const officeId = v('office_id') ? Number(v('office_id')) : null;
+    return [
+      title, text(v('summary'), 500), text(v('steps'), 3000), text(v('requirements'), 3000), officeId,
+      linkUrl, linkUrl ? text(v('link_label'), 60) : null, order(v('sort_order')), v('active') ?? true,
+    ];
+  }
+
+  // Map images arrive as a data URL (resized in the browser); max 3 MB after decoding
+  function decodeImage(dataUrl) {
+    const m = /^data:image\/[a-z+.-]+;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
+    if (!m) throw new ValidationError('Please choose a PNG, JPG or WebP image.');
+    const buf = Buffer.from(m[1], 'base64');
+    if (buf.length > 3 * 1024 * 1024) throw new ValidationError('The image is too large (max 3 MB). Please use a smaller image.');
+    const mime = directory.imageType(buf);
+    if (!mime) throw new ValidationError('Please choose a PNG, JPG or WebP image.');
+    return { buf, mime };
+  }
+
+  const mapMeta = (m) => ({ id: m.id, title: m.title, description: m.description, sort_order: m.sort_order, url: `/api/maps/${m.id}/image?v=${new Date(m.updated_at).getTime()}` });
+
+  router.get('/directory', adminOnly, async (req, res) => {
+    const [entries, guides, maps, info] = await Promise.all([
+      db.query('SELECT * FROM directory_entries ORDER BY sort_order, name'),
+      db.query('SELECT * FROM guides ORDER BY sort_order, title'),
+      db.query('SELECT id, title, description, sort_order, updated_at FROM maps ORDER BY sort_order, title'),
+      db.query('SELECT key, value FROM site_info'),
+    ]);
+    const values = Object.fromEntries(info.map((r) => [r.key, r.value]));
+    res.json({
+      entries: entries.map(stamp),
+      guides: guides.map(stamp),
+      maps: maps.map(mapMeta),
+      contact: directory.SITE_FIELDS.map((f) => ({ ...f, value: values[f.key] || '' })),
+      categories: directory.CATEGORIES,
+      clinics: catalog.DEPARTMENTS.map(({ code, name }) => ({ code, name })),
+    });
+  });
+
+  const ENTRY_COLS = 'name, category, description, location, hours, phone, email, services, keywords, opd_code, map_id, pin_x, pin_y, sort_order, active';
+  router.post('/directory/entries', adminOnly, async (req, res) => {
+    const row = await db.one(
+      `INSERT INTO directory_entries (${ENTRY_COLS}, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+      [...(await cleanEntry(req.body || {})), req.user.username],
+    );
+    res.status(201).json(stamp(row));
+  });
+  router.patch('/directory/entries/:id', adminOnly, async (req, res) => {
+    const before = await db.one('SELECT * FROM directory_entries WHERE id = $1', [Number(req.params.id)]);
+    if (!before) return res.status(404).json({ error: 'Not found.' });
+    const row = await db.one(
+      `UPDATE directory_entries SET (${ENTRY_COLS}, updated_by, updated_at) = ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now())
+       WHERE id = $17 RETURNING *`,
+      [...(await cleanEntry(req.body || {}, before)), req.user.username, before.id],
+    );
+    res.json(stamp(row));
+  });
+  router.delete('/directory/entries/:id', adminOnly, async (req, res) => {
+    await db.query('DELETE FROM directory_entries WHERE id = $1', [Number(req.params.id)]);
+    res.json({ ok: true });
+  });
+
+  const GUIDE_COLS = 'title, summary, steps, requirements, office_id, link_url, link_label, sort_order, active';
+  router.post('/directory/guides', adminOnly, async (req, res) => {
+    const row = await db.one(`INSERT INTO guides (${GUIDE_COLS}, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`, [
+      ...cleanGuide(req.body || {}),
+      req.user.username,
+    ]);
+    res.status(201).json(stamp(row));
+  });
+  router.patch('/directory/guides/:id', adminOnly, async (req, res) => {
+    const before = await db.one('SELECT * FROM guides WHERE id = $1', [Number(req.params.id)]);
+    if (!before) return res.status(404).json({ error: 'Not found.' });
+    const row = await db.one(
+      `UPDATE guides SET (${GUIDE_COLS}, updated_by, updated_at) = ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now()) WHERE id = $11 RETURNING *`,
+      [...cleanGuide(req.body || {}, before), req.user.username, before.id],
+    );
+    res.json(stamp(row));
+  });
+  router.delete('/directory/guides/:id', adminOnly, async (req, res) => {
+    await db.query('DELETE FROM guides WHERE id = $1', [Number(req.params.id)]);
+    res.json({ ok: true });
+  });
+
+  router.put('/directory/contact', adminOnly, async (req, res) => {
+    const b = req.body || {};
+    for (const f of directory.SITE_FIELDS) {
+      if (b[f.key] === undefined) continue;
+      const value = String(b[f.key] ?? '').trim().slice(0, 500);
+      if ((f.key === 'facebook' || f.key === 'website') && value && !/^https:\/\/\S+$/i.test(value)) {
+        throw new ValidationError(`${f.label}: please enter a full https:// address.`);
+      }
+      await db.query('INSERT INTO site_info (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = excluded.value', [f.key, value]);
+    }
+    res.json({ ok: true });
+  });
+
+  const bigJson = express.json({ limit: '6mb' });
+  router.post('/maps', adminOnly, bigJson, async (req, res) => {
+    const b = req.body || {};
+    const title = text(b.title, 120);
+    if (!title) throw new ValidationError('Please enter the map title.');
+    const { buf, mime } = decodeImage(b.image);
+    const row = await db.one(
+      'INSERT INTO maps (title, description, image, mime, sort_order) VALUES ($1, $2, $3, $4, $5) RETURNING id, title, description, sort_order, updated_at',
+      [title, text(b.description, 500), buf, mime, order(b.sort_order)],
+    );
+    res.status(201).json(mapMeta(row));
+  });
+  router.patch('/maps/:id', adminOnly, bigJson, async (req, res) => {
+    const b = req.body || {};
+    const before = await db.one('SELECT id, title, description, sort_order FROM maps WHERE id = $1', [Number(req.params.id)]);
+    if (!before) return res.status(404).json({ error: 'Not found.' });
+    const title = text(b.title ?? before.title, 120);
+    if (!title) throw new ValidationError('Please enter the map title.');
+    const img = b.image ? decodeImage(b.image) : null;
+    const row = await db.one(
+      `UPDATE maps SET title = $1, description = $2, sort_order = $3,
+         image = COALESCE($4, image), mime = COALESCE($5, mime), updated_at = now()
+       WHERE id = $6 RETURNING id, title, description, sort_order, updated_at`,
+      [title, b.description !== undefined ? text(b.description, 500) : before.description, order(b.sort_order ?? before.sort_order), img?.buf ?? null, img?.mime ?? null, before.id],
+    );
+    res.json(mapMeta(row));
+  });
+  router.delete('/maps/:id', adminOnly, async (req, res) => {
+    // Entries on this map keep their details but lose the pin
+    await db.query('UPDATE directory_entries SET pin_x = NULL, pin_y = NULL WHERE map_id = $1', [Number(req.params.id)]);
+    await db.query('DELETE FROM maps WHERE id = $1', [Number(req.params.id)]);
     res.json({ ok: true });
   });
 

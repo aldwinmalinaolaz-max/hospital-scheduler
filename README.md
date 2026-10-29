@@ -94,6 +94,22 @@ Each call sends any reminders that are due. A reminder is never sent twice, even
 ### Tracking
 Patients look up a request with its reference number and their mobile number. Records references start with `R-` and appointment references start with `A-`.
 
+### Hospital Directory & Navigation
+The public **Hospital Directory** page (`/directory`) is a phone-friendly guide with five sections:
+- **Directory:** departments, clinics and offices, with search and category filters. Each shows its location, hours, phone, email and services, plus **Show on map**, **Book appointment** (OPD clinics) and call links.
+- **Schedules:** OPD clinic days and hours (taken from the booking settings, so they always match) and office hours.
+- **Requirements:** step-by-step guides for common transactions (what to bring, steps, where to go).
+- **Contact:** address, phone numbers, email, Facebook, website and an **Open in Google Maps** link.
+- **Maps:** building and floor maps. Places with a pin are numbered on the map, and **Show on map** highlights the place and zooms to it.
+
+Administrators manage everything in **Admin → Directory**:
+- **Places:** add, edit or hide departments, clinics and offices. Link an OPD clinic to use its booking schedule and show a Book button.
+- **Maps:** upload a floor plan or photo (PNG/JPG/WebP; large photos are shrunk in the browser before upload). Then edit a place, choose the map and **click on the map** to put its pin.
+- **Guides:** requirements and steps, one per line, with an optional button link and "where to go" office.
+- **Contact information:** empty fields are hidden on the public page.
+
+Starter content (the OPD clinics, the Medical Records Section, the Emergency Room and four transaction guides) is created on first start. Locations, phone numbers, maps and contact details are left blank on purpose. Please fill them in with the hospital's real information.
+
 ### FAQ assistant
 Every public page has a **Questions? Ask us** button that opens a chat window. Visitors can tap a suggested question or type their own. The assistant picks the staff-written FAQ whose keywords best match the message, so it only ever gives answers you have approved.
 

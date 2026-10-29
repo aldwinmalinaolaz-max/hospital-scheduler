@@ -19,12 +19,14 @@ function createApp(db) {
   const app = express();
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '100kb' }));
+  // Map uploads carry an image, so they get a larger body limit (set on that route); everything else stays small
+  const smallJson = express.json({ limit: '100kb' });
+  app.use((req, res, next) => (req.path.startsWith('/api/admin/maps') ? next() : smallJson(req, res, next)));
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'same-origin');
-    if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+    if (req.path.startsWith('/api/') && !/^\/api\/maps\/\d+\/image$/.test(req.path)) res.setHeader('Cache-Control', 'no-store');
     next();
   });
 
@@ -45,6 +47,7 @@ function createApp(db) {
   app.use((err, req, res, next) => {
     if (err instanceof publicRoutes.ValidationError) return res.status(400).json({ error: err.message });
     if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid request body.' });
+    if (err.type === 'entity.too.large') return res.status(413).json({ error: 'The upload is too large.' });
     console.error(err);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
   });

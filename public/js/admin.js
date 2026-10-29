@@ -63,7 +63,7 @@
   // ---------- Tabs ----------
   const loaders = {};
   function showTab(name) {
-    const allowed = { users: me?.role === 'ADMIN', faqs: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
+    const allowed = { users: me?.role === 'ADMIN', faqs: me?.role === 'ADMIN', directory: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
     if (!loaders[name] || allowed[name] === false) name = 'dashboard';
     $$('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $$('[data-view]').forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -503,9 +503,244 @@
     loaders.faqs();
   }));
 
+  // ---------- Hospital Directory ----------
+  let dir = { entries: [], guides: [], maps: [], contact: [], categories: [], clinics: [] };
+  const optList = (items, sel, empty) =>
+    (empty !== undefined ? `<option value="">${esc(empty)}</option>` : '') +
+    items.map(([v, label]) => `<option value="${esc(v)}"${String(v) === String(sel ?? '') ? ' selected' : ''}>${esc(label)}</option>`).join('');
+  const shown = (on) => (on ? '<span class="badge COMPLETED">Shown</span>' : '<span class="badge CANCELLED">Hidden</span>');
+
+  loaders.directory = guard(async () => {
+    dir = await api('/admin/directory');
+    const mapTitle = (id) => dir.maps.find((m) => m.id === id)?.title;
+    $('#entryRows').innerHTML =
+      dir.entries
+        .map(
+          (e) => `<tr>
+        <td class="small">${e.sort_order}</td>
+        <td><b>${esc(e.name)}</b><div class="sub">${esc(e.category)}${e.opd_code ? ' · linked to OPD booking' : ''}</div></td>
+        <td class="small">${esc(e.location || '') || '<span class="muted">—</span>'}</td>
+        <td class="small">${esc(e.hours || '')}${e.phone ? `<div class="sub">${esc(e.phone)}</div>` : ''}</td>
+        <td class="small">${e.map_id ? `${esc(mapTitle(e.map_id) || '')}${e.pin_x !== null ? ' 📍' : ' <span class="muted">(no pin)</span>'}` : '<span class="muted">—</span>'}</td>
+        <td>${shown(e.active)}</td>
+        <td class="nowrap"><button class="btn sm secondary" data-edit-entry="${e.id}">Edit</button> <button class="btn sm secondary" data-del-entry="${e.id}">Delete</button></td>
+      </tr>`,
+        )
+        .join('') || '<tr><td colspan="7" class="empty">No places yet.</td></tr>';
+    $('#adminMaps').innerHTML =
+      dir.maps
+        .map(
+          (m) => `<div class="card map-card" style="cursor:default">
+          <img src="${esc(m.url)}" alt="">
+          <b>${esc(m.title)}</b>${m.description ? `<span class="muted small">${esc(m.description)}</span>` : ''}
+          <span class="small muted">${dir.entries.filter((e) => e.map_id === m.id && e.pin_x !== null).length} pinned place(s)</span>
+          <div class="dir-actions"><button class="btn sm secondary" data-edit-map="${m.id}">Edit</button><button class="btn sm secondary" data-del-map="${m.id}">Delete</button></div>
+        </div>`,
+        )
+        .join('') || '<p class="muted small">No maps uploaded yet.</p>';
+    $('#guideRows').innerHTML =
+      dir.guides
+        .map(
+          (g) => `<tr>
+        <td class="small">${g.sort_order}</td>
+        <td><b>${esc(g.title)}</b>${g.summary ? `<div class="sub">${esc(g.summary)}</div>` : ''}</td>
+        <td class="small" style="white-space:pre-line;max-width:380px">${esc(g.requirements || '')}</td>
+        <td>${shown(g.active)}</td>
+        <td class="nowrap"><button class="btn sm secondary" data-edit-guide="${g.id}">Edit</button> <button class="btn sm secondary" data-del-guide="${g.id}">Delete</button></td>
+      </tr>`,
+        )
+        .join('') || '<tr><td colspan="5" class="empty">No guides yet.</td></tr>';
+    $('#contactForm').innerHTML =
+      dir.contact
+        .map((f) =>
+          f.key === 'notice' || f.key === 'address'
+            ? `<label class="field span-2">${esc(f.label)}<textarea name="${f.key}" rows="2" data-nocaps>${esc(f.value)}</textarea></label>`
+            : `<label class="field">${esc(f.label)}<input name="${f.key}" value="${esc(f.value)}" data-nocaps></label>`,
+        )
+        .join('') + '<div class="span-2"><button class="btn" type="submit">Save contact information</button> <span class="small" id="contactSaved"></span></div>';
+  });
+
+  $('#contactForm').addEventListener('submit', guard(async (e) => {
+    e.preventDefault();
+    await api('/admin/directory/contact', { method: 'PUT', body: formData(e.target) });
+    $('#contactSaved').textContent = 'Saved.';
+    setTimeout(() => ($('#contactSaved').textContent = ''), 3000);
+  }));
+
+  // Click on the map to place the pin (stored as % of width/height, so it works at any size)
+  function wirePinPicker() {
+    const sel = $('#dlgForm [name=map_id]');
+    const box = $('#pinPicker');
+    const draw = () => {
+      const m = dir.maps.find((x) => String(x.id) === sel.value);
+      if (!m) {
+        box.innerHTML = '';
+        box.classList.add('hidden');
+        return;
+      }
+      box.classList.remove('hidden');
+      box.innerHTML = `<img src="${esc(m.url)}" alt="">`;
+      const x = $('#dlgForm [name=pin_x]').value;
+      const y = $('#dlgForm [name=pin_y]').value;
+      if (x !== '' && y !== '') box.insertAdjacentHTML('beforeend', `<span class="mv-pin on" style="left:${x}%;top:${y}%">●</span>`);
+    };
+    sel.addEventListener('change', () => {
+      $('#dlgForm [name=pin_x]').value = '';
+      $('#dlgForm [name=pin_y]').value = '';
+      draw();
+      // Bring the map into view so the next step (clicking on it) is obvious
+      box.querySelector('img')?.addEventListener('load', () => box.scrollIntoView({ block: 'center', behavior: 'smooth' }), { once: true });
+    });
+    box.addEventListener('click', (ev) => {
+      const r = box.querySelector('img').getBoundingClientRect();
+      $('#dlgForm [name=pin_x]').value = (((ev.clientX - r.left) / r.width) * 100).toFixed(2);
+      $('#dlgForm [name=pin_y]').value = (((ev.clientY - r.top) / r.height) * 100).toFixed(2);
+      draw();
+    });
+    draw();
+  }
+
+  function entryDialog(e = {}) {
+    openDialog(
+      `<h2>${e.id ? 'Edit place' : 'Add place'}</h2>
+       <div class="grid grid-2">
+         <label class="field">Name<input name="name" data-nocaps value="${esc(e.name || '')}" required></label>
+         <label class="field">Category<select name="category">${optList(dir.categories.map((c) => [c, c]), e.category || 'Department')}</select></label>
+         <label class="field span-2">Short description<textarea name="description" rows="2" data-nocaps>${esc(e.description || '')}</textarea></label>
+         <label class="field span-2">Location<span class="hint">Building, floor, room or landmark, e.g. "Main Building, 2nd floor, beside the pharmacy"</span><input name="location" data-nocaps value="${esc(e.location || '')}"></label>
+         <label class="field">Hours<span class="hint">Leave blank for OPD clinics to use their booking schedule</span><input name="hours" data-nocaps value="${esc(e.hours || '')}"></label>
+         <label class="field">Phone / local<input name="phone" data-nocaps value="${esc(e.phone || '')}"></label>
+         <label class="field">Email<input name="email" type="email" value="${esc(e.email || '')}"></label>
+         <label class="field">OPD clinic (for schedule &amp; booking)<select name="opd_code">${optList(dir.clinics.map((c) => [c.code, c.name]), e.opd_code, 'Not an OPD clinic')}</select></label>
+         <label class="field span-2">Services<span class="hint">One per line</span><textarea name="services" rows="3" data-nocaps>${esc(e.services || '')}</textarea></label>
+         <label class="field span-2">Search words<span class="hint">Other words people may search for, separated by commas</span><input name="keywords" data-nocaps value="${esc(e.keywords || '')}"></label>
+         <label class="field span-2">Map<select name="map_id">${optList(dir.maps.map((m) => [m.id, m.title]), e.map_id, 'Not on a map')}</select>
+           <span class="hint">Choose a map, then click on it where this place is. Click again to move the pin.</span></label>
+         <div class="span-2 pin-picker hidden" id="pinPicker"></div>
+         <input type="hidden" name="pin_x" value="${e.pin_x ?? ''}"><input type="hidden" name="pin_y" value="${e.pin_y ?? ''}">
+         <label class="field">Order<span class="hint">Lower numbers appear first</span><input name="sort_order" type="number" value="${e.sort_order ?? 100}"></label>
+         <label style="display:flex;gap:8px;align-items:center;margin-top:22px"><input type="checkbox" name="active" ${e.active === false ? '' : 'checked'}> Show on the public directory</label>
+       </div>`,
+      async (d) => {
+        const body = { ...d, active: $('#dlgForm [name=active]').checked };
+        if (e.id) await api(`/admin/directory/entries/${e.id}`, { method: 'PATCH', body });
+        else await api('/admin/directory/entries', { method: 'POST', body });
+        loaders.directory();
+      },
+      { wide: true },
+    );
+    wirePinPicker();
+  }
+
+  function guideDialog(g = {}) {
+    openDialog(
+      `<h2>${g.id ? 'Edit guide' : 'Add guide'}</h2>
+       <div class="grid">
+         <label class="field">Title<input name="title" data-nocaps value="${esc(g.title || '')}" required placeholder="e.g. Getting a Medical Certificate"></label>
+         <label class="field">Short summary<input name="summary" data-nocaps value="${esc(g.summary || '')}"></label>
+         <label class="field">What to bring<span class="hint">One requirement per line</span><textarea name="requirements" rows="5" data-nocaps>${esc(g.requirements || '')}</textarea></label>
+         <label class="field">Steps<span class="hint">One step per line</span><textarea name="steps" rows="5" data-nocaps>${esc(g.steps || '')}</textarea></label>
+         <label class="field">Where to go<select name="office_id">${optList(dir.entries.map((e) => [e.id, e.name]), g.office_id, '—')}</select></label>
+         <div class="grid grid-2">
+           <label class="field">Button link (optional)<span class="hint">e.g. /request-records or an https:// address</span><input name="link_url" data-nocaps value="${esc(g.link_url || '')}"></label>
+           <label class="field">Button text<input name="link_label" data-nocaps value="${esc(g.link_label || '')}"></label>
+           <label class="field">Order<input name="sort_order" type="number" value="${g.sort_order ?? 100}"></label>
+           <label style="display:flex;gap:8px;align-items:center;margin-top:22px"><input type="checkbox" name="active" ${g.active === false ? '' : 'checked'}> Show on the public directory</label>
+         </div>
+       </div>`,
+      async (d) => {
+        const body = { ...d, active: $('#dlgForm [name=active]').checked };
+        if (g.id) await api(`/admin/directory/guides/${g.id}`, { method: 'PATCH', body });
+        else await api('/admin/directory/guides', { method: 'POST', body });
+        loaders.directory();
+      },
+      { wide: true },
+    );
+  }
+
+  // Shrink large photos in the browser before upload (max 2000 px, keeps uploads small)
+  async function readMapImage(file) {
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error('Please choose a PNG, JPG or WebP image.');
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = () => reject(new Error('That image could not be read.'));
+        i.src = url;
+      });
+      const scale = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+      if (scale === 1 && file.size < 1.5 * 1024 * 1024) {
+        return await new Promise((resolve) => {
+          const r = new FileReader();
+          r.onload = () => resolve(r.result);
+          r.readAsDataURL(file);
+        });
+      }
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.naturalWidth * scale);
+      c.height = Math.round(img.naturalHeight * scale);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      const webp = c.toDataURL('image/webp', 0.9);
+      return webp.startsWith('data:image/webp') ? webp : c.toDataURL('image/jpeg', 0.88);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function mapDialog(m = {}) {
+    openDialog(
+      `<h2>${m.id ? 'Edit map' : 'Upload map'}</h2>
+       <div class="grid">
+         <label class="field">Title<input name="title" data-nocaps value="${esc(m.title || '')}" required placeholder="e.g. Main Building – Ground Floor"></label>
+         <label class="field">Description<input name="description" data-nocaps value="${esc(m.description || '')}"></label>
+         <label class="field">Image${m.id ? '<span class="hint">Leave empty to keep the current image. Pins stay where they are, so only replace it with the same plan.</span>' : ''}
+           <input type="file" name="file" accept="image/png,image/jpeg,image/webp" ${m.id ? '' : 'required'}></label>
+         <img id="mapPreview" alt="" style="max-width:100%;border-radius:8px;${m.url ? '' : 'display:none'}" src="${esc(m.url || '')}">
+         <label class="field">Order<input name="sort_order" type="number" value="${m.sort_order ?? 100}"></label>
+       </div>`,
+      async (d) => {
+        const file = $('#dlgForm [name=file]').files[0];
+        const body = { title: d.title, description: d.description, sort_order: d.sort_order };
+        if (file) body.image = await readMapImage(file);
+        if (m.id) await api(`/admin/maps/${m.id}`, { method: 'PATCH', body });
+        else await api('/admin/maps', { method: 'POST', body });
+        loaders.directory();
+      },
+      { wide: true },
+    );
+    $('#dlgForm [name=file]').addEventListener('change', (ev) => {
+      const f = ev.target.files[0];
+      if (!f) return;
+      $('#mapPreview').src = URL.createObjectURL(f);
+      $('#mapPreview').style.display = '';
+    });
+  }
+
+  $('#addEntryBtn').addEventListener('click', () => entryDialog());
+  $('#addGuideBtn').addEventListener('click', () => guideDialog());
+  $('#addMapBtn').addEventListener('click', () => mapDialog());
+  $('[data-view="directory"]').addEventListener('click', guard(async (ev) => {
+    const b = ev.target.closest('[data-edit-entry],[data-del-entry],[data-edit-guide],[data-del-guide],[data-edit-map],[data-del-map]');
+    if (!b) return;
+    const d = b.dataset;
+    if (d.editEntry) return entryDialog(dir.entries.find((x) => x.id === Number(d.editEntry)));
+    if (d.editGuide) return guideDialog(dir.guides.find((x) => x.id === Number(d.editGuide)));
+    if (d.editMap) return mapDialog(dir.maps.find((x) => x.id === Number(d.editMap)));
+    if (d.delEntry && confirm('Delete this place from the directory?')) await api(`/admin/directory/entries/${d.delEntry}`, { method: 'DELETE' });
+    else if (d.delGuide && confirm('Delete this guide?')) await api(`/admin/directory/guides/${d.delGuide}`, { method: 'DELETE' });
+    else if (d.delMap && confirm('Delete this map? Places on it will lose their pins.')) await api(`/admin/maps/${d.delMap}`, { method: 'DELETE' });
+    else return;
+    loaders.directory();
+  }));
+
   // ---------- Dialog ----------
-  function openDialog(html, onSave) {
+  function openDialog(html, onSave, { wide = false } = {}) {
     const dlg = $('#dlg');
+    dlg.classList.toggle('wide', wide);
     const form = $('#dlgForm');
     form.innerHTML = `${html}<div class="alert error hidden" id="dlgError"></div>
       <div class="actions"><button class="btn secondary" value="cancel" formnovalidate>Close</button><button class="btn" value="save">Save</button></div>`;

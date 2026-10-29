@@ -5,6 +5,7 @@ process.env.SMS_PROVIDER = 'console';
 process.env.OPD_PATIENTS_PER_SLOT = '2';
 process.env.DATABASE_URL = '';
 process.env.CRON_SECRET = 'test-cron-secret';
+process.env.LOGIN_RATE_LIMIT = '1000';
 const { open } = require('../src/db');
 const { createApp } = require('../src/server');
 const { runReminders } = require('../src/reminders');
@@ -467,6 +468,60 @@ test('FAQ management is admin-only and validates links', async () => {
   // Hidden FAQs are not used
   await call(`/admin/faqs/${res.data.id}`, { method: 'PATCH', cookie: admin, body: { active: false } });
   assert.notEqual((await call('/faq/ask', { method: 'POST', body: { message: 'motorcycle parking' } })).data.question, 'Is there parking?');
+});
+
+test('hospital directory: public data, admin editing, maps with pins', async () => {
+  let pub = (await call('/directory')).data;
+  assert.ok(pub.entries.some((e) => e.name === 'Medical Records Section'));
+  assert.ok(pub.entries.some((e) => e.opd_code === 'PEDIA'));
+  assert.ok(pub.guides.length >= 4);
+  assert.ok(pub.clinics.find((c) => c.code === 'SURG').days.includes('Mon'));
+  assert.deepEqual(pub.contact, {}); // nothing invented: contact details start empty
+
+  const admin = await login();
+  const staff = (await loginAs('rec.only', 'password123')).cookie;
+  assert.equal((await call('/admin/directory', { cookie: staff })).status, 403);
+
+  // Contact details: https only for web links
+  let res = await call('/admin/directory/contact', { method: 'PUT', cookie: admin, body: { facebook: 'javascript:alert(1)' } });
+  assert.equal(res.status, 400);
+  res = await call('/admin/directory/contact', { method: 'PUT', cookie: admin, body: { trunk_line: '(062) 000-0000', facebook: 'https://facebook.com/example' } });
+  assert.equal(res.status, 200);
+
+  // Map upload: a real 1x1 PNG is accepted; a fake "image" is not
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  res = await call('/admin/maps', { method: 'POST', cookie: admin, body: { title: 'Ground floor', image: `data:image/png;base64,${Buffer.from('<script>').toString('base64')}` } });
+  assert.match(res.data.error, /PNG, JPG or WebP/);
+  res = await call('/admin/maps', { method: 'POST', cookie: admin, body: { title: 'Ground floor', image: `data:image/png;base64,${png}` } });
+  assert.equal(res.status, 201);
+  const mapId = res.data.id;
+  const img = await fetch(base + `/maps/${mapId}/image`);
+  assert.equal(img.headers.get('content-type'), 'image/png');
+  assert.equal(Buffer.from(await img.arrayBuffer()).toString('base64'), png);
+
+  // Entry with a pin on that map
+  res = await call('/admin/directory/entries', {
+    method: 'POST', cookie: admin,
+    body: { name: 'Cashier', category: 'Office', location: 'Ground floor, near main entrance', map_id: mapId, pin_x: 42.5, pin_y: 60, phone: 'Local 101' },
+  });
+  assert.equal(res.status, 201, JSON.stringify(res.data));
+  res = await call('/admin/directory/entries', { method: 'POST', cookie: admin, body: { name: 'X', category: 'Spaceport' } });
+  assert.match(res.data.error, /category/);
+  res = await call('/admin/directory/guides', { method: 'POST', cookie: admin, body: { title: 'Paying bills', link_url: 'javascript:alert(1)' } });
+  assert.match(res.data.error, /Links/);
+
+  pub = (await call('/directory')).data;
+  const cashier = pub.entries.find((e) => e.name === 'Cashier');
+  assert.equal(cashier.map_id, mapId);
+  assert.equal(cashier.pin_x, 42.5);
+  assert.equal(pub.contact.trunk_line, '(062) 000-0000');
+  assert.match(pub.maps[0].url, new RegExp(`^/api/maps/${mapId}/image\\?v=`));
+
+  // Deleting the map keeps the entry but removes the pin
+  await call(`/admin/maps/${mapId}`, { method: 'DELETE', cookie: admin });
+  const after = (await call('/directory')).data.entries.find((e) => e.name === 'Cashier');
+  assert.equal(after.map_id, null);
+  assert.equal(after.pin_x, null);
 });
 
 test('mobile normalisation', () => {
