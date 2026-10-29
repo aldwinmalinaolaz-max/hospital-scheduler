@@ -1,5 +1,6 @@
 // SMS gateway. Providers:
 //   console   – prints to stdout (development / no gateway yet)
+//   unisms    – UniSMS (unismsapi.com), Philippine SMS gateway
 //   semaphore – Semaphore (semaphore.co), common Philippine SMS gateway
 //   twilio    – Twilio Programmable SMS
 const config = require('./config');
@@ -9,6 +10,24 @@ async function sendViaProvider(to, message) {
 
   if (provider === 'console') {
     console.log(`[SMS → ${to}] ${message}`);
+    return;
+  }
+
+  if (provider === 'unisms') {
+    if (!config.sms.unismsApiKey) throw new Error('UNISMS_API_KEY is not set');
+    // Secret key goes in HTTP Basic auth as the username, with an empty password
+    const body = { recipient: to, content: message };
+    if (config.sms.senderName) body.sender_id = config.sms.senderName;
+    const res = await fetch('https://unismsapi.com/api/sms', {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${config.sms.unismsApiKey}:`).toString('base64')}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`UniSMS ${res.status}: ${(await res.text()).slice(0, 300)}`);
     return;
   }
 

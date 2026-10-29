@@ -46,8 +46,10 @@ module.exports = {
   },
 
   sms: {
-    provider: (env.SMS_PROVIDER || 'console').toLowerCase(), // console | semaphore | twilio
+    provider: (env.SMS_PROVIDER || 'console').toLowerCase(), // console | unisms | semaphore | twilio
+    // Registered sender ID / sender name (optional; the gateway's default is used when empty)
     senderName: env.SMS_SENDER_NAME || '',
+    unismsApiKey: env.UNISMS_API_KEY || '',
     semaphoreApiKey: env.SEMAPHORE_API_KEY || '',
     twilioSid: env.TWILIO_ACCOUNT_SID || '',
     twilioToken: env.TWILIO_AUTH_TOKEN || '',

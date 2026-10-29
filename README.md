@@ -118,6 +118,7 @@ Everything typed into the forms is converted to capital letters, both in the bro
 ## SMS setup
 Set `SMS_PROVIDER` in `.env` to one of these:
 - `console`: messages are only printed to the server log. This is the default and is meant for testing.
+- `unisms`: [UniSMS](https://unismsapi.com), a Philippine gateway. Set `UNISMS_API_KEY` to your UniSMS secret key, and optionally `SMS_SENDER_NAME` to a sender ID registered with UniSMS.
 - `semaphore`: [Semaphore](https://semaphore.co), a Philippine gateway. Set `SEMAPHORE_API_KEY`, and optionally `SMS_SENDER_NAME` (it must be registered with Semaphore).
 - `twilio`: set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_FROM`.
 

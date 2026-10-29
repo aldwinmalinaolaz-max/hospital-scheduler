@@ -355,6 +355,37 @@ test('patient-entered text is stored in capitals', async () => {
   assert.deepEqual(row, { patient_last: 'REYES', patient_first: 'ANA', complaint: 'EAR PAIN' });
 });
 
+test('UniSMS provider sends the expected request and logs failures', async () => {
+  const config = require('../src/config');
+  const { sendSms } = require('../src/sms');
+  const saved = { ...config.sms };
+  const realFetch = global.fetch;
+  const calls = [];
+  try {
+    Object.assign(config.sms, { provider: 'unisms', unismsApiKey: 'sk_test_123', senderName: 'ZRMC' });
+    global.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return new Response(JSON.stringify({ message: { reference_id: 'msg_1', status: 'sent' } }), { status: 200 });
+    };
+    assert.equal(await sendSms(db, { to: '+639171234567', message: 'Hello', kind: 'TEST' }), true);
+    assert.equal(calls[0].url, 'https://unismsapi.com/api/sms');
+    assert.equal(calls[0].opts.method, 'POST');
+    assert.equal(calls[0].opts.headers.Authorization, `Basic ${Buffer.from('sk_test_123:').toString('base64')}`);
+    assert.deepEqual(JSON.parse(calls[0].opts.body), { recipient: '+639171234567', content: 'Hello', sender_id: 'ZRMC' });
+
+    // Gateway errors are recorded in the SMS log instead of breaking the request
+    global.fetch = async () => new Response('{"message":"Invalid API key"}', { status: 401 });
+    assert.equal(await sendSms(db, { to: '+639171234567', message: 'Hello', kind: 'TEST' }), false);
+    const last = await db.one('SELECT status, error, provider FROM sms_log ORDER BY id DESC LIMIT 1');
+    assert.equal(last.status, 'FAILED');
+    assert.equal(last.provider, 'unisms');
+    assert.match(last.error, /UniSMS 401: .*Invalid API key/);
+  } finally {
+    Object.assign(config.sms, saved);
+    global.fetch = realFetch;
+  }
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');
