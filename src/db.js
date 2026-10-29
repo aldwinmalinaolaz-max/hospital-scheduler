@@ -101,6 +101,11 @@ const SCHEMA = `
   ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_records BOOLEAN NOT NULL DEFAULT TRUE;
   ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_opd BOOLEAN NOT NULL DEFAULT TRUE;
 
+  -- What the SMS gateway answered (reference id, its status, raw reply) for troubleshooting delivery
+  ALTER TABLE sms_log ADD COLUMN IF NOT EXISTS provider_ref TEXT;
+  ALTER TABLE sms_log ADD COLUMN IF NOT EXISTS provider_status TEXT;
+  ALTER TABLE sms_log ADD COLUMN IF NOT EXISTS provider_response TEXT;
+
   -- Which staff member last changed a request
   ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS updated_by TEXT;
   ALTER TABLE appointments ADD COLUMN IF NOT EXISTS updated_by TEXT;

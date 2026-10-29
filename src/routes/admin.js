@@ -4,7 +4,7 @@ const catalog = require('../catalog');
 const sched = require('../scheduling');
 const msg = require('../messages');
 const auth = require('../auth');
-const { sendSms } = require('../sms');
+const { sendSms, checkDelivery } = require('../sms');
 const { lock } = require('../db');
 const u = require('../util');
 const { ValidationError, rateLimit } = require('./public');
@@ -347,6 +347,16 @@ module.exports = function adminRoutes(db) {
     if (!row || !canSeeSms(req.user, row.kind)) return res.status(404).json({ error: 'Not found.' });
     const ok = await sendSms(db, { to: row.recipient, message: row.message, kind: row.kind, refNo: row.ref_no });
     res.json({ ok });
+  });
+
+  router.post('/sms/:id/check', async (req, res) => {
+    const row = await db.one('SELECT * FROM sms_log WHERE id = $1', [Number(req.params.id)]);
+    if (!row || !canSeeSms(req.user, row.kind)) return res.status(404).json({ error: 'Not found.' });
+    try {
+      res.json(stamp(await checkDelivery(db, row)));
+    } catch (err) {
+      throw new ValidationError(err.message);
+    }
   });
 
   router.post('/sms/test', adminOnly, async (req, res) => {

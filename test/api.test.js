@@ -373,6 +373,26 @@ test('UniSMS provider sends the expected request and logs failures', async () =>
     assert.equal(calls[0].opts.headers.Authorization, `Basic ${Buffer.from('sk_test_123:').toString('base64')}`);
     assert.deepEqual(JSON.parse(calls[0].opts.body), { recipient: '+639171234567', content: 'Hello', sender_id: 'ZRMC' });
 
+    const sent = await db.one('SELECT * FROM sms_log ORDER BY id DESC LIMIT 1');
+    assert.equal(sent.provider_ref, 'msg_1');
+    assert.equal(sent.provider_status, 'sent');
+
+    // Without SMS_SENDER_NAME the default sender ID is still sent
+    config.sms.senderName = '';
+    await sendSms(db, { to: '+639171234567', message: 'Hi', kind: 'TEST' });
+    assert.equal(JSON.parse(calls[1].opts.body).sender_id, 'UniSMS');
+
+    // Check delivery asks UniSMS for the status of the saved reference
+    const { checkDelivery } = require('../src/sms');
+    global.fetch = async (url) => {
+      calls.push({ url });
+      return new Response('{"message":{"reference_id":"msg_1","status":"failed"}}', { status: 200 });
+    };
+    const checked = await checkDelivery(db, sent);
+    assert.equal(calls.at(-1).url, 'https://unismsapi.com/api/sms/msg_1');
+    assert.equal(checked.provider_status, 'failed');
+    assert.equal(checked.status, 'FAILED');
+
     // Gateway errors are recorded in the SMS log instead of breaking the request
     global.fetch = async () => new Response('{"message":"Invalid API key"}', { status: 401 });
     assert.equal(await sendSms(db, { to: '+639171234567', message: 'Hello', kind: 'TEST' }), false);

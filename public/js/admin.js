@@ -245,10 +245,11 @@
   // ---------- SMS ----------
   loaders.sms = guard(async () => {
     const { rows, provider } = await api('/admin/sms');
-    $('#smsProvider').textContent =
-      provider === 'console'
-        ? 'SMS provider: console (messages are printed to the server log, not actually sent). Set SMS_PROVIDER in .env to go live.'
-        : `SMS provider: ${provider}`;
+    const testMode = provider === 'console';
+    $('#smsProvider').className = `alert small ${testMode ? 'warn' : 'info'}`;
+    $('#smsProvider').innerHTML = testMode
+      ? '<b>Test mode — no texts are being sent to phones.</b> SMS_PROVIDER is not set (or the site was not redeployed after setting it). Messages are only written to this log.'
+      : `SMS provider: <b>${esc(provider)}</b>. “Sent” means the gateway accepted the message; use <b>Check delivery</b> to see whether it reached the phone.`;
     $('#smsRows').innerHTML =
       rows
         .map(
@@ -257,18 +258,27 @@
         <td class="mono">${esc(s.recipient)}</td>
         <td class="small">${esc(s.kind)}${s.ref_no ? `<div class="sub mono">${esc(s.ref_no)}</div>` : ''}</td>
         <td class="small">${esc(s.message)}${s.error ? `<div class="sub" style="color:var(--danger)">${esc(s.error)}</div>` : ''}</td>
-        <td>${badge(s.status)}</td>
-        <td>${s.status === 'FAILED' ? `<button class="btn sm secondary" data-resend="${s.id}">Resend</button>` : ''}</td>
+        <td>${s.provider === 'console' ? '<span class="badge CANCELLED">Test only</span>' : badge(s.status)}
+          <div class="sub">via ${esc(s.provider)}${s.provider === 'console' ? ' (test mode, not sent to phone)' : ''}</div>
+          ${s.provider_status ? `<div class="sub">Gateway: <b>${esc(s.provider_status)}</b></div>` : ''}
+          ${s.provider_ref ? `<div class="sub mono">${esc(s.provider_ref)}</div>` : ''}
+          ${s.provider_response ? `<details class="sub"><summary>Gateway reply</summary><code class="mono" style="white-space:pre-wrap;word-break:break-all">${esc(s.provider_response)}</code></details>` : ''}</td>
+        <td class="nowrap">${s.status === 'FAILED' ? `<button class="btn sm secondary" data-resend="${s.id}">Resend</button>` : ''}
+          ${s.provider === 'unisms' && s.provider_ref ? `<button class="btn sm secondary" data-check="${s.id}">Check delivery</button>` : ''}</td>
       </tr>`,
         )
         .join('') || '<tr><td colspan="6" class="empty">No SMS sent yet.</td></tr>';
   });
   $('#smsRows').addEventListener('click', guard(async (e) => {
-    const b = e.target.closest('[data-resend]');
+    const b = e.target.closest('[data-resend], [data-check]');
     if (!b) return;
     b.disabled = true;
-    await api(`/admin/sms/${b.dataset.resend}/resend`, { method: 'POST' });
-    loaders.sms();
+    try {
+      if (b.dataset.resend) await api(`/admin/sms/${b.dataset.resend}/resend`, { method: 'POST' });
+      else await api(`/admin/sms/${b.dataset.check}/check`, { method: 'POST' });
+    } finally {
+      loaders.sms();
+    }
   }));
 
   // ---------- Settings ----------
