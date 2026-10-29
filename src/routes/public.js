@@ -5,6 +5,7 @@ const sched = require('../scheduling');
 const msg = require('../messages');
 const { sendSms } = require('../sms');
 const { lock } = require('../db');
+const faq = require('../faq');
 const u = require('../util');
 
 class ValidationError extends Error {}
@@ -265,6 +266,48 @@ module.exports = function publicRoutes(db) {
 
     await sendSms(db, { to: appt.mobile, message: msg.apptBooked(appt), kind: 'APPT_BOOKED', refNo: appt.ref_no });
     res.status(201).json(publicAppointment(appt));
+  });
+
+  // ---- FAQ assistant ----
+
+  const faqAnswer = (f) => ({
+    faq_id: f.id,
+    question: f.question,
+    answer: faq.render(f.answer),
+    link: f.link_url ? { url: f.link_url, label: f.link_label || 'Open' } : null,
+  });
+  const activeFaqs = () => db.query('SELECT * FROM faqs WHERE active ORDER BY sort_order, id');
+  const chatLimit = rateLimit({ windowMs: 10 * 60e3, max: 60 });
+
+  router.get('/faq', async (req, res) => {
+    res.json({ questions: (await activeFaqs()).map((f) => ({ id: f.id, question: f.question })) });
+  });
+
+  // Body: { faq_id } when a suggested question is tapped, or { message } for typed text
+  router.post('/faq/ask', chatLimit, async (req, res) => {
+    const faqs = await activeFaqs();
+    if (req.body?.faq_id) {
+      const f = faqs.find((x) => x.id === Number(req.body.faq_id));
+      if (!f) return res.status(404).json({ error: 'That question is no longer available.' });
+      return res.json({ matched: true, ...faqAnswer(f) });
+    }
+    const message = str(req.body?.message, 300);
+    if (!message) throw new ValidationError('Please type a question.');
+    const matches = faq.bestMatches(message, faqs);
+    if (matches[0]?.score >= faq.MIN_SCORE) {
+      return res.json({
+        matched: true,
+        ...faqAnswer(matches[0].faq),
+        related: matches.slice(1).map((m) => ({ id: m.faq.id, question: m.faq.question })),
+      });
+    }
+    // Kept so staff can see what visitors ask that the FAQs don't cover yet
+    await db.query('INSERT INTO faq_unanswered (message) VALUES ($1)', [message]);
+    res.json({
+      matched: false,
+      answer: faq.FALLBACK,
+      related: (matches.length ? matches.map((m) => m.faq) : faqs.slice(0, 3)).map((f) => ({ id: f.id, question: f.question })),
+    });
   });
 
   // ---- Tracking (reference no. + mobile must both match) ----

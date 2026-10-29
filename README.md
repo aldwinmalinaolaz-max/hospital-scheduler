@@ -94,6 +94,17 @@ Each call sends any reminders that are due. A reminder is never sent twice, even
 ### Tracking
 Patients look up a request with its reference number and their mobile number. Records references start with `R-` and appointment references start with `A-`.
 
+### FAQ assistant
+Every public page has a **Questions? Ask us** button that opens a chat window. Visitors can tap a suggested question or type their own. The assistant picks the staff-written FAQ whose keywords best match the message, so it only ever gives answers you have approved.
+
+Administrators manage it in **Admin → FAQs**:
+- Add, edit, hide or delete FAQs, with an optional button link (a page such as `/track`, or an `https://` address).
+- **Keywords** are the words visitors are likely to type, separated by commas, in any language (e.g. `claim, pick up, kailan, kanus a`).
+- Answers can include automatic values that follow the system's settings: `{hospital}`, `{claim_days}`, `{office_days}`, `{opd_hours}`, `{documents}`, `{clinic_schedule}`.
+- **Questions the assistant couldn't answer** are listed so you can turn them into new FAQs or keywords. Visitors may type personal details, so clear the list once reviewed.
+
+A set of starter FAQs is created the first time the app starts. Review them, especially fees and office hours, and edit them to match the hospital's actual policies.
+
 ### Users and roles
 Staff accounts are managed in **Admin → Users** by administrators. There are two roles:
 - **Administrator:** everything, plus managing users, holidays/closed dates and the test SMS.

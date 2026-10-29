@@ -406,6 +406,69 @@ test('UniSMS provider sends the expected request and logs failures', async () =>
   }
 });
 
+test('FAQ assistant answers common questions and logs unanswered ones', async () => {
+  const { data } = await call('/faq');
+  assert.ok(data.questions.length >= 10);
+
+  const ask = async (message) => (await call('/faq/ask', { method: 'POST', body: { message } })).data;
+  const cases = {
+    'When can I claim my medical certificate?': 'When can I claim my documents?',
+    'how many days before my records are ready': 'When can I claim my documents?',
+    'kailan ko makukuha': 'When can I claim my documents?',
+    'what do I need to bring?': 'What do I need to bring when claiming?',
+    'can my wife claim it for me': 'Can someone else request or claim my records for me?',
+    'I want to book an appointment with a doctor': 'How do I book an OPD appointment?',
+    'what days is pediatrics open': 'What are the OPD clinic schedules?',
+    'how do I cancel my appointment': 'How do I check or cancel my request or appointment?',
+    'magkano ang bayad': 'How much do the documents cost?',
+    "I didn't receive any text": "I didn't receive an SMS. What should I do?",
+    'my father has chest pain': 'Is this for emergencies?',
+  };
+  for (const [message, expected] of Object.entries(cases)) {
+    const r = await ask(message);
+    assert.equal(r.question, expected, `"${message}" matched "${r.question}"`);
+  }
+
+  // Answers fill in values from the settings
+  const claim = await ask('when can I claim');
+  assert.match(claim.answer, /claimed 3 days after/);
+  const sched = await ask('clinic schedule');
+  assert.match(sched.answer, /Pediatrics: Monday to Friday/);
+  assert.equal(sched.link.url, '/book-opd');
+
+  // Unmatched questions get a fallback and are kept for staff
+  const miss = await ask('do you have parking for motorcycles');
+  assert.equal(miss.matched, false);
+  assert.ok(miss.related.length > 0);
+  assert.ok(await db.one("SELECT 1 FROM faq_unanswered WHERE message = 'do you have parking for motorcycles'"));
+});
+
+test('FAQ management is admin-only and validates links', async () => {
+  const admin = await login();
+  const staff = (await loginAs('rec.only', 'password123')).cookie;
+  assert.equal((await call('/admin/faqs', { cookie: staff })).status, 403);
+
+  let res = await call('/admin/faqs', { method: 'POST', cookie: admin, body: { question: 'Is there parking?', answer: 'Yes', link_url: 'javascript:alert(1)' } });
+  assert.match(res.data.error, /link/);
+  res = await call('/admin/faqs', { method: 'POST', cookie: admin, body: { question: 'Is there parking?', answer: 'Yes, at the back.', link_url: '//evil.example' } });
+  assert.match(res.data.error, /link/);
+  res = await call('/admin/faqs', {
+    method: 'POST',
+    cookie: admin,
+    body: { question: 'Is there parking?', answer: 'Yes, behind {hospital}.', keywords: 'Parking, Motorcycle, park', sort_order: 5 },
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.data.keywords, 'parking, motorcycle, park');
+
+  const r = (await call('/faq/ask', { method: 'POST', body: { message: 'where can I park my motorcycle' } })).data;
+  assert.equal(r.question, 'Is there parking?');
+  assert.equal(r.answer, 'Yes, behind Zamboanga Regional Medical Center.');
+
+  // Hidden FAQs are not used
+  await call(`/admin/faqs/${res.data.id}`, { method: 'PATCH', cookie: admin, body: { active: false } });
+  assert.notEqual((await call('/faq/ask', { method: 'POST', body: { message: 'motorcycle parking' } })).data.question, 'Is there parking?');
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');

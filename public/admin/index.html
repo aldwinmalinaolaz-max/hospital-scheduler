@@ -19,6 +19,7 @@
   <button data-tab="records" class="needs-records"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg><span>Records Requests</span></button>
   <button data-tab="appointments" class="needs-opd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4"/></svg><span>OPD Appointments</span></button>
   <button data-tab="sms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>SMS Log</span></button>
+  <button data-tab="faqs" class="admin-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg><span>FAQs</span></button>
   <button data-tab="users" class="admin-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Users</span></button>
   <button data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68 1.65 1.65 0 0 0 10 3.17V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>Settings</span></button>
   <hr>
@@ -95,6 +96,25 @@
         <thead><tr><th>Username</th><th>Full name</th><th>Role</th><th>Access</th><th>Status</th><th>Last login</th><th></th></tr></thead>
         <tbody id="userRows"></tbody>
       </table></div>
+    </div>
+
+    <div data-view="faqs" class="hidden">
+      <div class="filters no-print" style="justify-content:space-between;align-items:center">
+        <p class="muted small" style="margin:0;max-width:760px">These are the answers the <b>FAQ Assistant</b> on the public pages gives. It picks the FAQ whose <b>keywords</b> best match what the visitor typed, so add the words and phrases people are likely to use (English, Filipino, Bisaya or Chavacano), separated by commas.</p>
+        <button class="btn" type="button" id="addFaqBtn">+ Add FAQ</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Order</th><th>Question</th><th>Keywords</th><th>Link</th><th>Status</th><th></th></tr></thead>
+        <tbody id="faqRows"></tbody>
+      </table></div>
+      <div class="card" style="margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <h3 style="margin:0">Questions the assistant couldn't answer</h3>
+          <button class="btn sm secondary" type="button" id="clearUnansweredBtn">Clear all</button>
+        </div>
+        <p class="muted small">Use these to add new FAQs or more keywords. Visitors may type personal details here, so clear them once reviewed.</p>
+        <div id="unansweredList"></div>
+      </div>
     </div>
 
     <div data-view="settings" class="hidden">

@@ -63,7 +63,7 @@
   // ---------- Tabs ----------
   const loaders = {};
   function showTab(name) {
-    const allowed = { users: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
+    const allowed = { users: me?.role === 'ADMIN', faqs: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
     if (!loaders[name] || allowed[name] === false) name = 'dashboard';
     $$('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $$('[data-view]').forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -411,6 +411,97 @@
       );
     }
   });
+
+  // ---------- FAQs ----------
+  let faqRows = [];
+  let faqPlaceholders = {};
+  loaders.faqs = guard(async () => {
+    const [{ rows, placeholders }, { rows: unanswered }] = await Promise.all([api('/admin/faqs'), api('/admin/faq-unanswered')]);
+    faqRows = rows;
+    faqPlaceholders = placeholders;
+    $('#faqRows').innerHTML =
+      rows
+        .map(
+          (f) => `<tr>
+        <td class="small">${f.sort_order}</td>
+        <td><b>${esc(f.question)}</b><div class="sub" style="white-space:pre-line;max-width:520px">${esc(f.answer.length > 180 ? `${f.answer.slice(0, 180)}…` : f.answer)}</div></td>
+        <td class="small" style="max-width:260px">${esc(f.keywords)}</td>
+        <td class="small">${f.link_url ? `${esc(f.link_label || '')}<div class="sub mono">${esc(f.link_url)}</div>` : ''}</td>
+        <td>${f.active ? '<span class="badge COMPLETED">Shown</span>' : '<span class="badge CANCELLED">Hidden</span>'}</td>
+        <td class="nowrap"><button class="btn sm secondary" data-edit-faq="${f.id}">Edit</button> <button class="btn sm secondary" data-del-faq="${f.id}">Delete</button></td>
+      </tr>`,
+        )
+        .join('') || '<tr><td colspan="6" class="empty">No FAQs yet.</td></tr>';
+    $('#unansweredList').innerHTML = unanswered.length
+      ? `<table><tbody>${unanswered
+          .map(
+            (u) => `<tr><td>${esc(u.message)}<div class="sub">${esc(u.created_at)}</div></td>
+            <td class="nowrap"><button class="btn sm" data-faq-from="${u.id}">Create FAQ</button> <button class="btn sm secondary" data-dismiss="${u.id}">Dismiss</button></td></tr>`,
+          )
+          .join('')}</tbody></table>`
+      : '<p class="muted small">Nothing yet.</p>';
+    $('#unansweredList').dataset.rows = JSON.stringify(unanswered);
+  });
+
+  // FAQ text is written content, so it keeps normal capitalisation (data-nocaps)
+  function faqDialog(f = {}, fromUnansweredId = null) {
+    const ph = Object.entries(faqPlaceholders)
+      .map(([k, v]) => `<li><code>{${k}}</code> → ${esc(String(v).split('\n')[0])}${String(v).includes('\n') ? ' …' : ''}</li>`)
+      .join('');
+    openDialog(
+      `<h2>${f.id ? 'Edit FAQ' : 'Add FAQ'}</h2>
+       <div class="grid">
+         <label class="field">Question<input name="question" data-nocaps value="${esc(f.question || '')}" required></label>
+         <label class="field">Answer<textarea name="answer" data-nocaps rows="7" required>${esc(f.answer || '')}</textarea></label>
+         <details class="small"><summary>Automatic values you can use in the answer</summary>
+           <p class="muted" style="margin:6px 0">These are filled in from the system's settings, so the answer stays correct if they change.</p><ul class="list-tight">${ph}</ul></details>
+         <label class="field">Keywords<span class="hint">Words or phrases visitors might type, separated by commas, e.g. claim, pick up, kailan, ready</span><textarea name="keywords" data-nocaps rows="3">${esc(f.keywords || '')}</textarea></label>
+         <div class="grid grid-2">
+           <label class="field">Button link (optional)<span class="hint">A page such as /request-records, or an https:// address</span><input name="link_url" data-nocaps value="${esc(f.link_url || '')}"></label>
+           <label class="field">Button text<input name="link_label" data-nocaps value="${esc(f.link_label || '')}" placeholder="e.g. Request records"></label>
+         </div>
+         <div class="grid grid-2">
+           <label class="field">Order<span class="hint">Lower numbers appear first in suggestions</span><input name="sort_order" type="number" value="${f.sort_order ?? 100}"></label>
+           <label style="display:flex;gap:8px;align-items:center;margin-top:22px"><input type="checkbox" name="active" ${f.active === false ? '' : 'checked'}> Show in the assistant</label>
+         </div>
+       </div>`,
+      async (d) => {
+        const body = { ...d, active: $('#dlgForm [name=active]').checked };
+        if (f.id) await api(`/admin/faqs/${f.id}`, { method: 'PATCH', body });
+        else await api('/admin/faqs', { method: 'POST', body });
+        if (fromUnansweredId) await api(`/admin/faq-unanswered/${fromUnansweredId}`, { method: 'DELETE' });
+        loaders.faqs();
+      },
+    );
+  }
+
+  $('#addFaqBtn').addEventListener('click', () => faqDialog());
+  $('#faqRows').addEventListener('click', guard(async (e) => {
+    const edit = e.target.closest('[data-edit-faq]');
+    const del = e.target.closest('[data-del-faq]');
+    if (edit) return faqDialog(faqRows.find((f) => f.id === Number(edit.dataset.editFaq)));
+    if (del && confirm('Delete this FAQ? The assistant will stop using it.')) {
+      await api(`/admin/faqs/${del.dataset.delFaq}`, { method: 'DELETE' });
+      loaders.faqs();
+    }
+  }));
+  $('#unansweredList').addEventListener('click', guard(async (e) => {
+    const from = e.target.closest('[data-faq-from]');
+    const dismiss = e.target.closest('[data-dismiss]');
+    if (from) {
+      const u = JSON.parse($('#unansweredList').dataset.rows).find((x) => x.id === Number(from.dataset.faqFrom));
+      return faqDialog({ question: u.message, keywords: u.message.toLowerCase() }, u.id);
+    }
+    if (dismiss) {
+      await api(`/admin/faq-unanswered/${dismiss.dataset.dismiss}`, { method: 'DELETE' });
+      loaders.faqs();
+    }
+  }));
+  $('#clearUnansweredBtn').addEventListener('click', guard(async () => {
+    if (!confirm('Remove all unanswered questions from this list?')) return;
+    await api('/admin/faq-unanswered', { method: 'DELETE' });
+    loaders.faqs();
+  }));
 
   // ---------- Dialog ----------
   function openDialog(html, onSave) {

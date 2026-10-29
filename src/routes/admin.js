@@ -8,6 +8,7 @@ const { sendSms, checkDelivery } = require('../sms');
 const { lock } = require('../db');
 const u = require('../util');
 const { ValidationError, rateLimit } = require('./public');
+const faq = require('../faq');
 
 const COOKIE = 'hs_admin';
 
@@ -365,6 +366,76 @@ module.exports = function adminRoutes(db) {
     const message = String(req.body?.message || `${config.hospitalName}: test message from the scheduling system.`).slice(0, 480);
     const ok = await sendSms(db, { to, message, kind: 'TEST' });
     res.json({ ok });
+  });
+
+  // ---------- FAQ assistant (administrators only) ----------
+
+  function cleanFaq(b, before = {}) {
+    const pick = (k) => (b[k] !== undefined ? b[k] : before[k]);
+    const question = String(pick('question') || '').trim().slice(0, 200);
+    const answer = String(pick('answer') || '').trim().slice(0, 3000);
+    const keywords = String(pick('keywords') || '')
+      .split(',')
+      .map((k) => k.trim().toLowerCase())
+      .filter(Boolean)
+      .join(', ')
+      .slice(0, 2000);
+    const linkUrl = String(pick('link_url') || '').trim();
+    const linkLabel = String(pick('link_label') || '').trim().slice(0, 60);
+    const sortOrder = parseInt(pick('sort_order') ?? 100, 10);
+    const active = pick('active') ?? true;
+    if (!question) throw new ValidationError('Please enter the question.');
+    if (!answer) throw new ValidationError('Please enter the answer.');
+    // Only site pages or secure web addresses, so a link can't run scripts
+    if (linkUrl && !/^\/[^/\\]/.test(linkUrl) && linkUrl !== '/' && !/^https:\/\/[^\s]+$/i.test(linkUrl)) {
+      throw new ValidationError('The link must be a page on this site (starting with /) or an https:// address.');
+    }
+    if (Number.isNaN(sortOrder)) throw new ValidationError('Order must be a number.');
+    return [question, answer, keywords, linkUrl || null, linkUrl ? linkLabel || null : null, sortOrder, !!active];
+  }
+
+  router.get('/faqs', adminOnly, async (req, res) => {
+    const rows = await db.query('SELECT * FROM faqs ORDER BY sort_order, id');
+    res.json({ rows: rows.map(stamp), placeholders: faq.placeholders() });
+  });
+
+  router.post('/faqs', adminOnly, async (req, res) => {
+    const row = await db.one(
+      `INSERT INTO faqs (question, answer, keywords, link_url, link_label, sort_order, active, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [...cleanFaq(req.body || {}), req.user.username],
+    );
+    res.status(201).json(stamp(row));
+  });
+
+  router.patch('/faqs/:id', adminOnly, async (req, res) => {
+    const before = await db.one('SELECT * FROM faqs WHERE id = $1', [Number(req.params.id)]);
+    if (!before) return res.status(404).json({ error: 'Not found.' });
+    const row = await db.one(
+      `UPDATE faqs SET question = $1, answer = $2, keywords = $3, link_url = $4, link_label = $5, sort_order = $6,
+         active = $7, updated_by = $8, updated_at = now() WHERE id = $9 RETURNING *`,
+      [...cleanFaq(req.body || {}, before), req.user.username, before.id],
+    );
+    res.json(stamp(row));
+  });
+
+  router.delete('/faqs/:id', adminOnly, async (req, res) => {
+    await db.query('DELETE FROM faqs WHERE id = $1', [Number(req.params.id)]);
+    res.json({ ok: true });
+  });
+
+  router.get('/faq-unanswered', adminOnly, async (req, res) => {
+    res.json({ rows: (await db.query('SELECT * FROM faq_unanswered ORDER BY id DESC LIMIT 200')).map(stamp) });
+  });
+
+  router.delete('/faq-unanswered/:id', adminOnly, async (req, res) => {
+    await db.query('DELETE FROM faq_unanswered WHERE id = $1', [Number(req.params.id)]);
+    res.json({ ok: true });
+  });
+
+  router.delete('/faq-unanswered', adminOnly, async (req, res) => {
+    await db.query('DELETE FROM faq_unanswered');
+    res.json({ ok: true });
   });
 
   // ---------- Closed dates (holidays) ----------

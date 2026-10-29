@@ -7,6 +7,7 @@
 const path = require('node:path');
 const config = require('./config');
 const { hashPassword } = require('./auth');
+const { SEEDS } = require('./faq');
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS record_requests (
@@ -112,12 +113,34 @@ const SCHEMA = `
 
   -- Supabase exposes the public schema through its REST API. Enabling RLS with no
   -- policies blocks that access; this server connects as the table owner and is unaffected.
+  -- FAQ assistant: staff-written answers, and questions it could not answer
+  CREATE TABLE IF NOT EXISTS faqs (
+    id SERIAL PRIMARY KEY,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    keywords TEXT NOT NULL DEFAULT '',
+    link_url TEXT,
+    link_label TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 100,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE TABLE IF NOT EXISTS faq_unanswered (
+    id SERIAL PRIMARY KEY,
+    message TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
   ALTER TABLE record_requests ENABLE ROW LEVEL SECURITY;
   ALTER TABLE record_request_items ENABLE ROW LEVEL SECURITY;
   ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
   ALTER TABLE sms_log ENABLE ROW LEVEL SECURITY;
   ALTER TABLE closed_dates ENABLE ROW LEVEL SECURITY;
   ALTER TABLE admins ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE faqs ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE faq_unanswered ENABLE ROW LEVEL SECURITY;
 `;
 
 function wrap(run, execRaw) {
@@ -177,6 +200,15 @@ async function open({ url = config.databaseUrl, dataDir } = {}) {
       "INSERT INTO admins (username, password_hash, full_name, role) SELECT $1, $2, 'ADMINISTRATOR', 'ADMIN' WHERE NOT EXISTS (SELECT 1 FROM admins)",
       [config.admin.username.toLowerCase(), hashPassword(config.admin.password)],
     );
+    // Starter FAQs, only when there are none yet (staff edit them in Admin → FAQs)
+    if (!(await t.one('SELECT 1 FROM faqs LIMIT 1'))) {
+      for (const [i, f] of SEEDS.entries()) {
+        await t.query(
+          'INSERT INTO faqs (question, answer, keywords, link_url, link_label, sort_order) VALUES ($1, $2, $3, $4, $5, $6)',
+          [f.question, f.answer, f.keywords, f.link_url || null, f.link_label || null, (i + 1) * 10],
+        );
+      }
+    }
   });
   return db;
 }
