@@ -64,7 +64,7 @@
         <dt>Mobile</dt><dd>${esc(d.mobile)}</dd>
         ${d.patient_address ? `<dt>Patient's address</dt><dd>${esc(d.patient_address)}</dd>` : ''}
         <dt>Purpose</dt><dd>${esc(d.purpose)}</dd>
-        <dt>Claiming date</dt><dd>${esc(fmtDate(claimDate))} <span class="muted small">(8:00 AM – 5:00 PM)</span></dd>
+        <dt>Claiming date</dt><dd>${esc(fmtDate(claimDate))} <span class="muted small">(8:00 AM – 5:00 PM, no noon break)</span></dd>
       </dl>
       ${d.patient_address ? '<div class="alert info small" style="margin-top:14px">Because you are not the patient, the hospital\'s <b>authorization letter</b> will be filled in with these details for you to download after you submit.</div>' : ''}`;
     const reqs = new Set([...selected.keys()].flatMap((c) => cat.recordTypes.find((t) => t.code === c).requirements));
@@ -120,7 +120,7 @@
         <h2>Request submitted</h2>
         <p class="muted">Your reference number is</p>
         <div class="ref-no">${esc(res.ref_no)}</div>
-        <p>Claiming date: <b>${esc(fmtDate(res.pickup_date))}</b>, 8:00 AM – 5:00 PM, at the Medical Records Section.<br>
+        <p>Claiming date: <b>${esc(fmtDate(res.pickup_date))}</b>, 8:00 AM – 5:00 PM (no noon break), at the Hospital Health Information Management Section (HHIMS).<br>
         We sent an SMS to <b>${esc(d.mobile)}</b> and will text you again once your documents are ready.</p>
         <p class="muted small">Please keep this reference number and bring a valid ID when claiming.</p>
         ${res.letter_url ? `<div class="alert warn" style="text-align:left">

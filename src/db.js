@@ -9,6 +9,7 @@ const config = require('./config');
 const { hashPassword } = require('./auth');
 const { SEEDS } = require('./faq');
 const directory = require('./directory');
+const catalog = require('./catalog');
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS record_requests (
@@ -186,6 +187,12 @@ const SCHEMA = `
     value TEXT NOT NULL DEFAULT ''
   );
 
+  -- One-time content updates that have already been applied (see MIGRATIONS below)
+  CREATE TABLE IF NOT EXISTS schema_migrations (
+    id TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
   ALTER TABLE record_requests ENABLE ROW LEVEL SECURITY;
   ALTER TABLE record_request_items ENABLE ROW LEVEL SECURITY;
   ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
@@ -198,6 +205,7 @@ const SCHEMA = `
   ALTER TABLE directory_entries ENABLE ROW LEVEL SECURITY;
   ALTER TABLE guides ENABLE ROW LEVEL SECURITY;
   ALTER TABLE site_info ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE schema_migrations ENABLE ROW LEVEL SECURITY;
 `;
 
 function wrap(run, execRaw) {
@@ -284,8 +292,42 @@ async function open({ url = config.databaseUrl, dataDir } = {}) {
         );
       }
     }
+    await runMigrations(t);
   });
   return db;
+}
+
+// One-time updates to content that was seeded by an earlier version. Each runs once per database
+// and only touches text still matching the old starter wording, so staff edits are kept.
+const OLD_OFFICE = 'Medical Records Section';
+const MIGRATIONS = [
+  {
+    id: '2026-10-30-records-office-hhims',
+    async run(t) {
+      const { RECORDS_OFFICE: name, RECORDS_OFFICE_HOURS: hours } = catalog;
+      await t.query(
+        `UPDATE directory_entries SET name = $1, hours = $2, keywords = 'hhims, health information, ' || keywords
+         WHERE name = $3`,
+        [name, hours, OLD_OFFICE],
+      );
+      await t.query(
+        `UPDATE faqs SET answer = $1, keywords = keywords || ', hhims, health information, saturday, holiday'
+         WHERE answer = 'Documents can be claimed {office_days}, 8:00 AM – 5:00 PM, except holidays.'`,
+        [`${name}:\n${hours.replace('; ', '\n')}`],
+      );
+      for (const [table, cols] of [['faqs', ['question', 'answer']], ['guides', ['summary', 'steps', 'requirements']], ['directory_entries', ['description']]]) {
+        for (const col of cols) await t.query(`UPDATE ${table} SET ${col} = replace(${col}, $1, $2) WHERE ${col} LIKE '%' || $1 || '%'`, [OLD_OFFICE, name]);
+      }
+    },
+  },
+];
+
+async function runMigrations(t) {
+  for (const m of MIGRATIONS) {
+    if (await t.one('SELECT 1 FROM schema_migrations WHERE id = $1', [m.id])) continue;
+    await m.run(t);
+    await t.query('INSERT INTO schema_migrations (id) VALUES ($1)', [m.id]);
+  }
 }
 
 // Serialise bookings that compete for the same capacity (date/slot) across instances.

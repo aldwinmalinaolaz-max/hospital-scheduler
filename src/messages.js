@@ -10,11 +10,11 @@ module.exports = {
   recordSubmitted: (r) =>
     `${H()}: Records request ${r.ref_no} received. Claiming date: ${formatDateLong(r.pickup_date)}. Bring valid ID. We'll text you when it's ready.`,
   recordReady: (r) =>
-    `${H()}: Your requested records (${r.ref_no}) are READY for pickup at the Medical Records Section. Bring valid ID and this reference no.`,
+    `${H()}: Your requested records (${r.ref_no}) are READY for pickup at the ${catalog.RECORDS_OFFICE_SHORT}. Bring valid ID and this reference no.`,
   recordRejected: (r) =>
-    `${H()}: Records request ${r.ref_no} could not be processed.${r.remarks ? ` Reason: ${r.remarks}.` : ''} Please contact the Medical Records Section.`,
+    `${H()}: Records request ${r.ref_no} could not be processed.${r.remarks ? ` Reason: ${r.remarks}.` : ''} Please contact the ${catalog.RECORDS_OFFICE_SHORT}.`,
   recordPickupToday: (r) =>
-    `${H()}: Reminder - your records (${r.ref_no}) are ready for pickup TODAY at the Medical Records Section. Bring valid ID.`,
+    `${H()}: Reminder - your records (${r.ref_no}) are ready for pickup TODAY at the ${catalog.RECORDS_OFFICE_SHORT}. Bring valid ID.`,
   recordRescheduled: (r) =>
     `${H()}: Claiming date for records request ${r.ref_no} moved to ${formatDateLong(r.pickup_date)}.${r.remarks ? ` Note: ${r.remarks}` : ''}`,
 

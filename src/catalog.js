@@ -1,6 +1,11 @@
 // Services offered. Edit this file to match your hospital's actual offerings
 // and requirements. The claiming date rule is RECORDS_CLAIM_DAYS in .env.
 
+// The records office (handles requests and release of records and certificates)
+const RECORDS_OFFICE = 'Hospital Health Information Management Section (HHIMS)';
+const RECORDS_OFFICE_SHORT = 'HHIMS'; // used in SMS, which must stay short
+const RECORDS_OFFICE_HOURS = 'Monday to Friday, 8:00 AM – 5:00 PM (No Noon Break); Saturdays and Holidays, 8:00 AM – 4:00 PM (No Noon Break)';
+
 const COMMON_REQS = [
   'Valid government-issued ID of the patient',
   'If requested by a representative: authorization letter signed by the patient and representative, plus their valid IDs.',
@@ -73,6 +78,9 @@ const recordType = (code) => RECORD_TYPES.find((t) => t.code === code);
 const department = (code) => DEPARTMENTS.find((d) => d.code === code);
 
 module.exports = {
+  RECORDS_OFFICE,
+  RECORDS_OFFICE_SHORT,
+  RECORDS_OFFICE_HOURS,
   RECORD_TYPES,
   DEPARTMENTS,
   RECORD_STATUSES,

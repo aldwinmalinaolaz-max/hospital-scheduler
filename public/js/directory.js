@@ -11,6 +11,8 @@
     const digits = phone.replace(/[^\d+]/g, '');
     return digits.replace(/\D/g, '').length >= 7 ? `<a href="tel:${esc(digits)}">${esc(phone)}</a>` : esc(phone);
   };
+  // Schedules with several parts ("…; Saturdays …") read better one part per line
+  const multiline = (t) => esc(t).replace(/; /g, '<br>');
   const lines = (t) => String(t || '').split('\n').map((x) => x.trim()).filter(Boolean);
 
   loadCatalog();
@@ -49,7 +51,7 @@
       ${e.description ? `<p class="muted small">${esc(e.description)}</p>` : ''}
       <ul class="dir-facts">
         ${e.location ? `<li>${ICON.pin}<span>${esc(e.location)}</span></li>` : ''}
-        ${hours ? `<li>${ICON.clock}<span>${esc(hours)}</span></li>` : ''}
+        ${hours ? `<li>${ICON.clock}<span>${multiline(hours)}</span></li>` : ''}
         ${e.phone ? `<li>${ICON.phone}<span>${telLink(e.phone)}</span></li>` : ''}
         ${e.email ? `<li>${ICON.mail}<span><a href="mailto:${esc(e.email)}">${esc(e.email)}</a></span></li>` : ''}
       </ul>
@@ -57,7 +59,7 @@
       <div class="dir-actions">
         ${hasPin(e) ? `<button type="button" class="btn sm" data-show-map="${e.id}">${ICON.pin} Show on map</button>` : ''}
         ${clinic ? `<a class="btn sm secondary" href="/book-opd?department=${encodeURIComponent(e.opd_code)}">Book appointment</a>` : ''}
-        ${e.category === 'Office' && /records/i.test(e.name) ? '<a class="btn sm secondary" href="/request-records">Request records</a>' : ''}
+        ${e.category === 'Office' && /records|hhims|health information/i.test(e.name) ? '<a class="btn sm secondary" href="/request-records">Request records</a>' : ''}
       </div>
     </article>`;
   }
@@ -97,7 +99,7 @@
     )
     .join('');
   const offices = entries.filter((e) => e.hours && !e.opd_code);
-  if (offices.length) $('#officeRows').innerHTML = offices.map((e) => `<tr><td>${esc(e.name)}</td><td>${esc(e.hours)}</td></tr>`).join('');
+  if (offices.length) $('#officeRows').innerHTML = offices.map((e) => `<tr><td>${esc(e.name)}</td><td>${multiline(e.hours)}</td></tr>`).join('');
   else $('#officeHoursCard').classList.add('hidden');
 
   // ---------- Requirements ----------
@@ -125,7 +127,7 @@
     ['Address', contact.address && esc(contact.address)],
     ['Trunk line', contact.trunk_line && telLink(contact.trunk_line)],
     ['Emergency hotline', contact.emergency_phone && telLink(contact.emergency_phone)],
-    ['Medical Records', contact.records_phone && telLink(contact.records_phone)],
+    ['HHIMS', contact.records_phone && telLink(contact.records_phone)],
     ['OPD', contact.opd_phone && telLink(contact.opd_phone)],
     ['Email', contact.email && `<a href="mailto:${esc(contact.email)}">${esc(contact.email)}</a>`],
     ['Visiting hours', contact.visiting_hours && esc(contact.visiting_hours)],

@@ -141,13 +141,13 @@ const SEEDS = [
     link_label: 'Track / Cancel',
   },
   {
-    question: 'What are the office hours of the Medical Records Section?',
-    answer: 'Documents can be claimed {office_days}, 8:00 AM – 5:00 PM, except holidays.',
-    keywords: 'office hours, open hours, what time, working hours, hours, records section, medical records section, open on saturday, open on sunday, oras',
+    question: `What are the office hours of the ${catalog.RECORDS_OFFICE}?`,
+    answer: `${catalog.RECORDS_OFFICE}:\n${catalog.RECORDS_OFFICE_HOURS.replace('; ', '\n')}`,
+    keywords: 'office hours, open hours, what time, working hours, hours, hhims, records section, medical records section, health information, open on saturday, open on holiday, saturday, holiday, oras',
   },
   {
     question: 'How much do the documents cost?',
-    answer: 'For fees and payment, please ask the Medical Records Section when you claim your documents.',
+    answer: `For fees and payment, please ask the ${catalog.RECORDS_OFFICE} when you claim your documents.`,
     keywords: 'fee, fees, cost, price, how much, payment, pay, bayad, magkano, pila, presyo',
   },
   {
@@ -165,6 +165,6 @@ const SEEDS = [
 ];
 
 const FALLBACK =
-  "Sorry, I don't have an answer for that yet. Please try asking in a different way, choose one of the questions below, or ask the Medical Records Section or OPD directly.\n\nFor emergencies, go to the Emergency Room.";
+  "Sorry, I don't have an answer for that yet. Please try asking in a different way, choose one of the questions below, or ask the HHIMS (Health Information Management Section) or OPD directly.\n\nFor emergencies, go to the Emergency Room.";
 
 module.exports = { score, bestMatches, render, placeholders, PLACEHOLDER_NAMES, SEEDS, FALLBACK, MIN_SCORE, normalize };

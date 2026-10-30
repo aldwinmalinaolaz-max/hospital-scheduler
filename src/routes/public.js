@@ -407,7 +407,7 @@ module.exports = function publicRoutes(db) {
          WHERE id = $1 AND status = 'PENDING' RETURNING *`,
         [row.id],
       );
-      if (!updated) throw new ValidationError('Only pending requests can be cancelled online. Please contact the Medical Records Section.');
+      if (!updated) throw new ValidationError(`Only pending requests can be cancelled online. Please contact the ${catalog.RECORDS_OFFICE}.`);
       return res.json(await publicRecord(db, updated));
     }
     const updated = await db.one(

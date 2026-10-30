@@ -116,7 +116,7 @@ Administrators manage everything in **Admin → Directory**:
 - **Guides:** requirements and steps, one per line, with an optional button link and "where to go" office.
 - **Contact information:** empty fields are hidden on the public page.
 
-Starter content (the OPD clinics, the Medical Records Section, the Emergency Room and four transaction guides) is created on first start. Locations, phone numbers, maps and contact details are left blank on purpose. Please fill them in with the hospital's real information.
+Starter content (the OPD clinics, the Hospital Health Information Management Section (HHIMS), the Emergency Room and four transaction guides) is created on first start. Locations, phone numbers, maps and contact details are left blank on purpose. Please fill them in with the hospital's real information.
 
 ### FAQ assistant
 Every public page has a **Questions? Ask us** button that opens a chat window. Visitors can tap a suggested question or type their own. The assistant picks the staff-written FAQ whose keywords best match the message, so it only ever gives answers you have approved.

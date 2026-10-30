@@ -25,7 +25,7 @@
         </dl>
         ${r.letter_url ? `<div class="alert info small">Requested by a representative: bring the signed authorization letter and both valid IDs when claiming.
           <div style="margin-top:8px"><a class="btn sm" href="${esc(r.letter_url)}" download>Download authorization letter (Word)</a></div></div>` : ''}
-        ${r.status === 'READY' ? '<div class="alert ok">Your documents are ready. Please bring a valid ID and your reference number to the Medical Records Section.</div>' : ''}
+        ${r.status === 'READY' ? '<div class="alert ok">Your documents are ready. Please bring a valid ID and your reference number to the Hospital Health Information Management Section (HHIMS).</div>' : ''}
         ${canCancel ? '<div class="actions"><button class="btn danger" id="cancelBtn">Cancel request</button></div>' : ''}`;
     } else {
       const canCancel = r.status === 'BOOKED';

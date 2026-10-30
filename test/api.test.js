@@ -438,6 +438,9 @@ test('FAQ assistant answers common questions and logs unanswered ones', async ()
   assert.match(sched.answer, /Pediatrics: Monday to Friday/);
   assert.equal(sched.link.url, '/book-opd');
 
+  const hours = await ask('what time is the records section open on saturday');
+  assert.match(hours.answer, /HHIMS[\s\S]*Saturdays and Holidays, 8:00 AM – 4:00 PM \(No Noon Break\)/);
+
   // Unmatched questions get a fallback and are kept for staff
   const miss = await ask('do you have parking for motorcycles');
   assert.equal(miss.matched, false);
@@ -473,7 +476,7 @@ test('FAQ management is admin-only and validates links', async () => {
 
 test('hospital directory: public data, admin editing, maps with pins', async () => {
   let pub = (await call('/directory')).data;
-  assert.ok(pub.entries.some((e) => e.name === 'Medical Records Section'));
+  assert.ok(pub.entries.some((e) => e.name === 'Hospital Health Information Management Section (HHIMS)' && /Saturdays and Holidays, 8:00 AM – 4:00 PM/.test(e.hours)));
   assert.ok(pub.entries.some((e) => e.opd_code === 'PEDIA'));
   assert.ok(pub.guides.length >= 4);
   assert.ok(pub.clinics.find((c) => c.code === 'SURG').days.includes('Mon'));
