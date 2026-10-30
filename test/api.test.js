@@ -6,6 +6,7 @@ process.env.OPD_PATIENTS_PER_SLOT = '2';
 process.env.DATABASE_URL = '';
 process.env.CRON_SECRET = 'test-cron-secret';
 process.env.LOGIN_RATE_LIMIT = '1000';
+process.env.SUBMIT_RATE_LIMIT = '1000';
 const { open } = require('../src/db');
 const { createApp } = require('../src/server');
 const { runReminders } = require('../src/reminders');
@@ -522,6 +523,53 @@ test('hospital directory: public data, admin editing, maps with pins', async () 
   const after = (await call('/directory')).data.entries.find((e) => e.name === 'Cashier');
   assert.equal(after.map_id, null);
   assert.equal(after.pin_x, null);
+});
+
+test('authorization letter is filled in for representative requests', async () => {
+  const JSZip = require('jszip');
+  const body = {
+    ...patient,
+    patient_middle: 'santos',
+    requester_name: 'Maria Dela Cruz',
+    requester_relation: 'Spouse',
+    purpose: 'PhilHealth claim',
+    items: [{ record_type: 'MEDICAL_CERTIFICATE' }, { record_type: 'CLINICAL_ABSTRACT' }, { record_type: 'OTHERS', details: 'Anesthesia record' }],
+  };
+  let res = await call('/records', { method: 'POST', body });
+  assert.match(res.data.error, /address/);
+  res = await call('/records', { method: 'POST', body: { ...body, patient_address: 'Brgy. Tetuan, Zamboanga City' } });
+  assert.equal(res.status, 201, JSON.stringify(res.data));
+  assert.match(res.data.letter_url, /^\/api\/records\/R-[\w-]+\/authorization-letter\?t=/);
+
+  const text = async (r) => {
+    const zip = await JSZip.loadAsync(Buffer.from(await r.arrayBuffer()));
+    return (await zip.file('word/document.xml').async('string')).replace(/<[^>]+>/g, '');
+  };
+  const dl = await fetch(base.replace('/api', '') + res.data.letter_url);
+  assert.equal(dl.status, 200);
+  assert.match(dl.headers.get('content-disposition'), /Authorization-Letter-R-/);
+  const t = await text(dl);
+  assert.match(t, /I, +JUAN SANTOS DELA CRUZ/);
+  assert.match(t, /residing at +BRGY\. TETUAN, ZAMBOANGA CITY/);
+  assert.match(t, /authorized +MARIA DELA CRUZ/);
+  assert.match(t, /■ +Medical Certificate/);
+  assert.match(t, /□ +Certificate of Confinement/);
+  assert.match(t, /■ +Others: +Clinical Abstract \/ Discharge Summary, ANESTHESIA RECORD/);
+  assert.ok(!t.includes('_____'), 'all blanks filled');
+
+  // Wrong or missing signature → not found; patient's own requests have no letter
+  assert.equal((await fetch(base + `/records/${res.data.ref_no}/authorization-letter?t=wrong`)).status, 404);
+  const own = (await call('/track', { method: 'POST', body: { ref_no: (await db.one("SELECT ref_no FROM record_requests WHERE requester_relation LIKE 'Self%' AND mobile = '+639171234567' LIMIT 1")).ref_no, mobile: '09171234567' } })).data;
+  assert.equal(own.letter_url, null);
+
+  // Track page and staff panel can download it too
+  const tracked = (await call('/track', { method: 'POST', body: { ref_no: res.data.ref_no, mobile: '09171234567' } })).data;
+  assert.equal(tracked.letter_url, res.data.letter_url);
+  const { id } = await db.one('SELECT id FROM record_requests WHERE ref_no = $1', [res.data.ref_no]);
+  const staffDl = await fetch(base + `/admin/records/${id}/authorization-letter`, { headers: { Cookie: await login() } });
+  assert.equal(staffDl.status, 200);
+  assert.match(await text(staffDl), /MARIA DELA CRUZ/);
+  assert.equal((await fetch(base + `/admin/records/${id}/authorization-letter`)).status, 401);
 });
 
 test('mobile normalisation', () => {

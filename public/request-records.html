@@ -54,6 +54,7 @@
         <span></span>
         <label class="field">Date of admission / visit<input type="date" name="admission_date"></label>
         <label class="field">Date of discharge<input type="date" name="discharge_date"></label>
+        <label class="field span-2 hidden" id="addressField"><span class="req">Patient's address</span><span class="hint">Used in the authorization letter we prepare for the representative</span><input name="patient_address" autocomplete="street-address" maxlength="300"></label>
       </div>
       <h2 style="margin-top:22px">Requester</h2>
       <div class="grid grid-2">
@@ -68,7 +69,7 @@
         <label class="field"><span class="req">Mobile number</span><span class="hint">SMS updates are sent here</span><input name="mobile" type="tel" inputmode="tel" placeholder="09XXXXXXXXX" autocomplete="tel" required></label>
         <label class="field">Email<input name="email" type="email" autocomplete="email"></label>
       </div>
-      <div class="alert info small hidden" id="repNote">Representatives must present an authorization letter signed by the patient and representative, plus their valid IDs, when claiming.</div>
+      <div class="alert info small hidden" id="repNote">Representatives must present an authorization letter signed by the patient and representative, plus their valid IDs, when claiming. <b>We'll fill in the hospital's authorization letter with these details</b> — download it after submitting, print it, and have both of you sign it.</div>
       <div class="actions"><button type="button" class="btn secondary" data-prev>Back</button><button type="button" class="btn" data-next>Next</button></div>
     </section>
 

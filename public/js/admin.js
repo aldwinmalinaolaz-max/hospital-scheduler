@@ -118,13 +118,15 @@
         <td class="mono">${esc(r.ref_no)}<div class="sub">${esc(r.created_at)}</div></td>
         <td>${esc(r.patient_last)}, ${esc(r.patient_first)} ${esc(r.patient_middle || '')}
           <div class="sub">DOB ${esc(r.birthdate)}${r.hospital_no ? ` · HRN ${esc(r.hospital_no)}` : ''}</div>
+          ${r.patient_address ? `<div class="sub">${esc(r.patient_address)}</div>` : ''}
           ${r.admission_date ? `<div class="sub">Adm ${esc(r.admission_date)}${r.discharge_date ? ` – ${esc(r.discharge_date)}` : ''}</div>` : ''}</td>
         <td>${r.items.map((i) => `${esc(i.name)}${i.details ? ` <i>(${esc(i.details)})</i>` : ''} ×${i.copies}`).join('<br>')}
           <div class="sub">Purpose: ${esc(r.purpose)}</div></td>
         <td>${esc(r.requester_name)}<div class="sub">${esc(r.requester_relation)}</div><div class="sub">${esc(r.mobile)}</div></td>
         <td class="nowrap">${esc(fmtDate(r.pickup_date, { month: 'short', day: 'numeric', weekday: 'short' }))}</td>
         <td>${badge(r.status)}${r.remarks ? `<div class="sub">${esc(r.remarks)}</div>` : ''}${updatedBy(r)}</td>
-        <td class="no-print nowrap">${quickRec(r)}<button class="btn sm secondary" data-edit-rec="${r.id}">Edit</button></td>
+        <td class="no-print nowrap">${quickRec(r)}<button class="btn sm secondary" data-edit-rec="${r.id}">Edit</button>
+          ${/^self/i.test(r.requester_relation) ? '' : `<a class="btn sm secondary" href="/api/admin/records/${r.id}/authorization-letter" download title="Authorization letter filled in with this request's details">Letter</a>`}</td>
       </tr>`,
         )
         .join('') || '<tr><td colspan="7" class="empty">No records requests found.</td></tr>';

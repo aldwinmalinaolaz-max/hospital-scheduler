@@ -4,8 +4,16 @@
   "buildCommand": "",
   "outputDirectory": "public",
   "cleanUrls": true,
-  "rewrites": [{ "source": "/api/(.*)", "destination": "/api" }],
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api"
+    }
+  ],
   "functions": {
-    "api/index.js": { "maxDuration": 30 }
+    "api/index.js": {
+      "maxDuration": 30,
+      "includeFiles": "templates/**"
+    }
   }
 }

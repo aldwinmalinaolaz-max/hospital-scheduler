@@ -24,6 +24,8 @@ module.exports = {
   sessionSecret: env.SESSION_SECRET || 'change-me-in-production',
   // Staff login attempts allowed per IP address every 10 minutes
   loginRateLimit: int(env.LOGIN_RATE_LIMIT, 10),
+  // Public form submissions / lookups allowed per IP address every 10 minutes
+  submitRateLimit: int(env.SUBMIT_RATE_LIMIT, 20),
   admin: {
     username: env.ADMIN_USERNAME || 'admin',
     password: env.ADMIN_PASSWORD || 'admin123',

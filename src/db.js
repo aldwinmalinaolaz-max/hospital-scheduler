@@ -108,6 +108,9 @@ const SCHEMA = `
   ALTER TABLE sms_log ADD COLUMN IF NOT EXISTS provider_status TEXT;
   ALTER TABLE sms_log ADD COLUMN IF NOT EXISTS provider_response TEXT;
 
+  -- Patient's address, needed for the authorization letter when someone else requests
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS patient_address TEXT;
+
   -- Which staff member last changed a request
   ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS updated_by TEXT;
   ALTER TABLE appointments ADD COLUMN IF NOT EXISTS updated_by TEXT;

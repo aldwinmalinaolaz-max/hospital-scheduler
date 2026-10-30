@@ -7,7 +7,8 @@ const auth = require('../auth');
 const { sendSms, checkDelivery } = require('../sms');
 const { lock } = require('../db');
 const u = require('../util');
-const { ValidationError, rateLimit } = require('./public');
+const { ValidationError, rateLimit, sendLetter } = require('./public');
+const letter = require('../letter');
 const faq = require('../faq');
 const directory = require('../directory');
 
@@ -230,6 +231,13 @@ module.exports = function adminRoutes(db) {
         items: r.items.map((i) => ({ ...i, name: catalog.recordType(i.record_type)?.name || i.record_type })),
       })),
     });
+  });
+
+  router.get('/records/:id/authorization-letter', requireAccess('records'), async (req, res) => {
+    const r = await db.one('SELECT * FROM record_requests WHERE id = $1', [Number(req.params.id)]);
+    if (!r || !letter.needsLetter(r)) return res.status(404).json({ error: 'No authorization letter for this request.' });
+    const items = await db.query('SELECT record_type, details, copies FROM record_request_items WHERE request_id = $1 ORDER BY id', [r.id]);
+    await sendLetter(res, r, items);
   });
 
   router.patch('/records/:id', requireAccess('records'), async (req, res) => {

@@ -6,10 +6,20 @@ const msg = require('../messages');
 const { sendSms } = require('../sms');
 const { lock } = require('../db');
 const faq = require('../faq');
+const letter = require('../letter');
+const crypto = require('node:crypto');
 const directory = require('../directory');
 const u = require('../util');
 
 class ValidationError extends Error {}
+
+async function sendLetter(res, record, items) {
+  const buf = await letter.buildAuthorizationLetter(record, items);
+  res.setHeader('Content-Type', letter.DOCX_MIME);
+  res.setHeader('Content-Disposition', `attachment; filename="${letter.letterFilename(record)}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(buf);
+}
 
 const str = (v, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 // Patient-entered text is stored in capital letters
@@ -65,9 +75,14 @@ async function itemsFor(db, requestId) {
   return rows.map((i) => ({ ...i, name: catalog.recordType(i.record_type)?.name || i.record_type }));
 }
 
+// Download links for the authorization letter carry a signature tied to the reference number,
+// so only someone who has the confirmation screen, SMS lookup or staff access can open it.
+const letterToken = (refNo) => crypto.createHmac('sha256', config.sessionSecret).update(`letter:${refNo}`).digest('base64url').slice(0, 32);
+
 async function publicRecord(db, r) {
   return {
     kind: 'record',
+    letter_url: letter.needsLetter(r) ? `/api/records/${encodeURIComponent(r.ref_no)}/authorization-letter?t=${letterToken(r.ref_no)}` : null,
     ref_no: r.ref_no,
     patient: `${r.patient_first} ${r.patient_last}`,
     pickup_date: r.pickup_date,
@@ -95,7 +110,7 @@ function publicAppointment(a) {
 
 module.exports = function publicRoutes(db) {
   const router = express.Router();
-  const submitLimit = rateLimit({ windowMs: 10 * 60e3, max: 20 });
+  const submitLimit = rateLimit({ windowMs: 10 * 60e3, max: config.submitRateLimit });
 
   router.get('/catalog', (req, res) => {
     res.json({
@@ -147,6 +162,9 @@ module.exports = function publicRoutes(db) {
     if (admission && discharge && discharge < admission) throw new ValidationError('Discharge date cannot be before admission date.');
     const mobile = validMobile(b.mobile);
     const email = validEmail(b.email);
+    // The authorization letter states where the patient lives
+    const address = up(b.patient_address, 300) || null;
+    if (letter.needsLetter(b) && !address) throw new ValidationError("Please enter the patient's address (needed for the authorization letter).");
 
     const record = await db.tx(async (t) => {
       // Claiming date follows the posted rule; the requester does not choose it
@@ -154,8 +172,8 @@ module.exports = function publicRoutes(db) {
       const ref = await uniqueRef(t, 'record_requests', 'R');
       const row = await t.one(
         `INSERT INTO record_requests (ref_no, patient_last, patient_first, patient_middle, birthdate, hospital_no,
-          admission_date, discharge_date, requester_name, requester_relation, mobile, email, purpose, pickup_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+          admission_date, discharge_date, requester_name, requester_relation, mobile, email, purpose, pickup_date, patient_address)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
         [
           ref,
           up(b.patient_last, 80),
@@ -171,6 +189,7 @@ module.exports = function publicRoutes(db) {
           email,
           up(b.purpose, 300),
           pickup,
+          address,
         ],
       );
       for (const it of cleanItems) {
@@ -186,6 +205,16 @@ module.exports = function publicRoutes(db) {
 
     await sendSms(db, { to: record.mobile, message: msg.recordSubmitted(record), kind: 'RECORD_SUBMITTED', refNo: record.ref_no });
     res.status(201).json(await publicRecord(db, record));
+  });
+
+  router.get('/records/:ref/authorization-letter', async (req, res) => {
+    const refNo = str(req.params.ref, 40).toUpperCase();
+    const given = Buffer.from(String(req.query.t || ''));
+    const expected = Buffer.from(letterToken(refNo));
+    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return res.status(404).json({ error: 'Letter not found.' });
+    const r = await db.one('SELECT * FROM record_requests WHERE ref_no = $1', [refNo]);
+    if (!r || !letter.needsLetter(r)) return res.status(404).json({ error: 'Letter not found.' });
+    await sendLetter(res, r, await itemsFor(db, r.id));
   });
 
   // ---- OPD ----
@@ -395,4 +424,5 @@ module.exports = function publicRoutes(db) {
 };
 
 module.exports.ValidationError = ValidationError;
+module.exports.sendLetter = sendLetter;
 module.exports.rateLimit = rateLimit;

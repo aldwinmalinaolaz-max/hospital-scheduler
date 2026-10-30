@@ -23,6 +23,8 @@
           ${r.remarks ? `<dt>Remarks</dt><dd>${esc(r.remarks)}</dd>` : ''}
           <dt>Submitted</dt><dd>${esc(r.created_at)}</dd>
         </dl>
+        ${r.letter_url ? `<div class="alert info small">Requested by a representative: bring the signed authorization letter and both valid IDs when claiming.
+          <div style="margin-top:8px"><a class="btn sm" href="${esc(r.letter_url)}" download>Download authorization letter (Word)</a></div></div>` : ''}
         ${r.status === 'READY' ? '<div class="alert ok">Your documents are ready. Please bring a valid ID and your reference number to the Medical Records Section.</div>' : ''}
         ${canCancel ? '<div class="actions"><button class="btn danger" id="cancelBtn">Cancel request</button></div>' : ''}`;
     } else {

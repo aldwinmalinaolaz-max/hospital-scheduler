@@ -80,6 +80,14 @@ Each call sends any reminders that are due. A reminder is never sent twice, even
 - Statuses run **Pending → Processing → Ready → Released**. A request can also end as **Rejected** (a reason is required) or **Cancelled** (by the requester, only while Pending).
 - SMS is sent when the request is submitted, when it's Ready, when it's Rejected, and when staff move the pickup date. A pickup reminder goes out at 7:00 AM on the pickup date if the request is Ready.
 
+### Authorization letter (requests by a representative)
+When the requester is not the patient, the form also asks for the **patient's address**. After submitting, the requester can download the hospital's **Authorization Letter (FM-HHIM-05 Rev 2)** as a Word file, already filled in:
+- the patient's name and address, and the representative's name;
+- the requested documents ticked (Medical Certificate, Certificate of Confinement), with everything else listed under **Others**;
+- the printed names and the request date beside both signature lines.
+
+The requester prints it, has it signed by the patient and the representative, and brings it with both valid IDs. The letter can be downloaded again from **Track / Cancel**, and staff can download it from the **Letter** button in the Records list. The template is `templates/authorization-letter.docx`; if the form is revised, the blanks are found by their paragraph IDs in `src/letter.js`.
+
 ### OPD appointments
 - Each clinic has its own clinic days (see `src/catalog.js`). Slots run from `OPD_START` to `OPD_END`, `OPD_SLOT_MINUTES` long, with up to `OPD_PATIENTS_PER_SLOT` patients each.
 - Patients can't double-book the same clinic on the same day. When an appointment is cancelled, its slot opens up again.
@@ -177,4 +185,4 @@ test/             node:test API + reminder tests (set TEST_DATABASE_URL to run a
 - Set a strong `ADMIN_PASSWORD` and a random `SESSION_SECRET`. Vercel serves HTTPS automatically. If you self-host, put the app behind nginx or Caddy for HTTPS.
 - Backups: Supabase's paid plans include daily backups. On the free plan, export regularly (Supabase → Database → Backups, or `pg_dump`). Note that free Supabase projects pause after a week with no activity.
 - Have your Data Protection Officer review the consent text in `public/js/common.js`, since the app handles health information under RA 10173.
-- Each request form has a rate limit of 20 submissions per IP per 10 minutes. It is kept in memory per server instance, so on Vercel it is only a light safeguard.
+- Each request form has a rate limit of 20 submissions per IP per 10 minutes (`SUBMIT_RATE_LIMIT`), and staff login 10 attempts (`LOGIN_RATE_LIMIT`). These are kept in memory per server instance, so on Vercel they are only a light safeguard.

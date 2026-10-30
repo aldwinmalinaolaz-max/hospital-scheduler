@@ -36,7 +36,12 @@
 
   form.requester_relation.addEventListener('change', () => {
     const self = form.requester_relation.value.startsWith('Self');
-    $('#repNote').classList.toggle('hidden', !form.requester_relation.value || self);
+    const representative = !!form.requester_relation.value && !self;
+    $('#repNote').classList.toggle('hidden', !representative);
+    // The authorization letter needs the patient's address
+    $('#addressField').classList.toggle('hidden', !representative);
+    form.patient_address.required = representative;
+    if (!representative) form.patient_address.value = '';
     if (self && !form.requester_name.value) {
       form.requester_name.value = [form.patient_first.value, form.patient_middle.value, form.patient_last.value].filter(Boolean).join(' ');
     }
@@ -57,9 +62,11 @@
         ${d.admission_date ? `<dt>Admission / visit</dt><dd>${esc(fmtDate(d.admission_date))}${d.discharge_date ? ` – ${esc(fmtDate(d.discharge_date))}` : ''}</dd>` : ''}
         <dt>Requested by</dt><dd>${esc(d.requester_name)} (${esc(d.requester_relation)})</dd>
         <dt>Mobile</dt><dd>${esc(d.mobile)}</dd>
+        ${d.patient_address ? `<dt>Patient's address</dt><dd>${esc(d.patient_address)}</dd>` : ''}
         <dt>Purpose</dt><dd>${esc(d.purpose)}</dd>
         <dt>Claiming date</dt><dd>${esc(fmtDate(claimDate))} <span class="muted small">(8:00 AM – 5:00 PM)</span></dd>
-      </dl>`;
+      </dl>
+      ${d.patient_address ? '<div class="alert info small" style="margin-top:14px">Because you are not the patient, the hospital\'s <b>authorization letter</b> will be filled in with these details for you to download after you submit.</div>' : ''}`;
     const reqs = new Set([...selected.keys()].flatMap((c) => cat.recordTypes.find((t) => t.code === c).requirements));
     $('#reqList').innerHTML = [...reqs].map((r) => `<li>${esc(r)}</li>`).join('');
   }
@@ -116,6 +123,11 @@
         <p>Claiming date: <b>${esc(fmtDate(res.pickup_date))}</b>, 8:00 AM – 5:00 PM, at the Medical Records Section.<br>
         We sent an SMS to <b>${esc(d.mobile)}</b> and will text you again once your documents are ready.</p>
         <p class="muted small">Please keep this reference number and bring a valid ID when claiming.</p>
+        ${res.letter_url ? `<div class="alert warn" style="text-align:left">
+          <b>Authorization letter</b><br>
+          We filled in the hospital's authorization letter with your details. Download and print it, have it <b>signed by the patient and by you</b>, and bring it with both your valid IDs when claiming.
+          <div style="margin-top:10px"><a class="btn" href="${esc(res.letter_url)}" download>Download authorization letter (Word)</a></div>
+        </div>` : ''}
         <div class="actions" style="justify-content:center">
           <button class="btn secondary" onclick="window.print()">Print</button>
           <a class="btn" href="/">Done</a>
