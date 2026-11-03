@@ -89,7 +89,7 @@ When the requester is not the patient, the form also asks for the **patient's ad
 The requester prints it, has it signed by the patient and the representative, and brings it with both valid IDs. The letter can be downloaded again from **Track / Cancel**, and staff can download it from the **Letter** button in the Records list. The template is `templates/authorization-letter.docx`; if the form is revised, the blanks are found by their paragraph IDs in `src/letter.js`.
 
 ### OPD appointments
-- Each clinic has its own clinic days (see `src/catalog.js`). Slots run from `OPD_START` to `OPD_END`, `OPD_SLOT_MINUTES` long, with up to `OPD_PATIENTS_PER_SLOT` patients each.
+- Each clinic's days, hours, slot length and patients per slot are set per month in **Admin → OPD Schedules** (see below).
 - Patients can't double-book the same clinic on the same day. When an appointment is cancelled, its slot opens up again.
 - Statuses: **Booked → Checked in → Completed**, or **No show** / **Cancelled**. Staff can reschedule to any open slot.
 - **SMS:**
@@ -98,6 +98,17 @@ The requester prints it, has it signed by the patient and the representative, an
   - A reminder **`REMINDER_HOURS_BEFORE` hours before** the appointment.
   - A message when the appointment is cancelled or rescheduled.
   - If someone books after a reminder's send time has passed, that reminder is skipped, because the confirmation SMS already covers it.
+
+### OPD Schedules (monthly)
+Clinic schedules change every month, so they're managed in **Admin → OPD Schedules**, by Administrators and by Staff with OPD access:
+- Use the arrows to pick a month. For each clinic, **Edit** sets its clinic days, start and end time, minutes per slot and patients per slot.
+- On the month calendar, **click a clinic day to close it** (e.g. doctor on leave), or **click any other day to add an extra clinic day**. Hospital closed dates from Settings are shown, and an extra day can open a clinic on one of them.
+- Add a **note for patients** (e.g. "Dr. Santos on leave Nov 18–20"). It's shown on the booking page and in the Hospital Directory.
+- **Copy last month to this month** fills the month for every clinic not yet set, so only the changes need editing.
+- If a month hasn't been set, each clinic's latest earlier schedule **carries over** (without its date changes), so booking never stops. The screen marks clinics as *Set*, *Carried over* or *Not scheduled*.
+- **+ Add clinic** creates a new clinic, and **Clinic** renames, reorders or hides one. A new clinic can be booked once it has a schedule.
+
+Booking (dates and time slots), the Hospital Directory (this month and, once published, next month), the FAQ assistant's schedule answer and SMS messages all follow these schedules. Changing a schedule doesn't move existing appointments; reschedule those from **OPD Appointments**.
 
 ### Tracking
 Patients look up a request with its reference number and their mobile number. Records references start with `R-` and appointment references start with `A-`.
@@ -160,7 +171,7 @@ Set `SMS_PROVIDER` in `.env` to one of these:
 Mobile numbers are stored in E.164 format, so `09171234567` becomes `+639171234567`. You can change the message wording in `src/messages.js`.
 
 ## Customising
-- **Document types, processing days, requirements, clinics and clinic days:** `src/catalog.js`
+- **Document types and requirements:** `src/catalog.js`. Clinics and their schedules: **Admin → OPD Schedules**.
 - **Capacities, hours and reminder times:** `.env`
 
 ## Project layout
@@ -170,7 +181,8 @@ vercel.json       Vercel routing: /api/* → function, everything else → publi
 src/
   server.js       Express app, cron endpoint, local server + reminder scheduler
   config.js       .env settings
-  catalog.js      document types, clinics, statuses
+  catalog.js      document types, statuses, starting clinic list
+  clinics.js      OPD clinics and monthly schedules (carry-over, open days, slots)
   db.js           Postgres schema + drivers (Supabase via DATABASE_URL, else embedded PGlite)
   scheduling.js   pickup-date & OPD slot availability
   reminders.js    background SMS reminder job

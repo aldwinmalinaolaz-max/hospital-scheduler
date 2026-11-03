@@ -21,8 +21,10 @@ async function runReminders(db, now = new Date()) {
   let sent = 0;
 
   const appts = await db.query(
-    `SELECT * FROM appointments WHERE status = 'BOOKED' AND appt_date IN ($1, $2)
-     AND (reminded_day_before = FALSE OR reminded_hours_before = FALSE)`,
+    `SELECT a.*, COALESCE(c.name, a.department) AS department_name
+     FROM appointments a LEFT JOIN opd_clinics c ON c.code = a.department
+     WHERE a.status = 'BOOKED' AND a.appt_date IN ($1, $2)
+     AND (a.reminded_day_before = FALSE OR a.reminded_hours_before = FALSE)`,
     [today, tomorrow],
   );
 

@@ -11,6 +11,7 @@ const { ValidationError, rateLimit, sendLetter } = require('./public');
 const letter = require('../letter');
 const faq = require('../faq');
 const directory = require('../directory');
+const clinics = require('../clinics');
 
 const COOKIE = 'hs_admin';
 
@@ -286,7 +287,8 @@ module.exports = function adminRoutes(db) {
     }
     const { where, params } = whereClause(conds);
     const rows = await db.query(`SELECT * FROM appointments ${where} ORDER BY appt_date, appt_time, id LIMIT 500`, params);
-    res.json({ rows: rows.map((a) => ({ ...stamp(a), department_name: catalog.department(a.department)?.name || a.department })) });
+    const names = await clinics.clinicNames(db);
+    res.json({ rows: rows.map((a) => ({ ...stamp(a), department_name: names.get(a.department) || a.department })) });
   });
 
   router.patch('/appointments/:id', requireAccess('opd'), async (req, res) => {
@@ -318,13 +320,103 @@ module.exports = function adminRoutes(db) {
     });
 
     if (b.notify !== false) {
+      const named = await clinics.withClinicName(db, after);
       if (status === 'CANCELLED' && before.status !== 'CANCELLED') {
-        await sendSms(db, { to: after.mobile, message: msg.apptCancelled(after), kind: 'APPT_CANCELLED', refNo: after.ref_no });
+        await sendSms(db, { to: after.mobile, message: msg.apptCancelled(named), kind: 'APPT_CANCELLED', refNo: after.ref_no });
       } else if (rescheduled) {
-        await sendSms(db, { to: after.mobile, message: msg.apptRescheduled(after), kind: 'APPT_RESCHEDULED', refNo: after.ref_no });
+        await sendSms(db, { to: after.mobile, message: msg.apptRescheduled(named), kind: 'APPT_RESCHEDULED', refNo: after.ref_no });
       }
     }
     res.json(stamp(after));
+  });
+
+  // ---------- OPD clinics & monthly schedules (Administrators and staff with OPD access) ----------
+
+  router.get('/opd/schedules', requireAccess('opd'), async (req, res) => {
+    const month = String(req.query.month || clinics.monthOf(u.todayStr()));
+    if (!clinics.validMonth(month)) throw new ValidationError('Invalid month.');
+    const [list, scheds, holidays] = await Promise.all([
+      clinics.listClinics(db, { activeOnly: false }),
+      clinics.schedulesForMonth(db, month),
+      db.query("SELECT date, reason FROM closed_dates WHERE date LIKE $1 || '-%' ORDER BY date", [month]),
+    ]);
+    res.json({
+      month,
+      holidays,
+      clinics: list.map((c) => {
+        const s = scheds.get(c.code);
+        return { ...c, schedule: s ? { ...s, updated_at: u.toStamp(s.updated_at), summary: clinics.describe(s) } : null };
+      }),
+    });
+  });
+
+  // Save one clinic's schedule for a month
+  router.put('/opd/schedules/:code/:month', requireAccess('opd'), async (req, res) => {
+    const { code, month } = req.params;
+    if (!clinics.validMonth(month)) throw new ValidationError('Invalid month.');
+    if (!(await clinics.getClinic(db, code, { activeOnly: false }))) return res.status(404).json({ error: 'Clinic not found.' });
+    let v;
+    try {
+      v = clinics.cleanSchedule(req.body || {});
+    } catch (err) {
+      throw new ValidationError(err.message);
+    }
+    const b = req.body || {};
+    await db.query(
+      `INSERT INTO opd_schedules (clinic_code, month, days, start_time, end_time, slot_minutes, per_slot, closed_dates, extra_dates, note, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+       ON CONFLICT (clinic_code, month) DO UPDATE SET days = excluded.days, start_time = excluded.start_time, end_time = excluded.end_time,
+         slot_minutes = excluded.slot_minutes, per_slot = excluded.per_slot, closed_dates = excluded.closed_dates,
+         extra_dates = excluded.extra_dates, note = excluded.note, updated_by = excluded.updated_by, updated_at = now()`,
+      [code, month, v.days.join(','), v.start, v.end, v.slot, v.perSlot, v.dates(b.closed_dates, month).join(','),
+        v.dates(b.extra_dates, month).join(','), v.note || null, req.user.username],
+    );
+    res.json(await clinics.scheduleFor(db, code, month));
+  });
+
+  // Fill a month for every clinic that hasn't been set yet, copying each clinic's latest earlier schedule
+  router.post('/opd/schedules/:month/copy-previous', requireAccess('opd'), async (req, res) => {
+    const { month } = req.params;
+    if (!clinics.validMonth(month)) throw new ValidationError('Invalid month.');
+    const rows = await db.query(
+      `INSERT INTO opd_schedules (clinic_code, month, days, start_time, end_time, slot_minutes, per_slot, updated_by)
+       SELECT DISTINCT ON (s.clinic_code) s.clinic_code, $1, s.days, s.start_time, s.end_time, s.slot_minutes, s.per_slot, $2
+       FROM opd_schedules s
+       WHERE s.month < $1 AND NOT EXISTS (SELECT 1 FROM opd_schedules x WHERE x.clinic_code = s.clinic_code AND x.month = $1)
+       ORDER BY s.clinic_code, s.month DESC
+       RETURNING clinic_code`,
+      [month, req.user.username],
+    );
+    res.json({ copied: rows.length });
+  });
+
+  // Remove a month's own schedule (the clinic goes back to the previous month's schedule)
+  router.delete('/opd/schedules/:code/:month', requireAccess('opd'), async (req, res) => {
+    await db.query('DELETE FROM opd_schedules WHERE clinic_code = $1 AND month = $2', [req.params.code, req.params.month]);
+    res.json({ ok: true });
+  });
+
+  router.post('/opd/clinics', requireAccess('opd'), async (req, res) => {
+    const name = String(req.body?.name || '').trim().slice(0, 100);
+    if (!name) throw new ValidationError('Please enter the clinic name.');
+    // Short code from the name, e.g. "Cardiology Clinic" → CARDIOLOGYCLI; made unique if needed
+    const base = name.toUpperCase().replace(/[^A-Z0-9]+/g, '').slice(0, 12) || 'CLINIC';
+    let code = base;
+    for (let i = 2; await db.one('SELECT 1 FROM opd_clinics WHERE code = $1', [code]); i++) code = `${base}${i}`;
+    const sort = (await db.one('SELECT COALESCE(MAX(sort_order), 0) + 10 AS n FROM opd_clinics')).n;
+    const row = await db.one('INSERT INTO opd_clinics (code, name, sort_order) VALUES ($1, $2, $3) RETURNING *', [code, name, sort]);
+    res.status(201).json(row);
+  });
+
+  router.patch('/opd/clinics/:code', requireAccess('opd'), async (req, res) => {
+    const before = await clinics.getClinic(db, req.params.code, { activeOnly: false });
+    if (!before) return res.status(404).json({ error: 'Clinic not found.' });
+    const name = req.body?.name !== undefined ? String(req.body.name).trim().slice(0, 100) : before.name;
+    if (!name) throw new ValidationError('Please enter the clinic name.');
+    const active = req.body?.active ?? before.active;
+    const sort = req.body?.sort_order !== undefined ? parseInt(req.body.sort_order, 10) : before.sort_order;
+    if (Number.isNaN(sort)) throw new ValidationError('Order must be a number.');
+    res.json(await db.one('UPDATE opd_clinics SET name = $1, active = $2, sort_order = $3 WHERE code = $4 RETURNING *', [name, !!active, sort, before.code]));
   });
 
   router.get('/opd/slots', requireAccess('opd'), async (req, res) => {
@@ -405,7 +497,7 @@ module.exports = function adminRoutes(db) {
 
   router.get('/faqs', adminOnly, async (req, res) => {
     const rows = await db.query('SELECT * FROM faqs ORDER BY sort_order, id');
-    res.json({ rows: rows.map(stamp), placeholders: faq.placeholders() });
+    res.json({ rows: rows.map(stamp), placeholders: faq.placeholders(await clinics.faqValues(db)) });
   });
 
   router.post('/faqs', adminOnly, async (req, res) => {
@@ -471,7 +563,7 @@ module.exports = function adminRoutes(db) {
     const email = text(v('email'), 120);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ValidationError('Please enter a valid email address.');
     const opdCode = text(v('opd_code'), 20);
-    if (opdCode && !catalog.department(opdCode)) throw new ValidationError('Unknown OPD clinic.');
+    if (opdCode && !(await clinics.getClinic(db, opdCode, { activeOnly: false }))) throw new ValidationError('Unknown OPD clinic.');
     const mapId = v('map_id') ? Number(v('map_id')) : null;
     if (mapId && !(await db.one('SELECT 1 FROM maps WHERE id = $1', [mapId]))) throw new ValidationError('That map no longer exists.');
     const pin = (k) => {
@@ -533,7 +625,7 @@ module.exports = function adminRoutes(db) {
       maps: maps.map(mapMeta),
       contact: directory.SITE_FIELDS.map((f) => ({ ...f, value: values[f.key] || '' })),
       categories: directory.CATEGORIES,
-      clinics: catalog.DEPARTMENTS.map(({ code, name }) => ({ code, name })),
+      clinics: (await clinics.listClinics(db, { activeOnly: false })).map(({ code, name }) => ({ code, name })),
     });
   });
 

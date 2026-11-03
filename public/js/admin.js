@@ -63,7 +63,7 @@
   // ---------- Tabs ----------
   const loaders = {};
   function showTab(name) {
-    const allowed = { users: me?.role === 'ADMIN', faqs: me?.role === 'ADMIN', directory: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
+    const allowed = { schedules: me?.access.opd, users: me?.role === 'ADMIN', faqs: me?.role === 'ADMIN', directory: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
     if (!loaders[name] || allowed[name] === false) name = 'dashboard';
     $$('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $$('[data-view]').forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -504,6 +504,187 @@
     await api('/admin/faq-unanswered', { method: 'DELETE' });
     loaders.faqs();
   }));
+
+  // ---------- OPD Schedules ----------
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const monthLabel = (m) => new Date(`${m}-01T00:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const shiftMonth = (m, n) => {
+    const d = new Date(`${m}-01T00:00:00`);
+    d.setMonth(d.getMonth() + n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+  let schedMonth = cat.today.slice(0, 7);
+  let schedData = { clinics: [], holidays: [] };
+
+  loaders.schedules = guard(async () => {
+    schedData = await api(`/admin/opd/schedules?month=${schedMonth}`);
+    $('#monthLabel').textContent = monthLabel(schedMonth);
+    const active = schedData.clinics.filter((c) => c.active);
+    const set = active.filter((c) => c.schedule && !c.schedule.carried_over).length;
+    const status = $('#schedStatus');
+    status.className = `alert small ${set === active.length ? 'ok' : 'warn'}`;
+    status.innerHTML =
+      set === active.length
+        ? `All ${active.length} clinics have their ${esc(monthLabel(schedMonth))} schedule.`
+        : `<b>${set} of ${active.length} clinics</b> have a schedule set for ${esc(monthLabel(schedMonth))}. The others use their latest earlier schedule until you set this month — use <b>Copy last month to this month</b>, then adjust what changed.`;
+    $('#schedRows').innerHTML = schedData.clinics
+      .map((c) => {
+        const s = c.schedule;
+        const state = !c.active
+          ? '<span class="badge CANCELLED">Hidden</span>'
+          : !s
+            ? '<span class="badge FAILED">Not scheduled</span>'
+            : s.carried_over
+              ? `<span class="badge PROCESSING">Carried over</span><div class="sub">from ${esc(monthLabel(s.source_month))}</div>`
+              : `<span class="badge COMPLETED">Set</span><div class="sub">by ${esc(s.updated_by || '')}</div>`;
+        const changes = s ? [s.closed_dates.length && `${s.closed_dates.length} closed`, s.extra_dates.length && `${s.extra_dates.length} extra`].filter(Boolean).join(', ') : '';
+        return `<tr${c.active ? '' : ' style="opacity:.6"'}>
+          <td><b>${esc(c.name)}</b><div class="sub mono">${esc(c.code)}</div></td>
+          <td>${s ? esc(s.summary) : '<span class="muted">—</span>'}${s?.note ? `<div class="sub">${esc(s.note)}</div>` : ''}</td>
+          <td class="small">${s ? `${s.slot_minutes} min · ${s.per_slot} per slot` : ''}</td>
+          <td class="small">${esc(changes) || '<span class="muted">—</span>'}</td>
+          <td>${state}</td>
+          <td class="no-print nowrap"><button class="btn sm" data-edit-sched="${esc(c.code)}">Edit</button>
+            <button class="btn sm secondary" data-edit-clinic="${esc(c.code)}">Clinic</button></td>
+        </tr>`;
+      })
+      .join('');
+    $('#schedHolidays').textContent = schedData.holidays.length
+      ? `Hospital closed dates this month (Settings): ${schedData.holidays.map((h) => `${fmtDate(h.date, { month: 'short', day: 'numeric' })} – ${h.reason}`).join('; ')}. Clinics are closed on these days unless you add the date as an extra clinic day.`
+      : '';
+  });
+
+  $('#prevMonth').addEventListener('click', () => ((schedMonth = shiftMonth(schedMonth, -1)), loaders.schedules()));
+  $('#nextMonth').addEventListener('click', () => ((schedMonth = shiftMonth(schedMonth, 1)), loaders.schedules()));
+  $('#copyPrevBtn').addEventListener('click', guard(async () => {
+    const { copied } = await api(`/admin/opd/schedules/${schedMonth}/copy-previous`, { method: 'POST' });
+    alert(copied ? `Copied the latest schedule of ${copied} clinic(s) into ${monthLabel(schedMonth)}. Now edit the clinics whose schedule changed.` : 'Every clinic already has a schedule for this month.');
+    loaders.schedules();
+  }));
+  $('#addClinicBtn').addEventListener('click', () =>
+    openDialog(
+      `<h2>Add clinic</h2>
+       <label class="field">Clinic name<input name="name" data-nocaps required placeholder="e.g. Cardiology"></label>
+       <p class="muted small">After adding it, click <b>Edit</b> to set its schedule. Patients can book once it has one.</p>`,
+      async (d) => {
+        await api('/admin/opd/clinics', { method: 'POST', body: { name: d.name } });
+        loaders.schedules();
+      },
+    ),
+  );
+
+  function clinicDialog(c) {
+    openDialog(
+      `<h2>Clinic</h2>
+       <div class="grid">
+         <label class="field">Name<input name="name" data-nocaps value="${esc(c.name)}" required></label>
+         <label class="field">Order<span class="hint">Lower numbers appear first</span><input name="sort_order" type="number" value="${c.sort_order}"></label>
+         <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="active" ${c.active ? 'checked' : ''}> Show and allow booking</label>
+       </div>`,
+      async (d) => {
+        await api(`/admin/opd/clinics/${encodeURIComponent(c.code)}`, { method: 'PATCH', body: { name: d.name, sort_order: d.sort_order, active: $('#dlgForm [name=active]').checked } });
+        loaders.schedules();
+      },
+    );
+  }
+
+  function scheduleDialog(c) {
+    const s = c.schedule || { days: [1, 2, 3, 4, 5], start_time: '08:00', end_time: '12:00', slot_minutes: 30, per_slot: 4, closed_dates: [], extra_dates: [], note: '' };
+    const closed = new Set(s.closed_dates);
+    const extra = new Set(s.extra_dates);
+    const holidays = new Map(schedData.holidays.map((h) => [h.date, h.reason]));
+    const [y, m] = schedMonth.split('-').map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const firstDow = new Date(y, m - 1, 1).getDay();
+    const dateOf = (d) => `${schedMonth}-${String(d).padStart(2, '0')}`;
+    const order = [1, 2, 3, 4, 5, 6, 0];
+
+    openDialog(
+      `<h2>${esc(c.name)} — ${esc(monthLabel(schedMonth))}</h2>
+       ${s.carried_over ? `<div class="alert info small">Pre-filled from ${esc(monthLabel(s.source_month))}. Saving sets this month's schedule.</div>` : ''}
+       <div class="grid">
+         <div class="field">Clinic days<div class="weekday-pick">${order
+           .map((d) => `<label><input type="checkbox" name="dow" value="${d}" ${s.days.includes(d) ? 'checked' : ''}>${DOW[d]}</label>`)
+           .join('')}</div></div>
+         <div class="grid grid-2">
+           <label class="field">Start time<input type="time" name="start_time" value="${esc(s.start_time)}" required></label>
+           <label class="field">End time<input type="time" name="end_time" value="${esc(s.end_time)}" required></label>
+           <label class="field">Minutes per slot<input type="number" name="slot_minutes" min="5" max="240" step="5" value="${s.slot_minutes}" required></label>
+           <label class="field">Patients per slot<input type="number" name="per_slot" min="1" max="200" value="${s.per_slot}" required></label>
+         </div>
+         <p class="small muted" id="slotPreview" style="margin:0"></p>
+         <div class="field">Dates this month<span class="hint">Click a clinic day to close it (e.g. doctor on leave). Click any other day to add an extra clinic day.</span>
+           <div class="cal" id="schedCal"></div>
+           <div class="cal-legend"><span class="l-open">Clinic day</span><span class="l-extra">Extra day</span><span class="l-closed">Closed</span><span class="l-holiday">Hospital closed</span></div>
+           <p class="small" id="calSummary" style="margin:6px 0 0"></p>
+         </div>
+         <label class="field">Note for patients (optional)<span class="hint">Shown on the booking page and directory, e.g. "Dr. Santos on leave Nov 18–20"</span><input name="note" data-nocaps maxlength="300" value="${esc(s.note || '')}"></label>
+       </div>`,
+      async (d) => {
+        const days = $$('#dlgForm [name=dow]:checked').map((x) => Number(x.value));
+        await api(`/admin/opd/schedules/${encodeURIComponent(c.code)}/${schedMonth}`, {
+          method: 'PUT',
+          body: { days, start_time: d.start_time, end_time: d.end_time, slot_minutes: d.slot_minutes, per_slot: d.per_slot, note: d.note, closed_dates: [...closed], extra_dates: [...extra] },
+        });
+        loaders.schedules();
+      },
+      { wide: true },
+    );
+
+    const weekdays = () => new Set($$('#dlgForm [name=dow]:checked').map((x) => Number(x.value)));
+    function drawCal() {
+      const wd = weekdays();
+      let html = order.map((d) => `<span class="dow">${DOW[d]}</span>`).join('');
+      html += '<span></span>'.repeat((firstDow + 6) % 7);
+      let open = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = dateOf(d);
+        const dow = new Date(y, m - 1, d).getDay();
+        let cls = '';
+        let tag = '';
+        if (extra.has(date)) (cls = 'extra'), (tag = 'extra');
+        else if (closed.has(date)) (cls = 'closed'), (tag = 'closed');
+        else if (holidays.has(date)) (cls = 'holiday'), (tag = 'holiday');
+        else if (wd.has(dow)) cls = 'open';
+        if (cls === 'open' || cls === 'extra') open++;
+        html += `<button type="button" class="${cls}" data-date="${date}" title="${esc(holidays.get(date) || '')}">${d}${tag ? `<small>${tag}</small>` : ''}</button>`;
+      }
+      $('#schedCal').innerHTML = html;
+      $('#calSummary').textContent = `${open} clinic day(s) in ${monthLabel(schedMonth)}.`;
+    }
+    function drawSlots() {
+      const [sh, sm] = ($('#dlgForm [name=start_time]').value || '0:0').split(':').map(Number);
+      const [eh, em] = ($('#dlgForm [name=end_time]').value || '0:0').split(':').map(Number);
+      const len = Number($('#dlgForm [name=slot_minutes]').value);
+      const per = Number($('#dlgForm [name=per_slot]').value);
+      const n = len > 0 ? Math.floor((eh * 60 + em - (sh * 60 + sm)) / len) : 0;
+      $('#slotPreview').textContent = n > 0 ? `${n} time slot(s) a day × ${per || 0} patient(s) = up to ${n * (per || 0)} patients per clinic day.` : 'End time must be after the start time.';
+    }
+    $('#schedCal').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-date]');
+      if (!b) return;
+      const date = b.dataset.date;
+      const regular = weekdays().has(new Date(`${date}T00:00:00`).getDay()) && !holidays.has(date);
+      if (extra.has(date)) extra.delete(date);
+      else if (closed.has(date)) closed.delete(date);
+      else if (regular) closed.add(date);
+      else extra.add(date);
+      drawCal();
+    });
+    $$('#dlgForm [name=dow]').forEach((x) => x.addEventListener('change', drawCal));
+    $$('#dlgForm [name=start_time], #dlgForm [name=end_time], #dlgForm [name=slot_minutes], #dlgForm [name=per_slot]').forEach((x) => x.addEventListener('input', drawSlots));
+    drawCal();
+    drawSlots();
+  }
+
+  $('#schedRows').addEventListener('click', (e) => {
+    const es = e.target.closest('[data-edit-sched]');
+    const ec = e.target.closest('[data-edit-clinic]');
+    const c = schedData.clinics.find((x) => x.code === (es || ec)?.dataset.editSched || x.code === (es || ec)?.dataset.editClinic);
+    if (!c) return;
+    if (es) scheduleDialog(c);
+    else clinicDialog(c);
+  });
 
   // ---------- Hospital Directory ----------
   let dir = { entries: [], guides: [], maps: [], contact: [], categories: [], clinics: [] };

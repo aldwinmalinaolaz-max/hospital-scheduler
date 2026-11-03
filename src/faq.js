@@ -2,7 +2,6 @@
 // Answers are only ever text that staff wrote, so the assistant cannot make things up.
 const config = require('./config');
 const catalog = require('./catalog');
-const { formatTime12 } = require('./util');
 
 // Words ignored when comparing a message with an FAQ's question
 const STOPWORDS = new Set(
@@ -45,29 +44,24 @@ function bestMatches(message, faqs, limit = 3) {
 
 // ---------- Placeholders that keep answers in step with the system's settings ----------
 
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-function dayRange(days) {
-  if (days.join() === '1,2,3,4,5') return 'Monday to Friday';
-  if (days.join() === '1,2,3,4,5,6') return 'Monday to Saturday';
-  return days.map((d) => DAY_NAMES[d]).join(', ');
-}
-
-function placeholders() {
+// `extra` carries values read from the database, e.g. clinics.faqValues()
+function placeholders(extra = {}) {
   return {
     hospital: config.hospitalName,
     claim_days: String(config.records.claimDays),
     office_days: config.records.openSaturday ? 'Monday to Saturday' : 'Monday to Friday',
-    opd_hours: `${formatTime12(config.opd.startTime)} – ${formatTime12(config.opd.endTime)}`,
     documents: catalog.RECORD_TYPES.map((t) => `• ${t.name.replace(' (please specify)', '')}`).join('\n'),
-    clinic_schedule: catalog.DEPARTMENTS.map((d) => `• ${d.name}: ${dayRange(d.days)}`).join('\n'),
+    // Filled from the monthly OPD schedules when available (clinics.faqValues)
+    opd_hours: 'the hours shown on the OPD Schedules page',
+    clinic_schedule: 'Please see the Hospital Directory for this month\'s clinic schedules.',
+    ...extra,
   };
 }
 
 const PLACEHOLDER_NAMES = Object.keys(placeholders());
 
-function render(text) {
-  const values = placeholders();
+function render(text, extra = {}) {
+  const values = placeholders(extra);
   return String(text).replace(/\{(\w+)\}/g, (m, k) => (k in values ? values[k] : m));
 }
 

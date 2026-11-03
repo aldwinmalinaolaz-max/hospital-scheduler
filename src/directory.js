@@ -3,7 +3,8 @@
 // because they must come from the hospital, not be guessed.
 const config = require('./config');
 const catalog = require('./catalog');
-const { formatTime12 } = require('./util');
+const u = require('./util');
+const clinics = require('./clinics');
 
 const CATEGORIES = ['OPD Clinic', 'Department', 'Diagnostics', 'Emergency', 'Office', 'Support Service', 'Other'];
 
@@ -22,17 +23,33 @@ const SITE_FIELDS = [
   { key: 'notice', label: 'Announcement shown at the top of the directory' },
 ];
 
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-function dayRange(days) {
-  if (days.join() === '1,2,3,4,5') return 'Monday to Friday';
-  if (days.join() === '1,2,3,4,5,6') return 'Monday to Saturday';
-  return days.map((d) => DAY_NAMES[d]).join(', ');
-}
-
-// Live clinic schedules from the booking settings (so the directory never disagrees with booking)
-function clinicSchedules() {
-  const hours = `${formatTime12(config.opd.startTime)} – ${formatTime12(config.opd.endTime)}`;
-  return catalog.DEPARTMENTS.map((d) => ({ code: d.code, name: d.name, days: dayRange(d.days), hours }));
+// OPD clinic schedules for the directory, from the monthly schedules (Admin → OPD Schedules).
+// Next month is included once staff have published it, so visitors can plan ahead.
+async function clinicSchedules(db, now = new Date()) {
+  const thisMonth = clinics.monthOf(u.todayStr(now));
+  const nextMonth = clinics.monthOf(u.addDays(`${thisMonth}-28`, 7));
+  const [list, cur, next] = await Promise.all([
+    clinics.listClinics(db),
+    clinics.schedulesForMonth(db, thisMonth),
+    clinics.schedulesForMonth(db, nextMonth),
+  ]);
+  const label = (m) => new Date(`${m}-01T00:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  return {
+    this_month: label(thisMonth),
+    next_month: [...next.values()].some((s) => !s.carried_over) ? label(nextMonth) : null,
+    clinics: list.map((c) => {
+      const s = cur.get(c.code);
+      const n = next.get(c.code);
+      return {
+        code: c.code,
+        name: c.name,
+        schedule: clinics.describe(s),
+        note: s?.note || '',
+        next_schedule: n && !n.carried_over ? clinics.describe(n) : null,
+        next_note: n && !n.carried_over ? n.note : '',
+      };
+    }),
+  };
 }
 
 function seedEntries() {

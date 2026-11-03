@@ -10,6 +10,8 @@ const { hashPassword } = require('./auth');
 const { SEEDS } = require('./faq');
 const directory = require('./directory');
 const catalog = require('./catalog');
+const clinics = require('./clinics');
+const { todayStr } = require('./util');
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS record_requests (
@@ -187,6 +189,29 @@ const SCHEMA = `
     value TEXT NOT NULL DEFAULT ''
   );
 
+  -- OPD clinics and their monthly schedules (Admin → OPD Schedules)
+  CREATE TABLE IF NOT EXISTS opd_clinics (
+    code TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INTEGER NOT NULL DEFAULT 100
+  );
+  CREATE TABLE IF NOT EXISTS opd_schedules (
+    clinic_code TEXT NOT NULL REFERENCES opd_clinics(code) ON DELETE CASCADE,
+    month TEXT NOT NULL,                 -- YYYY-MM
+    days TEXT NOT NULL DEFAULT '',       -- weekdays, 0=Sun … 6=Sat, comma-separated
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    slot_minutes INTEGER NOT NULL,
+    per_slot INTEGER NOT NULL,
+    closed_dates TEXT NOT NULL DEFAULT '', -- YYYY-MM-DD, comma-separated
+    extra_dates TEXT NOT NULL DEFAULT '',
+    note TEXT,
+    updated_by TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (clinic_code, month)
+  );
+
   -- One-time content updates that have already been applied (see MIGRATIONS below)
   CREATE TABLE IF NOT EXISTS schema_migrations (
     id TEXT PRIMARY KEY,
@@ -206,6 +231,8 @@ const SCHEMA = `
   ALTER TABLE guides ENABLE ROW LEVEL SECURITY;
   ALTER TABLE site_info ENABLE ROW LEVEL SECURITY;
   ALTER TABLE schema_migrations ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE opd_clinics ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE opd_schedules ENABLE ROW LEVEL SECURITY;
 `;
 
 function wrap(run, execRaw) {
@@ -265,6 +292,17 @@ async function open({ url = config.databaseUrl, dataDir } = {}) {
       "INSERT INTO admins (username, password_hash, full_name, role) SELECT $1, $2, 'ADMINISTRATOR', 'ADMIN' WHERE NOT EXISTS (SELECT 1 FROM admins)",
       [config.admin.username.toLowerCase(), hashPassword(config.admin.password)],
     );
+    // OPD clinics, starting with this month's schedule taken from the original fixed settings
+    if (!(await t.one('SELECT 1 FROM opd_clinics LIMIT 1'))) {
+      for (const { clinic: c, schedule: s } of clinics.seedRows(clinics.monthOf(todayStr()))) {
+        await t.query('INSERT INTO opd_clinics (code, name, sort_order) VALUES ($1, $2, $3)', [c.code, c.name, c.sort_order]);
+        await t.query(
+          `INSERT INTO opd_schedules (clinic_code, month, days, start_time, end_time, slot_minutes, per_slot, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'system')`,
+          [c.code, s.month, s.days, s.start_time, s.end_time, s.slot_minutes, s.per_slot],
+        );
+      }
+    }
     // Starter directory entries and transaction guides, only when there are none yet
     if (!(await t.one('SELECT 1 FROM directory_entries LIMIT 1'))) {
       for (const e of directory.seedEntries()) {

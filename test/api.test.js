@@ -11,6 +11,7 @@ const { open } = require('../src/db');
 const { createApp } = require('../src/server');
 const { runReminders } = require('../src/reminders');
 const sched = require('../src/scheduling');
+const clinics = require('../src/clinics');
 const u = require('../src/util');
 
 let db;
@@ -479,7 +480,7 @@ test('hospital directory: public data, admin editing, maps with pins', async () 
   assert.ok(pub.entries.some((e) => e.name === 'Hospital Health Information Management Section (HHIMS)' && /Saturdays and Holidays, 8:00 AM – 4:00 PM/.test(e.hours)));
   assert.ok(pub.entries.some((e) => e.opd_code === 'PEDIA'));
   assert.ok(pub.guides.length >= 4);
-  assert.ok(pub.clinics.find((c) => c.code === 'SURG').days.includes('Mon'));
+  assert.match(pub.clinics.clinics.find((c) => c.code === 'SURG').schedule, /Mon, Wed, Fri, 8:00 AM/);
   assert.deepEqual(pub.contact, {}); // nothing invented: contact details start empty
 
   const admin = await login();
@@ -573,6 +574,68 @@ test('authorization letter is filled in for representative requests', async () =
   assert.equal(staffDl.status, 200);
   assert.match(await text(staffDl), /MARIA DELA CRUZ/);
   assert.equal((await fetch(base + `/admin/records/${id}/authorization-letter`)).status, 401);
+});
+
+test('OPD schedules are set per clinic per month', async () => {
+  const admin = await login();
+  const put = (code, month, body) => call(`/admin/opd/schedules/${code}/${month}`, { method: 'PUT', cookie: admin, body });
+  const jan1 = new Date(2027, 0, 1, 6); // Fri 1 Jan 2027, 6 AM: shows bookable dates up to 31 Jan
+
+  // January 2027: Internal Medicine only on Tuesdays 1–3 PM, one patient per hour,
+  // closed on the 12th, plus an extra clinic on Saturday the 16th
+  let res = await put('IM', '2027-01', { days: [2], start_time: '25:00', end_time: '15:00', slot_minutes: 60, per_slot: 1 });
+  assert.match(res.data.error, /Start time/);
+  res = await put('IM', '2027-01', {
+    days: [2], start_time: '13:00', end_time: '15:00', slot_minutes: 60, per_slot: 1,
+    closed_dates: ['2027-01-12', '2027-02-02'], extra_dates: ['2027-01-16'], note: 'Dr. on leave Jan 12',
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.data));
+  assert.deepEqual(res.data.closed_dates, ['2027-01-12']); // dates outside the month are ignored
+
+  const dates = (await sched.opdDates(db, 'IM', jan1)).map((d) => d.date);
+  assert.deepEqual(dates, ['2027-01-05', '2027-01-16', '2027-01-19', '2027-01-26']);
+  const slots = await sched.opdSlots(db, 'IM', '2027-01-05', jan1);
+  assert.deepEqual(slots.map((x) => [x.label, x.remaining]), [['1:00 PM', 1], ['2:00 PM', 1]]);
+
+  // February not set yet → January's days and hours carry over, without January's date exceptions
+  const feb = await clinics.scheduleFor(db, 'IM', '2027-02');
+  assert.equal(feb.carried_over, true);
+  assert.deepEqual(feb.days, [2]);
+  assert.deepEqual(feb.closed_dates, []);
+  let list = (await call('/admin/opd/schedules?month=2027-02', { cookie: admin })).data;
+  assert.equal(list.clinics.find((c) => c.code === 'IM').schedule.source_month, '2027-01');
+
+  // "Copy last month" publishes February for every clinic not yet set
+  res = await call('/admin/opd/schedules/2027-02/copy-previous', { method: 'POST', cookie: admin });
+  assert.ok(res.data.copied >= 8);
+  list = (await call('/admin/opd/schedules?month=2027-02', { cookie: admin })).data;
+  assert.ok(list.clinics.every((c) => !c.schedule || c.schedule.carried_over === false));
+
+  // New clinic: listed but not bookable until it has a schedule; SMS uses its name
+  res = await call('/admin/opd/clinics', { method: 'POST', cookie: admin, body: { name: 'Cardiology' } });
+  assert.equal(res.status, 201);
+  const code = res.data.code;
+  let cat = (await call('/catalog')).data;
+  assert.equal(cat.departments.find((d) => d.code === code).schedule, 'No clinic this month');
+  assert.deepEqual(await sched.opdDates(db, code, jan1), []);
+  await put(code, '2027-01', { days: [1, 3], start_time: '08:00', end_time: '10:00', slot_minutes: 30, per_slot: 3 });
+  assert.equal((await sched.opdDates(db, code, jan1))[0].date, '2027-01-04');
+  const named = await clinics.withClinicName(db, { department: code, ref_no: 'A-X', appt_date: '2027-01-04', appt_time: '08:00' });
+  assert.match(require('../src/messages').apptBooked(named), /Cardiology, Mon, Jan 4, 2027 8:00 AM/);
+
+  // Hiding a clinic removes it from booking
+  await call(`/admin/opd/clinics/${code}`, { method: 'PATCH', cookie: admin, body: { active: false } });
+  cat = (await call('/catalog')).data;
+  assert.ok(!cat.departments.some((d) => d.code === code));
+  assert.equal((await call(`/opd/dates?department=${code}`)).status, 400);
+
+  // Records-only staff can't edit schedules
+  const rec = (await loginAs('rec.only', 'password123')).cookie;
+  assert.equal((await call('/admin/opd/schedules', { cookie: rec })).status, 403);
+
+  // FAQ assistant reads the live schedules
+  const answer = (await call('/faq/ask', { method: 'POST', body: { message: 'clinic schedule' } })).data.answer;
+  assert.match(answer, /General Surgery: Mon, Wed, Fri/);
 });
 
 test('mobile normalisation', () => {

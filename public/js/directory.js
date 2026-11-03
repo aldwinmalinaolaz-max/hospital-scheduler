@@ -23,7 +23,8 @@
     $('#dirList').innerHTML = `<div class="alert error">${esc(err.message)}</div>`;
     return;
   }
-  const { entries, guides, maps, contact, clinics } = data;
+  const { entries, guides, maps, contact } = data;
+  const { clinics, this_month: thisMonth, next_month: nextMonth } = data.clinics;
   const mapById = new Map(maps.map((m) => [m.id, m]));
   const entryById = new Map(entries.map((e) => [e.id, e]));
 
@@ -44,7 +45,7 @@
 
   function entryCard(e) {
     const clinic = e.opd_code && clinicByCode.get(e.opd_code);
-    const hours = e.hours || (clinic ? `${clinic.days}, ${clinic.hours}` : '');
+    const hours = e.hours || (clinic ? clinic.schedule : '');
     const services = lines(e.services);
     return `<article class="card dir-card" id="place-${e.id}">
       <div class="dir-card-head"><h3>${esc(e.name)}</h3><span class="badge">${esc(e.category)}</span></div>
@@ -92,9 +93,13 @@
   renderList();
 
   // ---------- Schedules ----------
+  // This month's schedule, and next month's once staff have published it
+  const sched = (text, note) => `${esc(text)}${note ? `<div class="sub">${esc(note)}</div>` : ''}`;
+  $('#clinicHead').innerHTML = `<tr><th>Clinic</th><th>${esc(thisMonth)}</th>${nextMonth ? `<th>${esc(nextMonth)}</th>` : ''}<th></th></tr>`;
   $('#clinicRows').innerHTML = clinics
     .map(
-      (c) => `<tr><td>${esc(c.name)}</td><td>${esc(c.days)}</td><td class="nowrap">${esc(c.hours)}</td>
+      (c) => `<tr><td>${esc(c.name)}</td><td>${sched(c.schedule, c.note)}</td>
+        ${nextMonth ? `<td>${c.next_schedule ? sched(c.next_schedule, c.next_note) : '<span class="muted">Same as this month</span>'}</td>` : ''}
         <td><a class="btn sm secondary" href="/book-opd?department=${encodeURIComponent(c.code)}">Book</a></td></tr>`,
     )
     .join('');

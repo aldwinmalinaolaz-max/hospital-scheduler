@@ -9,6 +9,7 @@ const faq = require('../faq');
 const letter = require('../letter');
 const crypto = require('node:crypto');
 const directory = require('../directory');
+const clinics = require('../clinics');
 const u = require('../util');
 
 class ValidationError extends Error {}
@@ -98,7 +99,7 @@ function publicAppointment(a) {
     kind: 'appointment',
     ref_no: a.ref_no,
     patient: `${a.patient_first} ${a.patient_last}`,
-    department: catalog.department(a.department)?.name || a.department,
+    department: a.department_name || a.department,
     appt_date: a.appt_date,
     appt_time: a.appt_time,
     appt_time_label: u.formatTime12(a.appt_time),
@@ -112,12 +113,17 @@ module.exports = function publicRoutes(db) {
   const router = express.Router();
   const submitLimit = rateLimit({ windowMs: 10 * 60e3, max: config.submitRateLimit });
 
-  router.get('/catalog', (req, res) => {
+  router.get('/catalog', async (req, res) => {
+    const today = u.todayStr();
+    const [list, scheds] = await Promise.all([clinics.listClinics(db), clinics.schedulesForMonth(db, clinics.monthOf(today))]);
     res.json({
       hospitalName: config.hospitalName,
       recordTypes: catalog.RECORD_TYPES,
-      departments: catalog.DEPARTMENTS.map(({ code, name, days }) => ({ code, name, days })),
-      today: u.todayStr(),
+      departments: list.map((c) => {
+        const s = scheds.get(c.code);
+        return { code: c.code, name: c.name, schedule: clinics.describe(s), note: s?.note || '' };
+      }),
+      today,
     });
   });
 
@@ -221,13 +227,13 @@ module.exports = function publicRoutes(db) {
 
   router.get('/opd/dates', async (req, res) => {
     const dept = str(req.query.department);
-    if (!catalog.department(dept)) return res.status(400).json({ error: 'Unknown department.' });
+    if (!(await clinics.getClinic(db, dept))) return res.status(400).json({ error: 'Unknown department.' });
     res.json({ dates: await sched.opdDates(db, dept) });
   });
 
   router.get('/opd/slots', async (req, res) => {
     const dept = str(req.query.department);
-    if (!catalog.department(dept)) return res.status(400).json({ error: 'Unknown department.' });
+    if (!(await clinics.getClinic(db, dept))) return res.status(400).json({ error: 'Unknown department.' });
     res.json({ slots: await sched.opdSlots(db, dept, str(req.query.date)) });
   });
 
@@ -247,7 +253,7 @@ module.exports = function publicRoutes(db) {
     ]);
     if (b.consent !== true) throw new ValidationError('You must agree to the Data Privacy consent to continue.');
     const dept = str(b.department);
-    if (!catalog.department(dept)) throw new ValidationError('Unknown department.');
+    if (!(await clinics.getClinic(db, dept))) throw new ValidationError('Unknown department.');
     const patientType = str(b.patient_type).toUpperCase();
     if (!['NEW', 'OLD'].includes(patientType)) throw new ValidationError('Patient type must be New or Old.');
     const sex = str(b.sex).toUpperCase();
@@ -294,8 +300,9 @@ module.exports = function publicRoutes(db) {
       );
     });
 
-    await sendSms(db, { to: appt.mobile, message: msg.apptBooked(appt), kind: 'APPT_BOOKED', refNo: appt.ref_no });
-    res.status(201).json(publicAppointment(appt));
+    const named = await clinics.withClinicName(db, appt);
+    await sendSms(db, { to: named.mobile, message: msg.apptBooked(named), kind: 'APPT_BOOKED', refNo: named.ref_no });
+    res.status(201).json(publicAppointment(named));
   });
 
   // ---- Hospital Directory & Navigation ----
@@ -319,7 +326,7 @@ module.exports = function publicRoutes(db) {
       guides,
       maps: maps.map((m) => ({ id: m.id, title: m.title, description: m.description, url: `/api/maps/${m.id}/image?v=${m.v}` })),
       contact,
-      clinics: directory.clinicSchedules(),
+      clinics: await directory.clinicSchedules(db),
     });
   });
 
@@ -334,10 +341,11 @@ module.exports = function publicRoutes(db) {
 
   // ---- FAQ assistant ----
 
-  const faqAnswer = (f) => ({
+  // `values`: schedule placeholders read from the database for this request
+  const faqAnswer = (f, values) => ({
     faq_id: f.id,
     question: f.question,
-    answer: faq.render(f.answer),
+    answer: faq.render(f.answer, values),
     link: f.link_url ? { url: f.link_url, label: f.link_label || 'Open' } : null,
   });
   const activeFaqs = () => db.query('SELECT * FROM faqs WHERE active ORDER BY sort_order, id');
@@ -349,11 +357,12 @@ module.exports = function publicRoutes(db) {
 
   // Body: { faq_id } when a suggested question is tapped, or { message } for typed text
   router.post('/faq/ask', chatLimit, async (req, res) => {
+    const values = await clinics.faqValues(db);
     const faqs = await activeFaqs();
     if (req.body?.faq_id) {
       const f = faqs.find((x) => x.id === Number(req.body.faq_id));
       if (!f) return res.status(404).json({ error: 'That question is no longer available.' });
-      return res.json({ matched: true, ...faqAnswer(f) });
+      return res.json({ matched: true, ...faqAnswer(f, values) });
     }
     const message = str(req.body?.message, 300);
     if (!message) throw new ValidationError('Please type a question.');
@@ -361,7 +370,7 @@ module.exports = function publicRoutes(db) {
     if (matches[0]?.score >= faq.MIN_SCORE) {
       return res.json({
         matched: true,
-        ...faqAnswer(matches[0].faq),
+        ...faqAnswer(matches[0].faq, values),
         related: matches.slice(1).map((m) => ({ id: m.faq.id, question: m.faq.question })),
       });
     }
@@ -394,7 +403,7 @@ module.exports = function publicRoutes(db) {
   router.post('/track', submitLimit, async (req, res) => {
     const found = await findByRef(req.body?.ref_no, req.body?.mobile);
     if (!found) return res.status(404).json({ error: 'No request found with that reference number and mobile number.' });
-    res.json(found.kind === 'record' ? await publicRecord(db, found.row) : publicAppointment(found.row));
+    res.json(found.kind === 'record' ? await publicRecord(db, found.row) : publicAppointment(await clinics.withClinicName(db, found.row)));
   });
 
   router.post('/track/cancel', submitLimit, async (req, res) => {
@@ -416,8 +425,9 @@ module.exports = function publicRoutes(db) {
       [row.id],
     );
     if (!updated) throw new ValidationError('This appointment can no longer be cancelled online.');
-    await sendSms(db, { to: updated.mobile, message: msg.apptCancelled({ ...updated, remarks: '' }), kind: 'APPT_CANCELLED', refNo: updated.ref_no });
-    res.json(publicAppointment(updated));
+    const named = await clinics.withClinicName(db, updated);
+    await sendSms(db, { to: named.mobile, message: msg.apptCancelled({ ...named, remarks: '' }), kind: 'APPT_CANCELLED', refNo: named.ref_no });
+    res.json(publicAppointment(named));
   });
 
   return router;

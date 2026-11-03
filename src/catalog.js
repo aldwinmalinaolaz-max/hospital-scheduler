@@ -59,7 +59,8 @@ const RECORD_TYPES = [
   },
 ];
 
-// days: 0=Sun … 6=Sat. Clinic is only bookable on these weekdays.
+// Starting list of OPD clinics (days: 0=Sun … 6=Sat), used only the first time the app starts.
+// After that, clinics and their monthly schedules are managed in Admin → OPD Schedules.
 const DEPARTMENTS = [
   { code: 'IM', name: 'Internal Medicine', days: [1, 2, 3, 4, 5] },
   { code: 'PEDIA', name: 'Pediatrics', days: [1, 2, 3, 4, 5] },

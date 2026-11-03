@@ -1,7 +1,6 @@
 (async () => {
   const cat = await loadCatalog();
   const form = $('#form');
-  const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   let date = '';
   let time = '';
 
@@ -16,7 +15,7 @@
     time = '';
     $('#slotPicker').classList.add('hidden');
     const dept = cat.departments.find((d) => d.code === deptSel.value);
-    $('#clinicDays').textContent = dept ? `Clinic days: ${dept.days.map((d) => DAY_NAMES[d]).join(', ')}` : '';
+    $('#clinicDays').textContent = dept ? `This month: ${dept.schedule}${dept.note ? ` — ${dept.note}` : ''}` : '';
     $('#datePicker').classList.toggle('hidden', !dept);
     if (!dept) return;
     const grid = $('#dateGrid');
