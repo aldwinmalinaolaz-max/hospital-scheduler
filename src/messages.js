@@ -18,7 +18,7 @@ module.exports = {
   recordIdVerified: (r) =>
     `${H()}: Your ID for records request ${r.ref_no} is verified. Your documents will be emailed to ${maskEmail(r.email)}.`,
   recordIdRejected: (r) =>
-    `${H()}: We could not verify your ID for request ${r.ref_no}.${r.id_remarks ? ` Reason: ${r.id_remarks}.` : ''} Please upload new photos on the Track page.`,
+    `${H()}: We could not verify your ID/payment for request ${r.ref_no}.${r.id_remarks ? ` Reason: ${r.id_remarks}.` : ''} Please upload new photos on the Track page.`,
   recordEmailed: (r) =>
     `${H()}: Your requested records (${r.ref_no}) were sent to ${maskEmail(r.email)}. Please check your inbox and spam folder.`,
   recordReady: (r) =>

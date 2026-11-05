@@ -1,10 +1,10 @@
-// Valid ID and selfie-with-ID photos submitted for digital copy requests.
+// Valid ID, selfie-with-ID and payment receipt photos submitted for digital copy requests.
 // They are personal data: only staff with Records access can view them, and they are deleted
 // automatically once the request has been finished for ID_PHOTO_RETENTION_DAYS days.
 const config = require('./config');
 const { imageType } = require('./directory');
 
-const KINDS = { ID: 'valid ID', SELFIE: 'selfie holding the valid ID' };
+const KINDS = { ID: 'valid ID', SELFIE: 'selfie holding the valid ID', RECEIPT: 'payment receipt' };
 const MAX_BYTES = 2 * 1024 * 1024;
 
 // Photos arrive as data URLs (resized in the browser). Returns { buf, mime } or an error message.
@@ -18,13 +18,15 @@ function decodePhoto(dataUrl, label) {
   return { buf, mime };
 }
 
-// Checks both photos in a request body ({ id_photo, selfie_photo }); returns [photos, error]
+// Checks the photos in a request body ({ id_photo, selfie_photo, receipt_photo }); returns [photos, error]
 function readPhotos(b) {
-  const id = decodePhoto(b.id_photo, KINDS.ID);
-  if (id.error) return [null, id.error];
-  const selfie = decodePhoto(b.selfie_photo, KINDS.SELFIE);
-  if (selfie.error) return [null, selfie.error];
-  return [{ ID: id, SELFIE: selfie }, null];
+  const photos = {};
+  for (const [kind, field] of [['ID', 'id_photo'], ['SELFIE', 'selfie_photo'], ['RECEIPT', 'receipt_photo']]) {
+    const p = decodePhoto(b[field], KINDS[kind]);
+    if (p.error) return [null, p.error];
+    photos[kind] = p;
+  }
+  return [photos, null];
 }
 
 async function savePhotos(t, requestId, photos) {

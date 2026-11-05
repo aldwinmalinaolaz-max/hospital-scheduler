@@ -124,6 +124,10 @@ const SCHEMA = `
   ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS emailed_at TIMESTAMPTZ;
   ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS emailed_by TEXT;
 
+  -- Payment: total computed from the fees when the request is made; digital copies are paid online
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS amount_due NUMERIC(10, 2);
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS payment_ref TEXT;
+
   -- Which staff member last changed a request
   ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS updated_by TEXT;
   ALTER TABLE appointments ADD COLUMN IF NOT EXISTS updated_by TEXT;
@@ -234,6 +238,20 @@ const SCHEMA = `
     UNIQUE (request_id, kind)
   );
 
+  -- Fee per copy for each document type (Admin → Settings)
+  CREATE TABLE IF NOT EXISTS document_fees (
+    record_type TEXT PRIMARY KEY,
+    fee NUMERIC(10, 2) NOT NULL
+  );
+
+  -- Images staff can replace, e.g. the payment QR code (falls back to the file in public/img)
+  CREATE TABLE IF NOT EXISTS site_images (
+    key TEXT PRIMARY KEY,
+    image BYTEA NOT NULL,
+    mime TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
   -- One-time content updates that have already been applied (see MIGRATIONS below)
   CREATE TABLE IF NOT EXISTS schema_migrations (
     id TEXT PRIMARY KEY,
@@ -255,6 +273,8 @@ const SCHEMA = `
   ALTER TABLE schema_migrations ENABLE ROW LEVEL SECURITY;
   ALTER TABLE opd_clinics ENABLE ROW LEVEL SECURITY;
   ALTER TABLE record_id_photos ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE document_fees ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE site_images ENABLE ROW LEVEL SECURITY;
   ALTER TABLE opd_schedules ENABLE ROW LEVEL SECURITY;
 `;
 
@@ -325,6 +345,10 @@ async function open({ url = config.databaseUrl, dataDir } = {}) {
           [c.code, s.month, s.days, s.start_time, s.end_time, s.slot_minutes, s.per_slot],
         );
       }
+    }
+    // Fees per copy: add any document type that has no fee yet (keeps fees staff already changed)
+    for (const type of catalog.RECORD_TYPES) {
+      await t.query('INSERT INTO document_fees (record_type, fee) VALUES ($1, $2) ON CONFLICT (record_type) DO NOTHING', [type.code, type.fee ?? 0]);
     }
     // Starter directory entries and transaction guides, only when there are none yet
     if (!(await t.one('SELECT 1 FROM directory_entries LIMIT 1'))) {

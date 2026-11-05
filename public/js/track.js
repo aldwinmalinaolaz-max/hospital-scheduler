@@ -19,6 +19,7 @@
         <dl class="kv" style="margin-top:14px">
           <dt>Patient</dt><dd>${esc(r.patient)}</dd>
           <dt>Documents</dt><dd><ul class="list-tight">${r.items.map((i) => `<li>${esc(i.name)}${i.details ? ` — ${esc(i.details)}` : ''} × ${i.copies}</li>`).join('')}</ul></dd>
+          ${r.amount_due !== null ? `<dt>Total payable</dt><dd>₱${Number(r.amount_due).toFixed(2)}${r.payment_ref ? ` · Ref ${esc(r.payment_ref)}` : ''}</dd>` : ''}
           <dt>Copy</dt><dd>${r.copy_type === 'DIGITAL' ? `Digital copy, emailed to ${esc(r.email)}` : 'Hardcopy (claim at HHIMS)'}</dd>
           ${r.copy_type === 'DIGITAL'
             ? `<dt>ID check</dt><dd>${esc(ID_STATUS[r.id_status] || r.id_status)}</dd>
@@ -51,12 +52,12 @@
     if ($('#reupload')) wireReupload();
   }
 
-  const ID_STATUS = { PENDING: 'Waiting for HHIMS staff to check your ID', VERIFIED: 'Verified', REJECTED: 'Not verified — please upload new photos' };
+  const ID_STATUS = { PENDING: 'Waiting for HHIMS staff to check your ID and payment', VERIFIED: 'Verified', REJECTED: 'Not verified — please upload new photos' };
 
   // When staff could not verify the ID, the requester uploads new photos here
   function reuploadForm(r) {
     return `<div class="alert warn" id="reupload">
-      <b>We could not verify your ID.</b>${r.id_remarks ? ` Reason: ${esc(r.id_remarks)}` : ''}
+      <b>We could not verify your ID or payment.</b>${r.id_remarks ? ` Reason: ${esc(r.id_remarks)}` : ''}
       <p class="small" style="margin:6px 0 10px">Please upload new, clear photos. Your request will be checked again.</p>
       <div class="grid grid-2">
         <div class="id-upload"><b class="small">Photo of your valid ID</b>
@@ -65,23 +66,28 @@
         <div class="id-upload"><b class="small">Selfie holding the same ID</b>
           <label class="btn secondary sm upload-btn"><input type="file" accept="image/*" id="selfiePhotoInput" hidden>Take or choose photo</label>
           <img id="selfiePhotoPreview" alt="Selfie preview" class="hidden"></div>
+        <div class="id-upload"><b class="small">Screenshot of your payment receipt</b>
+          <label class="btn secondary sm upload-btn"><input type="file" accept="image/*" id="receiptPhotoInput" hidden>Choose screenshot</label>
+          <img id="receiptPhotoPreview" alt="Receipt preview" class="hidden"></div>
+        <label class="field small">Payment reference no. (optional)<input id="paymentRef" maxlength="40" value="${esc(r.payment_ref || '')}"></label>
       </div>
       <div class="actions"><button class="btn" type="button" id="reuploadBtn">Send new photos</button></div>
     </div>`;
   }
 
   function wireReupload() {
-    const photos = { id: '', selfie: '' };
+    const photos = { id: '', selfie: '', receipt: '' };
     const err = (m) => alert(m);
     photoPicker($('#idPhotoInput'), $('#idPhotoPreview'), (d) => (photos.id = d), err);
     photoPicker($('#selfiePhotoInput'), $('#selfiePhotoPreview'), (d) => (photos.selfie = d), err);
+    photoPicker($('#receiptPhotoInput'), $('#receiptPhotoPreview'), (d) => (photos.receipt = d), err);
     $('#reuploadBtn').addEventListener('click', async () => {
-      if (!photos.id || !photos.selfie) return alert('Please add both photos.');
+      if (!photos.id || !photos.selfie || !photos.receipt) return alert('Please add all three photos: valid ID, selfie with the ID, and payment receipt.');
       const btn = $('#reuploadBtn');
       btn.disabled = true;
       btn.textContent = 'Sending…';
       try {
-        render(await api('/track/id-photos', { method: 'POST', body: { ref_no: current.ref_no, mobile: form.mobile.value, id_photo: photos.id, selfie_photo: photos.selfie } }));
+        render(await api('/track/id-photos', { method: 'POST', body: { ref_no: current.ref_no, mobile: form.mobile.value, id_photo: photos.id, selfie_photo: photos.selfie, receipt_photo: photos.receipt, payment_ref: $('#paymentRef').value } }));
       } catch (e) {
         alert(e.message);
         btn.disabled = false;

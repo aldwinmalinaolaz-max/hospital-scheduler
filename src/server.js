@@ -27,14 +27,15 @@ function createApp(db) {
   const carriesPhotos = (req) =>
     req.method === 'POST' && (req.path === '/api/records' || req.path === '/api/track/id-photos');
   app.use((req, res, next) => {
-    if (req.path.startsWith('/api/admin/maps')) return next(); // parsed on that route
+    if (req.path.startsWith('/api/admin/maps') || req.path === '/api/admin/payment-qr') return next(); // parsed on that route
     return (carriesPhotos(req) ? photoJson : smallJson)(req, res, next);
   });
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'same-origin');
-    if (req.path.startsWith('/api/') && !/^\/api\/maps\/\d+\/image$/.test(req.path)) res.setHeader('Cache-Control', 'no-store');
+    const cacheable = /^\/api\/maps\/\d+\/image$/.test(req.path) || req.path === '/api/site-images/payment-qr';
+    if (req.path.startsWith('/api/') && !cacheable) res.setHeader('Cache-Control', 'no-store');
     next();
   });
 

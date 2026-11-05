@@ -15,26 +15,31 @@ const COMMON_REQS = [
 const RECORD_TYPES = [
   {
     code: 'CLINICAL_ABSTRACT',
+    fee: 50, // default per copy (₱); editable in Admin → Settings
     name: 'Clinical Abstract / Discharge Summary',
     requirements: COMMON_REQS,
   },
   {
     code: 'OPTECH',
+    fee: 50, // default per copy (₱); editable in Admin → Settings
     name: 'OPTECH Report (Operative Technique)',
     requirements: COMMON_REQS,
   },
   {
     code: 'MEDICAL_CERTIFICATE',
+    fee: 30, // default per copy (₱); editable in Admin → Settings
     name: 'Medical Certificate',
     requirements: COMMON_REQS,
   },
   {
     code: 'CERT_CONFINEMENT',
+    fee: 30, // default per copy (₱); editable in Admin → Settings
     name: 'Certificate of Confinement',
     requirements: COMMON_REQS,
   },
   {
     code: 'MEDICO_LEGAL',
+    fee: 30, // default per copy (₱); editable in Admin → Settings
     name: 'Medico-Legal Certificate',
     requirements: [
       ...COMMON_REQS,
@@ -43,16 +48,19 @@ const RECORD_TYPES = [
   },
   {
     code: 'DIAGNOSTIC_TEST',
+    fee: 50, // default per copy (₱); editable in Admin → Settings
     name: 'Diagnostic Test Result (X-ray, Ultrasound, CT, ECG, etc.)',
     requirements: COMMON_REQS,
   },
   {
     code: 'LABORATORY_TEST',
+    fee: 50, // default per copy (₱); editable in Admin → Settings
     name: 'Laboratory Test Result',
     requirements: COMMON_REQS,
   },
   {
     code: 'OTHERS',
+    fee: 50, // default per copy (₱); editable in Admin → Settings
     name: 'Others (please specify)',
     requiresDetails: true,
     requirements: COMMON_REQS,

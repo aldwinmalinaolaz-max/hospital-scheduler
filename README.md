@@ -90,7 +90,9 @@ Staff workflow (Records Requests; filter by *Digital copy*, *ID to check* or *As
 2. Reassign the request with **Edit → Assigned to** if someone else will send it.
 3. **Send by email:** opens the staff member's email app with the recipient, subject and message filled in. Attach the scanned documents, send from the hospital's official account, then click **Mark as sent**. This releases the request and texts the requester (email partly hidden).
 
-ID photos are visible only to staff with Records access and are deleted automatically `ID_PHOTO_RETENTION_DAYS` (default 30) days after the request is released, rejected or cancelled. Deletion runs with the scheduled reminders job. The dashboard shows how many digital requests are waiting for an ID check.
+**Fees and online payment.** Each document shows its fee per copy, and the form keeps a running **total payable**. The Review step shows the breakdown, and the total is saved with the request (for hardcopies it's for reference). Digital copy requesters pay the total by scanning the **GCash / InstaPay QR code** (a **Save QR code** button lets phone users upload it in their app), then upload a **screenshot of the receipt** and optionally the payment reference number. Staff check the receipt together with the ID in **Verify ID & payment**. Administrators set the fees, replace the QR code (e.g. with the hospital's official account) and edit the payment instructions in **Settings → Fees & online payment**. The default fees are in `src/catalog.js` and the default QR is `public/img/payment-qr.jpg`.
+
+ID photos and receipts are visible only to staff with Records access and are deleted automatically `ID_PHOTO_RETENTION_DAYS` (default 30) days after the request is released, rejected or cancelled. Deletion runs with the scheduled reminders job. The dashboard shows how many digital requests are waiting for an ID check.
 
 ### Authorization letter (requests by a representative)
 When the requester is not the patient, the form also asks for the **patient's address**. After submitting, the requester can download the hospital's **Authorization Letter (FM-HHIM-05 Rev 2)** as a Word file, already filled in:

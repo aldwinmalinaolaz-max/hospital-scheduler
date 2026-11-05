@@ -543,3 +543,17 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); }
 .id-upload { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px dashed var(--border); border-radius: 10px; }
 .id-upload img { width: 100%; max-height: 220px; object-fit: contain; background: var(--surface-2); border-radius: 8px; }
 .upload-btn { align-self: flex-start; cursor: pointer; }
+
+/* ---------- Records: fees and online payment ---------- */
+.doc-fee { display: inline-block; margin-left: 6px; font-size: 0.78rem; font-weight: 600; color: var(--primary); background: var(--primary-soft); padding: 1px 8px; border-radius: 999px; }
+.total-bar { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding: 12px 16px; border-radius: 10px; background: var(--surface-2); color: var(--muted); }
+.total-bar b { font-size: 1.25rem; color: var(--text); }
+.total-bar.on { background: var(--header); color: #fff; }
+.total-bar.on b { color: var(--accent); }
+.pay-box { display: grid; grid-template-columns: minmax(180px, 240px) 1fr; gap: 16px; align-items: start; padding: 14px; border: 1px solid var(--border); border-radius: 12px; }
+.pay-qr { display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center; }
+.pay-qr img { width: 100%; border-radius: 10px; }
+.pay-total { font-size: 0.95rem; }
+.pay-total b { display: block; font-size: 1.6rem; color: var(--primary); }
+.pay-total-inline { color: var(--primary); }
+@media (max-width: 600px) { .pay-box { grid-template-columns: 1fr; } .pay-qr img { max-width: 260px; } }

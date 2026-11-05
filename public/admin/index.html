@@ -187,6 +187,30 @@
           <div class="alert warn hidden" id="closedWarn"></div>
           <div id="closedList" style="margin-top:12px"></div>
         </div>
+        <div class="card admin-only span-2">
+          <h3>Fees &amp; online payment</h3>
+          <p class="muted small">Fee per copy for each document. The request form shows these with a running total, and digital copy requesters pay the total online using the QR code below.</p>
+          <div class="grid grid-2">
+            <form id="feesForm" class="grid">
+              <div id="feeFields" class="grid"></div>
+              <div><button class="btn" type="submit">Save fees</button> <span class="small" id="feesSaved"></span></div>
+            </form>
+            <div class="grid">
+              <div class="field">Payment QR code
+                <span class="hint" id="qrSource"></span>
+                <img id="qrPreview" alt="Payment QR code" style="max-width:220px;border-radius:10px;border:1px solid var(--border)">
+                <div class="dir-actions" style="margin:0">
+                  <label class="btn sm secondary upload-btn"><input type="file" accept="image/png,image/jpeg,image/webp" id="qrUpload" hidden>Replace QR code</label>
+                  <button class="btn sm secondary hidden" type="button" id="qrReset">Use default QR</button>
+                </div>
+              </div>
+              <form id="payNoteForm" class="grid">
+                <label class="field">Payment instructions<span class="hint">Shown next to the QR code</span><textarea name="note" rows="4" data-nocaps></textarea></label>
+                <div><button class="btn sm secondary" type="submit">Save instructions</button> <span class="small" id="noteSaved"></span></div>
+              </form>
+            </div>
+          </div>
+        </div>
         <div>
           <div class="card admin-only">
             <h3>Send a test SMS</h3>

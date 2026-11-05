@@ -8,6 +8,7 @@ const { lock } = require('../db');
 const faq = require('../faq');
 const letter = require('../letter');
 const idphotos = require('../idphotos');
+const payments = require('../payments');
 const crypto = require('node:crypto');
 const directory = require('../directory');
 const clinics = require('../clinics');
@@ -92,6 +93,8 @@ async function publicRecord(db, r) {
     remarks: r.remarks,
     created_at: u.toStamp(r.created_at),
     copy_type: r.copy_type,
+    amount_due: r.amount_due === null || r.amount_due === undefined ? null : Number(r.amount_due),
+    payment_ref: r.payment_ref,
     id_status: r.id_status,
     id_remarks: r.id_status === 'REJECTED' ? r.id_remarks : null,
     email: r.email,
@@ -121,10 +124,16 @@ module.exports = function publicRoutes(db) {
 
   router.get('/catalog', async (req, res) => {
     const today = u.todayStr();
-    const [list, scheds] = await Promise.all([clinics.listClinics(db), clinics.schedulesForMonth(db, clinics.monthOf(today))]);
+    const [list, scheds, fees, payment] = await Promise.all([
+      clinics.listClinics(db),
+      clinics.schedulesForMonth(db, clinics.monthOf(today)),
+      payments.getFees(db),
+      payments.paymentInfo(db),
+    ]);
     res.json({
       hospitalName: config.hospitalName,
-      recordTypes: catalog.RECORD_TYPES,
+      recordTypes: catalog.RECORD_TYPES.map((t) => ({ ...t, fee: fees.get(t.code) ?? 0 })),
+      payment,
       departments: list.map((c) => {
         const s = scheds.get(c.code);
         return { code: c.code, name: c.name, schedule: clinics.describe(s), note: s?.note || '' };
@@ -184,6 +193,9 @@ module.exports = function publicRoutes(db) {
     const copyType = str(b.copy_type).toUpperCase() || 'HARDCOPY';
     if (!['HARDCOPY', 'DIGITAL'].includes(copyType)) throw new ValidationError('Please choose hardcopy or digital copy.');
     let photos = null;
+    // Total payable, from the current fees (stored with the request as the amount due)
+    const { total: amountDue } = payments.computeTotal(cleanItems, await payments.getFees(db));
+    const paymentRef = str(b.payment_ref, 40).toUpperCase() || null;
     if (copyType === 'DIGITAL') {
       if (letter.needsLetter(b)) throw new ValidationError('Digital copies are only available when the patient is the one requesting. Please choose hardcopy.');
       let err;
@@ -198,8 +210,8 @@ module.exports = function publicRoutes(db) {
       const row = await t.one(
         `INSERT INTO record_requests (ref_no, patient_last, patient_first, patient_middle, birthdate, hospital_no,
           admission_date, discharge_date, requester_name, requester_relation, mobile, email, purpose, pickup_date, patient_address,
-          copy_type, id_status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
+          copy_type, id_status, amount_due, payment_ref)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
         [
           ref,
           up(b.patient_last, 80),
@@ -218,6 +230,8 @@ module.exports = function publicRoutes(db) {
           address,
           copyType,
           copyType === 'DIGITAL' ? 'PENDING' : null,
+          amountDue,
+          copyType === 'DIGITAL' ? paymentRef : null,
         ],
       );
       if (photos) await idphotos.savePhotos(t, row.id, photos);
@@ -234,6 +248,15 @@ module.exports = function publicRoutes(db) {
 
     await sendSms(db, { to: record.mobile, message: msg.recordSubmitted(record), kind: 'RECORD_SUBMITTED', refNo: record.ref_no });
     res.status(201).json(await publicRecord(db, record));
+  });
+
+  // Payment QR code: the one an administrator uploaded, or the default in public/img
+  router.get('/site-images/payment-qr', async (req, res) => {
+    const img = await db.one("SELECT image, mime FROM site_images WHERE key = 'payment_qr'");
+    if (!img) return res.redirect(payments.DEFAULT_QR);
+    res.setHeader('Content-Type', img.mime);
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // the URL carries ?v=<last update>
+    res.end(Buffer.from(img.image));
   });
 
   router.get('/records/:ref/authorization-letter', async (req, res) => {
@@ -440,8 +463,9 @@ module.exports = function publicRoutes(db) {
     const updated = await db.tx(async (t) => {
       await idphotos.savePhotos(t, r.id, photos);
       return t.one(
-        "UPDATE record_requests SET id_status = 'PENDING', id_remarks = NULL, updated_at = now() WHERE id = $1 RETURNING *",
-        [r.id],
+        `UPDATE record_requests SET id_status = 'PENDING', id_remarks = NULL, payment_ref = COALESCE($2, payment_ref), updated_at = now()
+         WHERE id = $1 RETURNING *`,
+        [r.id, str(req.body?.payment_ref, 40).toUpperCase() || null],
       );
     });
     res.json(await publicRecord(db, updated));

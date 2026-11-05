@@ -12,6 +12,7 @@ const letter = require('../letter');
 const faq = require('../faq');
 const directory = require('../directory');
 const clinics = require('../clinics');
+const payments = require('../payments');
 
 const COOKIE = 'hs_admin';
 
@@ -31,6 +32,8 @@ const stamp = (row) => ({ ...row, created_at: u.toStamp(row.created_at), updated
 
 module.exports = function adminRoutes(db) {
   const router = express.Router();
+  // Image uploads (maps, payment QR) need a larger body limit; see server.js
+  const bigJson = express.json({ limit: '6mb' });
 
   const sessionCookie = (req, user) =>
     `${COOKIE}=${auth.createToken(user.username, user.session_version, config.sessionSecret)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${
@@ -497,6 +500,50 @@ module.exports = function adminRoutes(db) {
     res.json(await db.one('UPDATE opd_clinics SET name = $1, active = $2, sort_order = $3 WHERE code = $4 RETURNING *', [name, !!active, sort, before.code]));
   });
 
+  // ---------- Fees & online payment (administrators only) ----------
+
+  router.get('/payment-settings', adminOnly, async (req, res) => {
+    const [fees, info] = await Promise.all([payments.getFees(db), payments.paymentInfo(db)]);
+    res.json({
+      fees: catalog.RECORD_TYPES.map((t) => ({ code: t.code, name: t.name, fee: fees.get(t.code) ?? 0 })),
+      ...info,
+      default_note: payments.DEFAULT_NOTE,
+      custom_qr: !info.qr_url.startsWith('/img/'),
+    });
+  });
+
+  router.put('/fees', adminOnly, async (req, res) => {
+    const fees = req.body?.fees || {};
+    for (const t of catalog.RECORD_TYPES) {
+      if (fees[t.code] === undefined) continue;
+      const fee = Number(fees[t.code]);
+      if (!(fee >= 0 && fee <= 100000)) throw new ValidationError(`${t.name}: enter a fee from 0 to 100,000.`);
+      await db.query('UPDATE document_fees SET fee = $1 WHERE record_type = $2', [Math.round(fee * 100) / 100, t.code]);
+    }
+    res.json({ ok: true });
+  });
+
+  router.put('/payment-note', adminOnly, async (req, res) => {
+    const value = String(req.body?.note || '').trim().slice(0, 600);
+    await db.query("INSERT INTO site_info (key, value) VALUES ('payment_note', $1) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [value]);
+    res.json({ ok: true });
+  });
+
+  // Replace the payment QR code (e.g. with the hospital's official account); DELETE restores the default
+  router.post('/payment-qr', adminOnly, bigJson, async (req, res) => {
+    const { buf, mime } = decodeImage(req.body?.image);
+    await db.query(
+      `INSERT INTO site_images (key, image, mime) VALUES ('payment_qr', $1, $2)
+       ON CONFLICT (key) DO UPDATE SET image = excluded.image, mime = excluded.mime, updated_at = now()`,
+      [buf, mime],
+    );
+    res.json(await payments.paymentInfo(db));
+  });
+  router.delete('/payment-qr', adminOnly, async (req, res) => {
+    await db.query("DELETE FROM site_images WHERE key = 'payment_qr'");
+    res.json(await payments.paymentInfo(db));
+  });
+
   router.get('/opd/slots', requireAccess('opd'), async (req, res) => {
     res.json({ slots: await sched.opdSlots(db, String(req.query.department || ''), String(req.query.date || '')) });
   });
@@ -765,7 +812,6 @@ module.exports = function adminRoutes(db) {
     res.json({ ok: true });
   });
 
-  const bigJson = express.json({ limit: '6mb' });
   router.post('/maps', adminOnly, bigJson, async (req, res) => {
     const b = req.body || {};
     const title = text(b.title, 120);

@@ -5,12 +5,24 @@
   let claimDate = '';
 
   $('#consentText').textContent = DATA_PRIVACY_TEXT;
+
+  // ----- Fees: shown per document, with a running total payable -----
+  const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const feeOf = (code) => cat.recordTypes.find((t) => t.code === code)?.fee || 0;
+  const total = () => [...selected].reduce((sum, [code, v]) => sum + feeOf(code) * v.copies, 0);
+  function showTotal() {
+    $('#totalAmount').textContent = peso(total());
+    $('#totalBar').classList.toggle('on', selected.size > 0);
+  }
+  $('#payQr').src = cat.payment.qr_url;
+  $('#payQrSave').href = cat.payment.qr_url;
+  $('#payNote').textContent = cat.payment.note;
   $('#docList').innerHTML = cat.recordTypes
     .map(
       (t) => `
       <div class="doc" data-code="${esc(t.code)}">
         <input type="checkbox" id="doc-${esc(t.code)}">
-        <label for="doc-${esc(t.code)}" class="doc-name">${esc(t.name)}</label>
+        <label for="doc-${esc(t.code)}" class="doc-name">${esc(t.name)} <span class="doc-fee">${peso(t.fee)} per copy</span></label>
         <span class="doc-copies hidden"><label for="copies-${esc(t.code)}">Copies</label><input type="number" id="copies-${esc(t.code)}" min="1" max="10" value="1"></span>
         ${t.requiresDetails ? `<input class="doc-details hidden" placeholder="Please specify the document you need" maxlength="300">` : ''}
       </div>`,
@@ -28,6 +40,7 @@
       details?.classList.toggle('hidden', !cb.checked);
       if (cb.checked) selected.set(code, { copies: Number(copies.value) || 1, details: details?.value.trim() || '' });
       else selected.delete(code);
+      showTotal();
     };
     cb.addEventListener('change', sync);
     copies.addEventListener('input', sync);
@@ -52,11 +65,12 @@
     ({ date: claimDate } = await api('/records/claim-date'));
     const items = [...selected].map(([code, v]) => {
       const t = cat.recordTypes.find((x) => x.code === code);
-      return `<li>${esc(t.name)}${v.details ? ` — <i>${esc(v.details)}</i>` : ''} <span class="muted">× ${v.copies}</span></li>`;
+      return `<li>${esc(t.name)}${v.details ? ` — <i>${esc(v.details)}</i>` : ''} <span class="muted">× ${v.copies} @ ${peso(t.fee)}</span> = <b>${peso(t.fee * v.copies)}</b></li>`;
     });
     $('#review').innerHTML = `
       <dl class="kv">
         <dt>Documents</dt><dd><ul class="list-tight">${items.join('')}</ul></dd>
+        <dt>Total payable</dt><dd><b class="pay-total-inline">${peso(total())}</b> <span class="muted small" id="totalHint">(for reference)</span></dd>
         <dt>Patient</dt><dd>${esc([d.patient_first, d.patient_middle, d.patient_last].filter(Boolean).join(' '))}</dd>
         <dt>Birthdate</dt><dd>${esc(fmtDate(d.birthdate))}</dd>
         ${d.admission_date ? `<dt>Admission / visit</dt><dd>${esc(fmtDate(d.admission_date))}${d.discharge_date ? ` – ${esc(fmtDate(d.discharge_date))}` : ''}</dd>` : ''}
@@ -74,7 +88,7 @@
   }
 
   // ----- Hardcopy or digital copy -----
-  const photos = { id: '', selfie: '' };
+  const photos = { id: '', selfie: '', receipt: '' };
   const isRepresentative = () => !!form.requester_relation.value && !form.requester_relation.value.startsWith('Self');
   const copyType = () => form.querySelector('[name=copy_type]:checked')?.value || '';
   function updateCopyUI() {
@@ -88,6 +102,8 @@
     $('#hardcopyInfo').classList.toggle('hidden', type !== 'HARDCOPY');
     $('#digitalInfo').classList.toggle('hidden', type !== 'DIGITAL');
     $('#digitalEmail').textContent = form.email.value;
+    $('#payAmount').textContent = peso(total());
+    if ($('#totalHint')) $('#totalHint').textContent = type === 'DIGITAL' ? '(pay online below)' : '(for reference)';
     if ($('#dateLabel')) {
       $('#dateLabel').textContent = type === 'DIGITAL' ? 'Documents emailed' : 'Claiming date';
       $('#dateHint').textContent = type === 'DIGITAL' ? '(on or after this date, once your ID is verified)' : '(8:00 AM – 5:00 PM, no noon break)';
@@ -97,6 +113,7 @@
   const photoError = (m) => showError($('#error'), m);
   photoPicker($('#idPhotoInput'), $('#idPhotoPreview'), (d) => (photos.id = d), photoError);
   photoPicker($('#selfiePhotoInput'), $('#selfiePhotoPreview'), (d) => (photos.selfie = d), photoError);
+  photoPicker($('#receiptPhotoInput'), $('#receiptPhotoPreview'), (d) => (photos.receipt = d), photoError);
 
   wizard({
     total: 3,
@@ -129,6 +146,9 @@
     if (copyType() === 'DIGITAL' && (!photos.id || !photos.selfie)) {
       return showError($('#error'), 'For a digital copy, please add a photo of your valid ID and a selfie holding the ID.');
     }
+    if (copyType() === 'DIGITAL' && !photos.receipt) {
+      return showError($('#error'), `For a digital copy, please pay ${peso(total())} using the QR code and upload a screenshot of the receipt.`);
+    }
     if (!$('#consent').checked) return showError($('#error'), 'Please tick the Data Privacy consent box to continue.');
     const btn = $('#submitBtn');
     btn.disabled = true;
@@ -141,7 +161,7 @@
           ...d,
           consent: true,
           items: [...selected].map(([record_type, v]) => ({ record_type, copies: v.copies, details: v.details })),
-          ...(copyType() === 'DIGITAL' ? { id_photo: photos.id, selfie_photo: photos.selfie } : {}),
+          ...(copyType() === 'DIGITAL' ? { id_photo: photos.id, selfie_photo: photos.selfie, receipt_photo: photos.receipt } : {}),
         },
       });
       form.classList.add('hidden');
@@ -152,6 +172,7 @@
         <h2>Request submitted</h2>
         <p class="muted">Your reference number is</p>
         <div class="ref-no">${esc(res.ref_no)}</div>
+        <p>Total payable: <b>${peso(res.amount_due)}</b>${res.copy_type === 'DIGITAL' ? ' (paid online — your receipt will be checked with your ID)' : ''}</p>
         ${res.copy_type === 'DIGITAL'
           ? `<p><b>Digital copy.</b> HHIMS staff will check your ID and selfie, then email your documents to <b>${esc(res.email)}</b> on or after <b>${esc(fmtDate(res.pickup_date))}</b>.<br>
              We sent an SMS to <b>${esc(d.mobile)}</b> and will text you when your ID is verified and when the documents are sent.</p>

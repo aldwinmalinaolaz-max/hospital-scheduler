@@ -123,7 +123,8 @@
           ${r.patient_address ? `<div class="sub">${esc(r.patient_address)}</div>` : ''}
           ${r.admission_date ? `<div class="sub">Adm ${esc(r.admission_date)}${r.discharge_date ? ` – ${esc(r.discharge_date)}` : ''}</div>` : ''}</td>
         <td>${r.items.map((i) => `${esc(i.name)}${i.details ? ` <i>(${esc(i.details)})</i>` : ''} ×${i.copies}`).join('<br>')}
-          <div class="sub">Purpose: ${esc(r.purpose)}</div></td>
+          <div class="sub">Purpose: ${esc(r.purpose)}</div>
+          ${r.amount_due !== null ? `<div class="sub">Total: <b>${peso(r.amount_due)}</b>${r.payment_ref ? ` · Ref ${esc(r.payment_ref)}` : ''}</div>` : ''}</td>
         <td>${esc(r.requester_name)}<div class="sub">${esc(r.requester_relation)}</div><div class="sub">${esc(r.mobile)}</div></td>
         <td class="nowrap">${esc(fmtDate(r.pickup_date, { month: 'short', day: 'numeric', weekday: 'short' }))}</td>
         <td>${badge(r.status)}${r.remarks ? `<div class="sub">${esc(r.remarks)}</div>` : ''}
@@ -135,7 +136,8 @@
         )
         .join('') || '<tr><td colspan="7" class="empty">No records requests found.</td></tr>';
   });
-  const ID_LABEL = { PENDING: 'ID to check', VERIFIED: 'ID verified', REJECTED: 'ID not verified' };
+  const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const ID_LABEL = { PENDING: 'ID & payment to check', VERIFIED: 'ID & payment verified', REJECTED: 'ID/payment not verified' };
   const ID_BADGE = { PENDING: 'PENDING', VERIFIED: 'COMPLETED', REJECTED: 'FAILED' };
   const idBadge = (r) => `<span class="badge ${ID_BADGE[r.id_status] || ''}">${esc(ID_LABEL[r.id_status] || '')}</span>`;
   let recordsStaff = [];
@@ -144,7 +146,7 @@
   // Digital copies: check the ID first, then send by email (which releases the request)
   const digitalActions = (r) => {
     if (r.copy_type !== 'DIGITAL' || !isOpen(r)) return '';
-    if (r.id_status !== 'VERIFIED') return `<button class="btn sm" data-verify-id="${r.id}">Verify ID</button> `;
+    if (r.id_status !== 'VERIFIED') return `<button class="btn sm" data-verify-id="${r.id}">Verify ID &amp; payment</button> `;
     return `<button class="btn sm" data-send-email="${r.id}">Send by email</button> `;
   };
   const quickRec = (r) => {
@@ -197,23 +199,26 @@
     const r = recRows.find((x) => x.id === Number(v.dataset.verifyId));
     const photo = (kind) => `/api/admin/records/${r.id}/id-photo/${kind}?t=${encodeURIComponent(r.updated_at || '')}`;
     openDialog(
-      `<h2>Verify ID — ${esc(r.ref_no)}</h2>
+      `<h2>Verify ID &amp; payment — ${esc(r.ref_no)}</h2>
        <dl class="kv small" style="margin-bottom:12px">
          <dt>Patient (requester)</dt><dd>${esc([r.patient_first, r.patient_middle, r.patient_last].filter(Boolean).join(' '))}</dd>
          <dt>Birthdate</dt><dd>${esc(fmtDate(r.birthdate))}</dd>
          <dt>Email</dt><dd>${esc(r.email)}</dd>
+         <dt>Amount due</dt><dd><b>${peso(r.amount_due)}</b>${r.payment_ref ? ` · Ref no. ${esc(r.payment_ref)}` : ''}</dd>
        </dl>
-       <div class="grid grid-2 id-review">
+       <div class="grid grid-3 id-review">
          <figure><a href="${photo('id')}" target="_blank" rel="noopener"><img src="${photo('id')}" alt="Valid ID"></a><figcaption>Valid ID (click to enlarge)</figcaption></figure>
          <figure><a href="${photo('selfie')}" target="_blank" rel="noopener"><img src="${photo('selfie')}" alt="Selfie holding ID"></a><figcaption>Selfie holding the ID</figcaption></figure>
+         <figure><a href="${photo('receipt')}" target="_blank" rel="noopener"><img src="${photo('receipt')}" alt="Payment receipt"></a><figcaption>Payment receipt</figcaption></figure>
        </div>
-       <p class="small muted">Check that the ID is valid and readable, the name and birthdate match the request, and the person in the selfie matches the ID photo.</p>
+       <p class="small muted">Check that the ID is valid and readable, the name and birthdate match the request, the person in the selfie matches the ID photo,
+         and the receipt shows a payment of <b>${peso(r.amount_due)}</b> (check it against the hospital's GCash / InstaPay transactions).</p>
        ${r.id_status === 'REJECTED' && r.id_remarks ? `<div class="alert warn small">Last check: not verified — ${esc(r.id_remarks)}</div>` : ''}
        <div class="copy-choice" style="margin-top:8px">
-         <label class="copy-opt"><input type="radio" name="decision" value="VERIFIED" required><span><b>Approve</b><small>ID is valid and matches. The request moves to Processing and is assigned to you.</small></span></label>
+         <label class="copy-opt"><input type="radio" name="decision" value="VERIFIED" required><span><b>Approve</b><small>ID matches and the payment was received. The request moves to Processing and is assigned to you.</small></span></label>
          <label class="copy-opt"><input type="radio" name="decision" value="REJECTED"><span><b>Reject</b><small>The requester is texted the reason and can upload new photos.</small></span></label>
        </div>
-       <label class="field" style="margin-top:10px">Reason (required when rejecting)<input name="remarks" data-nocaps maxlength="300" placeholder="e.g. ID photo is blurry; selfie does not show the ID clearly"></label>`,
+       <label class="field" style="margin-top:10px">Reason (required when rejecting)<input name="remarks" data-nocaps maxlength="300" placeholder="e.g. ID photo is blurry; payment not received; amount paid is short"></label>`,
       async (d) => {
         await api(`/admin/records/${r.id}/verify-id`, { method: 'POST', body: { decision: d.decision, remarks: d.remarks } });
         loaders.records();
@@ -387,7 +392,49 @@ ${cat.hospitalName}`;
   }));
 
   // ---------- Settings ----------
+  // ----- Fees & online payment (administrators) -----
+  async function loadPaymentSettings() {
+    const ps = await api('/admin/payment-settings');
+    $('#feeFields').innerHTML = ps.fees
+      .map((f) => `<label class="field">${esc(f.name)}<input type="number" min="0" step="0.01" name="${esc(f.code)}" value="${f.fee}"></label>`)
+      .join('');
+    $('#qrPreview').src = ps.qr_url;
+    $('#qrSource').textContent = ps.custom_qr ? 'Uploaded by an administrator.' : 'Default QR code (included with the system).';
+    $('#qrReset').classList.toggle('hidden', !ps.custom_qr);
+    $('#payNoteForm').note.value = ps.note === ps.default_note ? '' : ps.note;
+    $('#payNoteForm').note.placeholder = ps.default_note;
+  }
+  $('#feesForm').addEventListener('submit', guard(async (e) => {
+    e.preventDefault();
+    await api('/admin/fees', { method: 'PUT', body: { fees: formData($('#feeFields').closest('form')) } });
+    $('#feesSaved').textContent = 'Saved.';
+    setTimeout(() => ($('#feesSaved').textContent = ''), 3000);
+  }));
+  $('#payNoteForm').addEventListener('submit', guard(async (e) => {
+    e.preventDefault();
+    await api('/admin/payment-note', { method: 'PUT', body: { note: e.target.note.value } });
+    $('#noteSaved').textContent = 'Saved.';
+    setTimeout(() => ($('#noteSaved').textContent = ''), 3000);
+  }));
+  $('#qrUpload').addEventListener('change', guard(async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    // Keep the QR sharp: send the original unless it's very large
+    const image = file.size < 1.5 * 1024 * 1024
+      ? await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(file); })
+      : await photoToDataUrl(file, 1400);
+    await api('/admin/payment-qr', { method: 'POST', body: { image } });
+    e.target.value = '';
+    loadPaymentSettings();
+  }));
+  $('#qrReset').addEventListener('click', guard(async () => {
+    if (!confirm('Go back to the default QR code?')) return;
+    await api('/admin/payment-qr', { method: 'DELETE' });
+    loadPaymentSettings();
+  }));
+
   loaders.settings = guard(async () => {
+    if (me?.role === 'ADMIN') loadPaymentSettings();
     const { rows } = await api('/admin/closed-dates');
     $('#closedList').innerHTML = rows.length
       ? `<table><tbody>${rows.map((r) => `<tr><td class="nowrap">${esc(fmtDate(r.date))}</td><td>${esc(r.reason)}</td><td><button class="btn sm secondary admin-only" data-del-closed="${r.date}">Remove</button></td></tr>`).join('')}</tbody></table>`

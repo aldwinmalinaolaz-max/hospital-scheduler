@@ -648,22 +648,26 @@ test('digital copies: ID photos, staff verification, assignment and sending by e
     requester_relation: 'Self (patient)',
     email: 'juan.delacruz@example.com',
     purpose: 'Insurance claim',
-    items: [{ record_type: 'MEDICAL_CERTIFICATE' }],
+    items: [{ record_type: 'MEDICAL_CERTIFICATE', copies: 2 }, { record_type: 'CLINICAL_ABSTRACT' }],
     copy_type: 'DIGITAL',
+    payment_ref: '1234 567 890123',
   };
   const post = (b) => call('/records', { method: 'POST', body: b });
 
   assert.match((await post({ ...body, email: '' })).data.error, /Email/);
   assert.match((await post(body)).data.error, /valid ID/);
   assert.match((await post({ ...body, id_photo: png, selfie_photo: 'data:image/png;base64,PHNjcmlwdD4=' })).data.error, /selfie/);
+  assert.match((await post({ ...body, id_photo: png, selfie_photo: png })).data.error, /payment receipt/);
   assert.match(
-    (await post({ ...body, requester_relation: 'Spouse', requester_name: 'Maria', patient_address: 'X', id_photo: png, selfie_photo: png })).data.error,
+    (await post({ ...body, requester_relation: 'Spouse', requester_name: 'Maria', patient_address: 'X', id_photo: png, selfie_photo: png, receipt_photo: png })).data.error,
     /only available when the patient/,
   );
 
-  let res = await post({ ...body, id_photo: png, selfie_photo: png });
+  let res = await post({ ...body, id_photo: png, selfie_photo: png, receipt_photo: png });
   assert.equal(res.status, 201, JSON.stringify(res.data));
   assert.equal(res.data.copy_type, 'DIGITAL');
+  assert.equal(res.data.amount_due, 2 * 30 + 50); // 2 × Medical Certificate (₱30) + Clinical Abstract (₱50)
+  assert.equal(res.data.payment_ref, '1234 567 890123');
   assert.equal(res.data.id_status, 'PENDING');
   const ref = res.data.ref_no;
   const { id } = await db.one('SELECT id FROM record_requests WHERE ref_no = $1', [ref]);
@@ -674,6 +678,7 @@ test('digital copies: ID photos, staff verification, assignment and sending by e
   assert.equal((await fetch(base + `/admin/records/${id}/id-photo/selfie`)).status, 401);
   const photo = await fetch(base + `/admin/records/${id}/id-photo/selfie`, { headers: { Cookie: admin } });
   assert.equal(photo.headers.get('content-type'), 'image/png');
+  assert.equal((await fetch(base + `/admin/records/${id}/id-photo/receipt`, { headers: { Cookie: admin } })).status, 200);
 
   // Can't prepare or release before the ID is verified
   assert.match((await call(`/admin/records/${id}`, { method: 'PATCH', cookie: admin, body: { status: 'READY' } })).data.error, /Verify/);
@@ -686,7 +691,7 @@ test('digital copies: ID photos, staff verification, assignment and sending by e
   assert.match((await db.one("SELECT message FROM sms_log WHERE ref_no = $1 AND kind = 'RECORD_ID_REJECTED'", [ref])).message, /ID photo is blurry/);
   const tracked = (await call('/track', { method: 'POST', body: { ref_no: ref, mobile: '09171234567' } })).data;
   assert.equal(tracked.id_remarks, 'ID photo is blurry');
-  res = await call('/track/id-photos', { method: 'POST', body: { ref_no: ref, mobile: '09171234567', id_photo: png, selfie_photo: png } });
+  res = await call('/track/id-photos', { method: 'POST', body: { ref_no: ref, mobile: '09171234567', id_photo: png, selfie_photo: png, receipt_photo: png } });
   assert.equal(res.data.id_status, 'PENDING');
 
   // Approve → processing, assigned to the verifier, requester texted
@@ -713,8 +718,42 @@ test('digital copies: ID photos, staff verification, assignment and sending by e
   // Photos are deleted after the retention period
   const { purgeIdPhotos } = require('../src/idphotos');
   assert.equal(await purgeIdPhotos(db), 0);
-  assert.equal(await purgeIdPhotos(db, new Date(Date.now() + 31 * 86400e3)), 2);
+  assert.equal(await purgeIdPhotos(db, new Date(Date.now() + 31 * 86400e3)), 3);
   assert.equal((await fetch(base + `/admin/records/${id}/id-photo/id`, { headers: { Cookie: admin } })).status, 404);
+});
+
+test('fees and payment QR are managed by administrators', async () => {
+  let cat = (await call('/catalog')).data;
+  assert.equal(cat.recordTypes.find((t) => t.code === 'MEDICO_LEGAL').fee, 30);
+  assert.equal(cat.recordTypes.find((t) => t.code === 'LABORATORY_TEST').fee, 50);
+  assert.equal(cat.payment.qr_url, '/img/payment-qr.jpg');
+
+  const admin = await login();
+  const rec = (await loginAs('rec.only', 'password123')).cookie;
+  assert.equal((await call('/admin/fees', { method: 'PUT', cookie: rec, body: { fees: { OPTECH: 1 } } })).status, 403);
+  assert.match((await call('/admin/fees', { method: 'PUT', cookie: admin, body: { fees: { OPTECH: -5 } } })).data.error, /OPTECH/);
+  await call('/admin/fees', { method: 'PUT', cookie: admin, body: { fees: { OPTECH: 75 } } });
+  cat = (await call('/catalog')).data;
+  assert.equal(cat.recordTypes.find((t) => t.code === 'OPTECH').fee, 75);
+  // Hardcopy requests also record the total payable
+  const res = await call('/records', {
+    method: 'POST',
+    body: { ...patient, requester_name: 'Juan', requester_relation: 'Self (patient)', email: 'j@example.com', purpose: 'x', items: [{ record_type: 'OPTECH', copies: 3 }] },
+  });
+  assert.equal(res.data.amount_due, 225);
+  assert.equal(res.data.copy_type, 'HARDCOPY');
+  await call('/admin/fees', { method: 'PUT', cookie: admin, body: { fees: { OPTECH: 50 } } });
+
+  // Replace the QR code with the hospital's own, then restore the default
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  let info = (await call('/admin/payment-qr', { method: 'POST', cookie: admin, body: { image: png } })).data;
+  assert.match(info.qr_url, /^\/api\/site-images\/payment-qr\?v=/);
+  const qr = await fetch(base.replace('/api', '') + info.qr_url);
+  assert.equal(qr.headers.get('content-type'), 'image/png');
+  await call('/admin/payment-note', { method: 'PUT', cookie: admin, body: { note: 'Pay via the official ZRMC GCash account.' } });
+  assert.equal((await call('/catalog')).data.payment.note, 'Pay via the official ZRMC GCash account.');
+  info = (await call('/admin/payment-qr', { method: 'DELETE', cookie: admin })).data;
+  assert.equal(info.qr_url, '/img/payment-qr.jpg');
 });
 
 test('mobile normalisation', () => {

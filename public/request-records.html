@@ -32,6 +32,7 @@
       <h2>Which documents do you need?</h2>
       <p class="muted small">Select all that apply.</p>
       <div class="doc-list" id="docList"></div>
+      <div class="total-bar" id="totalBar"><span>Total payable</span><b id="totalAmount">₱0.00</b></div>
       <label class="field" style="margin-top:16px"><span class="req">Purpose of request</span>
         <input name="purpose" placeholder="e.g. PhilHealth, insurance claim, employment, legal" required>
       </label>
@@ -108,6 +109,26 @@
             <span class="small muted">Hold the ID beside your face. Your face and the ID must both be clear.</span>
             <label class="btn secondary sm upload-btn"><input type="file" accept="image/*" id="selfiePhotoInput" hidden>Take or choose photo</label>
             <img id="selfiePhotoPreview" alt="Selfie preview" class="hidden">
+          </div>
+        </div>
+
+        <h3 style="margin-top:20px">Pay online</h3>
+        <div class="pay-box">
+          <div class="pay-qr">
+            <img id="payQr" alt="Payment QR code (GCash / InstaPay)">
+            <a class="btn sm secondary" id="payQrSave" download="ZRMC-payment-QR">Save QR code</a>
+            <span class="small muted">Paying on this phone? Save the QR, then use <b>Upload QR</b> in GCash or your bank app.</span>
+          </div>
+          <div class="pay-info">
+            <div class="pay-total">Amount to pay <b id="payAmount"></b></div>
+            <p class="small" id="payNote"></p>
+            <div class="id-upload">
+              <span class="req" style="font-weight:600">Screenshot of your payment receipt</span>
+              <span class="small muted">Must show the amount, date and reference number.</span>
+              <label class="btn secondary sm upload-btn"><input type="file" accept="image/*" id="receiptPhotoInput" hidden>Choose screenshot</label>
+              <img id="receiptPhotoPreview" alt="Payment receipt preview" class="hidden">
+            </div>
+            <label class="field" style="margin-top:10px">Payment reference no. (optional)<input name="payment_ref" maxlength="40" placeholder="e.g. 1234 567 890123" inputmode="numeric"></label>
           </div>
         </div>
       </div>
