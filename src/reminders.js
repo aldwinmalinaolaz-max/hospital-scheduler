@@ -6,6 +6,7 @@
 const config = require('./config');
 const msg = require('./messages');
 const { sendSms } = require('./sms');
+const { purgeIdPhotos } = require('./idphotos');
 const u = require('./util');
 
 const PICKUP_REMINDER_TIME = '07:00';
@@ -53,7 +54,7 @@ async function runReminders(db, now = new Date()) {
 
   if (now >= u.localDateTime(today, PICKUP_REMINDER_TIME)) {
     const ready = await db.query(
-      "SELECT * FROM record_requests WHERE status = 'READY' AND pickup_date = $1 AND reminded_pickup = FALSE",
+      "SELECT * FROM record_requests WHERE status = 'READY' AND copy_type = 'HARDCOPY' AND pickup_date = $1 AND reminded_pickup = FALSE",
       [today],
     );
     for (const r of ready) {
@@ -73,6 +74,7 @@ function startReminderScheduler(db) {
     running = true;
     try {
       await runReminders(db);
+      await purgeIdPhotos(db);
     } catch (err) {
       console.error('Reminder job failed:', err);
     } finally {

@@ -84,6 +84,7 @@
       me.access.opd && stat(s.upcomingAppointments, 'Upcoming appointments'),
       me.access.records && stat(s.recordsPending, 'Records pending / processing'),
       me.access.records && stat(s.recordsReady, 'Records ready for claiming'),
+      me.access.records && stat(s.idsToCheck, 'Digital copies: IDs to check'),
       stat(s.smsFailed, `Failed SMS (7 days) · ${esc(s.smsProvider)}`),
     ]
       .filter(Boolean)
@@ -109,6 +110,7 @@
   recFilters.type.innerHTML += cat.recordTypes.map((t) => `<option value="${t.code}">${esc(t.name)}</option>`).join('');
   let recRows = [];
   loaders.records = guard(async () => {
+    if (!recordsStaff.length) recordsStaff = (await api('/admin/records-staff')).rows;
     const q = new URLSearchParams(Object.entries(formData(recFilters)).filter(([, v]) => v));
     recRows = (await api(`/admin/records?${q}`)).rows;
     $('#recRows').innerHTML =
@@ -124,14 +126,32 @@
           <div class="sub">Purpose: ${esc(r.purpose)}</div></td>
         <td>${esc(r.requester_name)}<div class="sub">${esc(r.requester_relation)}</div><div class="sub">${esc(r.mobile)}</div></td>
         <td class="nowrap">${esc(fmtDate(r.pickup_date, { month: 'short', day: 'numeric', weekday: 'short' }))}</td>
-        <td>${badge(r.status)}${r.remarks ? `<div class="sub">${esc(r.remarks)}</div>` : ''}${updatedBy(r)}</td>
-        <td class="no-print nowrap">${quickRec(r)}<button class="btn sm secondary" data-edit-rec="${r.id}">Edit</button>
+        <td>${badge(r.status)}${r.remarks ? `<div class="sub">${esc(r.remarks)}</div>` : ''}
+          ${r.copy_type === 'DIGITAL' ? `<div class="sub"><span class="badge INFO">Digital</span> ${idBadge(r)}</div>` : ''}
+          ${r.assigned_to ? `<div class="sub">Assigned: <b>${esc(staffName(r.assigned_to))}</b></div>` : ''}${updatedBy(r)}</td>
+        <td class="no-print nowrap">${digitalActions(r)}${quickRec(r)}<button class="btn sm secondary" data-edit-rec="${r.id}">Edit</button>
           ${/^self/i.test(r.requester_relation) ? '' : `<a class="btn sm secondary" href="/api/admin/records/${r.id}/authorization-letter" download title="Authorization letter filled in with this request's details">Letter</a>`}</td>
       </tr>`,
         )
         .join('') || '<tr><td colspan="7" class="empty">No records requests found.</td></tr>';
   });
+  const ID_LABEL = { PENDING: 'ID to check', VERIFIED: 'ID verified', REJECTED: 'ID not verified' };
+  const ID_BADGE = { PENDING: 'PENDING', VERIFIED: 'COMPLETED', REJECTED: 'FAILED' };
+  const idBadge = (r) => `<span class="badge ${ID_BADGE[r.id_status] || ''}">${esc(ID_LABEL[r.id_status] || '')}</span>`;
+  let recordsStaff = [];
+  const staffName = (u) => recordsStaff.find((s) => s.username === u)?.full_name || u;
+  const isOpen = (r) => !['RELEASED', 'REJECTED', 'CANCELLED'].includes(r.status);
+  // Digital copies: check the ID first, then send by email (which releases the request)
+  const digitalActions = (r) => {
+    if (r.copy_type !== 'DIGITAL' || !isOpen(r)) return '';
+    if (r.id_status !== 'VERIFIED') return `<button class="btn sm" data-verify-id="${r.id}">Verify ID</button> `;
+    return `<button class="btn sm" data-send-email="${r.id}">Send by email</button> `;
+  };
   const quickRec = (r) => {
+    // Digital copies only move to "ready" by hand; verifying the ID and sending by email do the rest
+    if (r.copy_type === 'DIGITAL') {
+      return r.id_status === 'VERIFIED' && r.status === 'PROCESSING' ? `<button class="btn sm secondary" data-rec-status="${r.id}:READY">Mark ready</button> ` : '';
+    }
     const next = { PENDING: 'PROCESSING', PROCESSING: 'READY', READY: 'RELEASED' }[r.status];
     const label = { PROCESSING: 'Start processing', READY: 'Mark ready', RELEASED: 'Mark released' }[next];
     return next ? `<button class="btn sm" data-rec-status="${r.id}:${next}">${label}</button> ` : '';
@@ -159,12 +179,95 @@
       `<h2>Records request ${esc(r.ref_no)}</h2>
        <div class="grid">
          <label class="field">Status<select name="status">${opts(REC_STATUSES, r.status)}</select></label>
-         <label class="field">Pickup date<input type="date" name="pickup_date" value="${esc(r.pickup_date)}"></label>
+         <label class="field">${r.copy_type === 'DIGITAL' ? 'Target email date' : 'Claiming date'}<input type="date" name="pickup_date" value="${esc(r.pickup_date)}"></label>
+         <label class="field">Assigned to<select name="assigned_to"><option value="">Unassigned</option>${recordsStaff
+           .map((s) => `<option value="${esc(s.username)}"${s.username === r.assigned_to ? ' selected' : ''}>${esc(s.full_name || s.username)}</option>`)
+           .join('')}</select></label>
          <label class="field">Remarks<span class="hint">Shown to the requester. Required when rejecting.</span><textarea name="remarks">${esc(r.remarks || '')}</textarea></label>
          <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="notify" checked> Send SMS to requester for this change</label>
        </div>`,
-      async (d) => patchRecRaw(r.id, { status: d.status, pickup_date: d.pickup_date, remarks: d.remarks, notify: d.notify === 'on' }),
+      async (d) => patchRecRaw(r.id, { status: d.status, pickup_date: d.pickup_date, remarks: d.remarks, assigned_to: d.assigned_to, notify: d.notify === 'on' }),
     );
+  });
+
+  // Verify ID: compare the selfie with the valid ID and with the request details
+  $('#recRows').addEventListener('click', (e) => {
+    const v = e.target.closest('[data-verify-id]');
+    if (!v) return;
+    const r = recRows.find((x) => x.id === Number(v.dataset.verifyId));
+    const photo = (kind) => `/api/admin/records/${r.id}/id-photo/${kind}?t=${encodeURIComponent(r.updated_at || '')}`;
+    openDialog(
+      `<h2>Verify ID — ${esc(r.ref_no)}</h2>
+       <dl class="kv small" style="margin-bottom:12px">
+         <dt>Patient (requester)</dt><dd>${esc([r.patient_first, r.patient_middle, r.patient_last].filter(Boolean).join(' '))}</dd>
+         <dt>Birthdate</dt><dd>${esc(fmtDate(r.birthdate))}</dd>
+         <dt>Email</dt><dd>${esc(r.email)}</dd>
+       </dl>
+       <div class="grid grid-2 id-review">
+         <figure><a href="${photo('id')}" target="_blank" rel="noopener"><img src="${photo('id')}" alt="Valid ID"></a><figcaption>Valid ID (click to enlarge)</figcaption></figure>
+         <figure><a href="${photo('selfie')}" target="_blank" rel="noopener"><img src="${photo('selfie')}" alt="Selfie holding ID"></a><figcaption>Selfie holding the ID</figcaption></figure>
+       </div>
+       <p class="small muted">Check that the ID is valid and readable, the name and birthdate match the request, and the person in the selfie matches the ID photo.</p>
+       ${r.id_status === 'REJECTED' && r.id_remarks ? `<div class="alert warn small">Last check: not verified — ${esc(r.id_remarks)}</div>` : ''}
+       <div class="copy-choice" style="margin-top:8px">
+         <label class="copy-opt"><input type="radio" name="decision" value="VERIFIED" required><span><b>Approve</b><small>ID is valid and matches. The request moves to Processing and is assigned to you.</small></span></label>
+         <label class="copy-opt"><input type="radio" name="decision" value="REJECTED"><span><b>Reject</b><small>The requester is texted the reason and can upload new photos.</small></span></label>
+       </div>
+       <label class="field" style="margin-top:10px">Reason (required when rejecting)<input name="remarks" data-nocaps maxlength="300" placeholder="e.g. ID photo is blurry; selfie does not show the ID clearly"></label>`,
+      async (d) => {
+        await api(`/admin/records/${r.id}/verify-id`, { method: 'POST', body: { decision: d.decision, remarks: d.remarks } });
+        loaders.records();
+      },
+      { wide: true, saveLabel: 'Save decision' },
+    );
+  });
+
+  // Send by email: staff send from the hospital's email account (attaching the scanned documents),
+  // then mark the request as sent here, which releases it and texts the requester
+  $('#recRows').addEventListener('click', (e) => {
+    const s = e.target.closest('[data-send-email]');
+    if (!s) return;
+    const r = recRows.find((x) => x.id === Number(s.dataset.sendEmail));
+    const docs = r.items.map((i) => `- ${i.name}${i.details ? ` (${i.details})` : ''}${i.copies > 1 ? ` x${i.copies}` : ''}`).join('\n');
+    const subject = `Requested medical records – Ref ${r.ref_no}`;
+    const body = `Good day, ${r.requester_name}.
+
+Attached are your requested documents from the Hospital Health Information Management Section (HHIMS), ${cat.hospitalName}:
+${docs}
+
+Reference no.: ${r.ref_no}
+
+This email and its attachments contain confidential health information intended only for you. Please do not forward or share them.
+
+Thank you.
+Hospital Health Information Management Section (HHIMS)
+${cat.hospitalName}`;
+    const mailto = `mailto:${encodeURIComponent(r.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    openDialog(
+      `<h2>Send by email — ${esc(r.ref_no)}</h2>
+       <ol class="small" style="padding-left:18px;margin-top:0">
+         <li>Click <b>Open in email app</b> (or copy the details below into the hospital's email).</li>
+         <li><b>Attach the scanned documents</b> and send the email from the hospital's official account.</li>
+         <li>Come back and click <b>Mark as sent</b>.</li>
+       </ol>
+       <div class="grid">
+         <label class="field">To<input value="${esc(r.email)}" readonly data-nocaps></label>
+         <label class="field">Subject<input value="${esc(subject)}" readonly data-nocaps></label>
+         <label class="field">Message<textarea rows="9" readonly data-nocaps>${esc(body)}</textarea></label>
+         <div class="dir-actions" style="margin:0"><a class="btn sm" href="${esc(mailto)}">Open in email app</a>
+           <button type="button" class="btn sm secondary" id="copyEmailBtn">Copy message</button></div>
+         <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="notify" checked> Text the requester that the documents were sent</label>
+       </div>`,
+      async (d) => {
+        await api(`/admin/records/${r.id}/emailed`, { method: 'POST', body: { notify: d.notify === 'on' } });
+        loaders.records();
+      },
+      { wide: true, saveLabel: 'Mark as sent' },
+    );
+    $('#copyEmailBtn').addEventListener('click', async () => {
+      await navigator.clipboard?.writeText(body);
+      $('#copyEmailBtn').textContent = 'Copied';
+    });
   });
 
   // ---------- Appointments ----------
@@ -921,12 +1024,12 @@
   }));
 
   // ---------- Dialog ----------
-  function openDialog(html, onSave, { wide = false } = {}) {
+  function openDialog(html, onSave, { wide = false, saveLabel = 'Save' } = {}) {
     const dlg = $('#dlg');
     dlg.classList.toggle('wide', wide);
     const form = $('#dlgForm');
     form.innerHTML = `${html}<div class="alert error hidden" id="dlgError"></div>
-      <div class="actions"><button class="btn secondary" value="cancel" formnovalidate>Close</button><button class="btn" value="save">Save</button></div>`;
+      <div class="actions"><button class="btn secondary" value="cancel" formnovalidate>Close</button><button class="btn" value="save">${esc(saveLabel)}</button></div>`;
     form.onsubmit = async (e) => {
       if (e.submitter?.value !== 'save') return;
       e.preventDefault();

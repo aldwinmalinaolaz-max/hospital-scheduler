@@ -114,6 +114,16 @@ const SCHEMA = `
   -- Patient's address, needed for the authorization letter when someone else requests
   ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS patient_address TEXT;
 
+  -- Hardcopy (claimed at HHIMS) or digital copy (emailed after the requester's ID is verified)
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS copy_type TEXT NOT NULL DEFAULT 'HARDCOPY';
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS id_status TEXT;          -- PENDING | VERIFIED | REJECTED (digital only)
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS id_remarks TEXT;
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS id_checked_by TEXT;
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS id_checked_at TIMESTAMPTZ;
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS assigned_to TEXT;        -- staff username
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS emailed_at TIMESTAMPTZ;
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS emailed_by TEXT;
+
   -- Which staff member last changed a request
   ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS updated_by TEXT;
   ALTER TABLE appointments ADD COLUMN IF NOT EXISTS updated_by TEXT;
@@ -212,6 +222,18 @@ const SCHEMA = `
     PRIMARY KEY (clinic_code, month)
   );
 
+  -- Valid ID and selfie-with-ID photos for digital copy requests (deleted automatically after the
+  -- request is finished; see purgeIdPhotos). Only staff with Records access can view them.
+  CREATE TABLE IF NOT EXISTS record_id_photos (
+    id SERIAL PRIMARY KEY,
+    request_id INTEGER NOT NULL REFERENCES record_requests(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,                  -- ID | SELFIE
+    image BYTEA NOT NULL,
+    mime TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (request_id, kind)
+  );
+
   -- One-time content updates that have already been applied (see MIGRATIONS below)
   CREATE TABLE IF NOT EXISTS schema_migrations (
     id TEXT PRIMARY KEY,
@@ -232,6 +254,7 @@ const SCHEMA = `
   ALTER TABLE site_info ENABLE ROW LEVEL SECURITY;
   ALTER TABLE schema_migrations ENABLE ROW LEVEL SECURITY;
   ALTER TABLE opd_clinics ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE record_id_photos ENABLE ROW LEVEL SECURITY;
   ALTER TABLE opd_schedules ENABLE ROW LEVEL SECURITY;
 `;
 

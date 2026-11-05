@@ -195,6 +195,7 @@ module.exports = function adminRoutes(db) {
         (SELECT COUNT(*)::int FROM appointments WHERE appt_date > $1 AND status = 'BOOKED') AS "upcomingAppointments",
         (SELECT COUNT(*)::int FROM record_requests WHERE status IN ('PENDING','PROCESSING')) AS "recordsPending",
         (SELECT COUNT(*)::int FROM record_requests WHERE status = 'READY') AS "recordsReady",
+        (SELECT COUNT(*)::int FROM record_requests WHERE copy_type = 'DIGITAL' AND id_status = 'PENDING' AND status NOT IN ('CANCELLED','REJECTED')) AS "idsToCheck",
         (SELECT COUNT(*)::int FROM record_requests WHERE pickup_date = $1 AND status NOT IN ('CANCELLED','REJECTED')) AS "pickupsToday",
         (SELECT COUNT(*)::int FROM sms_log WHERE status = 'FAILED' AND created_at >= now() - interval '7 days') AS "smsFailed"`,
       [today],
@@ -203,7 +204,7 @@ module.exports = function adminRoutes(db) {
     const a = access(req.user);
     const visible = {
       ...(a.opd && { appointmentsToday: s.appointmentsToday, checkedInToday: s.checkedInToday, upcomingAppointments: s.upcomingAppointments }),
-      ...(a.records && { recordsPending: s.recordsPending, recordsReady: s.recordsReady, pickupsToday: s.pickupsToday }),
+      ...(a.records && { recordsPending: s.recordsPending, recordsReady: s.recordsReady, pickupsToday: s.pickupsToday, idsToCheck: s.idsToCheck }),
     };
     res.json({ today, ...visible, smsFailed: s.smsFailed, smsProvider: config.sms.provider });
   });
@@ -215,6 +216,10 @@ module.exports = function adminRoutes(db) {
     if (req.query.status) conds.push(['r.status = ?', String(req.query.status)]);
     if (req.query.pickup_date) conds.push(['r.pickup_date = ?', String(req.query.pickup_date)]);
     if (req.query.type) conds.push(['EXISTS (SELECT 1 FROM record_request_items i WHERE i.request_id = r.id AND i.record_type = ?)', String(req.query.type)]);
+    if (req.query.copy_type) conds.push(['r.copy_type = ?', String(req.query.copy_type)]);
+    if (req.query.id_status) conds.push(['r.id_status = ?', String(req.query.id_status)]);
+    if (req.query.assigned === 'me') conds.push(['r.assigned_to = ?', req.user.username]);
+    else if (req.query.assigned === 'none') conds.push(['r.assigned_to IS NULL']);
     if (req.query.q) {
       const q = `%${String(req.query.q).trim()}%`;
       conds.push(['(r.ref_no ILIKE ? OR r.patient_last ILIKE ? OR r.patient_first ILIKE ? OR r.mobile ILIKE ? OR r.hospital_no ILIKE ?)', q, q, q, q, q]);
@@ -241,6 +246,65 @@ module.exports = function adminRoutes(db) {
     await sendLetter(res, r, items);
   });
 
+  // ----- Digital copies: ID check, assignment, sending by email -----
+
+  // Staff who can be assigned records requests
+  router.get('/records-staff', requireAccess('records'), async (req, res) => {
+    const rows = await db.query("SELECT username, full_name FROM admins WHERE active AND (role = 'ADMIN' OR can_records) ORDER BY full_name, username");
+    res.json({ rows });
+  });
+
+  router.get('/records/:id/id-photo/:kind', requireAccess('records'), async (req, res) => {
+    const p = await db.one('SELECT image, mime FROM record_id_photos WHERE request_id = $1 AND kind = $2', [
+      Number(req.params.id),
+      String(req.params.kind).toUpperCase(),
+    ]);
+    if (!p) return res.status(404).json({ error: 'Photo not found (it may have been deleted after the retention period).' });
+    res.setHeader('Content-Type', p.mime);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.end(Buffer.from(p.image));
+  });
+
+  // Approve or reject the requester's valid ID + selfie
+  router.post('/records/:id/verify-id', requireAccess('records'), async (req, res) => {
+    const decision = String(req.body?.decision || '').toUpperCase();
+    const reason = String(req.body?.remarks || '').trim().slice(0, 300) || null;
+    if (!['VERIFIED', 'REJECTED'].includes(decision)) throw new ValidationError('Choose Approve or Reject.');
+    if (decision === 'REJECTED' && !reason) throw new ValidationError('Please give the reason, so the requester knows what to fix (e.g. "ID photo is blurry").');
+    const r = await db.one('SELECT * FROM record_requests WHERE id = $1', [Number(req.params.id)]);
+    if (!r) return res.status(404).json({ error: 'Not found.' });
+    if (r.copy_type !== 'DIGITAL') throw new ValidationError('This request is for a hardcopy; there is no ID to verify online.');
+    if (['RELEASED', 'REJECTED', 'CANCELLED'].includes(r.status)) throw new ValidationError('This request is already closed.');
+    const after = await db.one(
+      `UPDATE record_requests SET id_status = $1, id_remarks = $2, id_checked_by = $3, id_checked_at = now(),
+         status = CASE WHEN $1 = 'VERIFIED' AND status = 'PENDING' THEN 'PROCESSING' ELSE status END,
+         assigned_to = COALESCE(assigned_to, $3), updated_at = now(), updated_by = $3
+       WHERE id = $4 RETURNING *`,
+      [decision, decision === 'REJECTED' ? reason : null, req.user.username, r.id],
+    );
+    const message = decision === 'VERIFIED' ? msg.recordIdVerified(after) : msg.recordIdRejected(after);
+    await sendSms(db, { to: after.mobile, message, kind: decision === 'VERIFIED' ? 'RECORD_ID_VERIFIED' : 'RECORD_ID_REJECTED', refNo: after.ref_no });
+    res.json(stamp(after));
+  });
+
+  // The assigned staff member sends the documents from the hospital's email, then marks the request as sent
+  router.post('/records/:id/emailed', requireAccess('records'), async (req, res) => {
+    const r = await db.one('SELECT * FROM record_requests WHERE id = $1', [Number(req.params.id)]);
+    if (!r) return res.status(404).json({ error: 'Not found.' });
+    if (r.copy_type !== 'DIGITAL') throw new ValidationError('This request is for a hardcopy.');
+    if (r.id_status !== 'VERIFIED') throw new ValidationError("Verify the requester's ID before sending the documents.");
+    if (['REJECTED', 'CANCELLED'].includes(r.status)) throw new ValidationError('This request was rejected or cancelled.');
+    const after = await db.one(
+      `UPDATE record_requests SET status = 'RELEASED', emailed_at = now(), emailed_by = $1, updated_at = now(), updated_by = $1
+       WHERE id = $2 RETURNING *`,
+      [req.user.username, r.id],
+    );
+    if (req.body?.notify !== false) {
+      await sendSms(db, { to: after.mobile, message: msg.recordEmailed(after), kind: 'RECORD_EMAILED', refNo: after.ref_no });
+    }
+    res.json(stamp(after));
+  });
+
   router.patch('/records/:id', requireAccess('records'), async (req, res) => {
     const id = Number(req.params.id);
     const b = req.body || {};
@@ -249,21 +313,35 @@ module.exports = function adminRoutes(db) {
 
     const status = b.status ?? before.status;
     if (!catalog.RECORD_STATUSES.includes(status)) throw new ValidationError('Invalid status.');
+    // Digital copies: documents are prepared only after the ID is verified, and released by "Mark as sent"
+    if (before.copy_type === 'DIGITAL' && status !== before.status) {
+      if (['READY', 'RELEASED'].includes(status) && before.id_status !== 'VERIFIED') {
+        throw new ValidationError("Verify the requester's ID first (Verify ID).");
+      }
+      if (status === 'RELEASED' && !before.emailed_at) throw new ValidationError('Use "Send by email" to release a digital copy.');
+    }
+    let assigned = before.assigned_to;
+    if (b.assigned_to !== undefined) {
+      assigned = String(b.assigned_to || '').trim() || null;
+      const ok = assigned && (await db.one("SELECT 1 FROM admins WHERE username = $1 AND active AND (role = 'ADMIN' OR can_records)", [assigned]));
+      if (assigned && !ok) throw new ValidationError('That staff member cannot be assigned records requests.');
+    }
     const remarks = b.remarks !== undefined ? String(b.remarks).trim().slice(0, 500) || null : before.remarks;
     const pickup = b.pickup_date ?? before.pickup_date;
     if (!u.parseDate(pickup)) throw new ValidationError('Invalid pickup date.');
     if (status === 'REJECTED' && !remarks) throw new ValidationError('Please give a reason (remarks) when rejecting a request.');
 
     const after = await db.one(
-      `UPDATE record_requests SET status = $1, remarks = $2, pickup_date = $3,
+      `UPDATE record_requests SET status = $1, remarks = $2, pickup_date = $3, assigned_to = $6,
         reminded_pickup = CASE WHEN $3 <> pickup_date THEN FALSE ELSE reminded_pickup END,
         updated_at = now(), updated_by = $5 WHERE id = $4 RETURNING *`,
-      [status, remarks, pickup, id, req.user.username],
+      [status, remarks, pickup, id, req.user.username, assigned],
     );
 
     // Notify on meaningful changes
     if (b.notify !== false) {
-      if (status !== before.status && status === 'READY') {
+      // "Ready for pickup" only applies to hardcopies; digital copies get a text when emailed
+      if (status !== before.status && status === 'READY' && after.copy_type === 'HARDCOPY') {
         await sendSms(db, { to: after.mobile, message: msg.recordReady(after), kind: 'RECORD_READY', refNo: after.ref_no });
       } else if (status !== before.status && status === 'REJECTED') {
         await sendSms(db, { to: after.mobile, message: msg.recordRejected(after), kind: 'RECORD_REJECTED', refNo: after.ref_no });

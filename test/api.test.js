@@ -99,6 +99,7 @@ test('records request: validation, creation, SMS, tracking', async () => {
     ...patient,
     requester_name: 'Juan Dela Cruz',
     requester_relation: 'Self (patient)',
+    email: 'juan.delacruz@example.com',
     purpose: 'PhilHealth claim',
     pickup_date: '2020-01-01', // ignored: the server sets the claiming date
     items: [
@@ -536,6 +537,7 @@ test('authorization letter is filled in for representative requests', async () =
     patient_middle: 'santos',
     requester_name: 'Maria Dela Cruz',
     requester_relation: 'Spouse',
+    email: 'maria@example.com',
     purpose: 'PhilHealth claim',
     items: [{ record_type: 'MEDICAL_CERTIFICATE' }, { record_type: 'CLINICAL_ABSTRACT' }, { record_type: 'OTHERS', details: 'Anesthesia record' }],
   };
@@ -636,6 +638,83 @@ test('OPD schedules are set per clinic per month', async () => {
   // FAQ assistant reads the live schedules
   const answer = (await call('/faq/ask', { method: 'POST', body: { message: 'clinic schedule' } })).data.answer;
   assert.match(answer, /General Surgery: Mon, Wed, Fri/);
+});
+
+test('digital copies: ID photos, staff verification, assignment and sending by email', async () => {
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const body = {
+    ...patient,
+    requester_name: 'Juan Dela Cruz',
+    requester_relation: 'Self (patient)',
+    email: 'juan.delacruz@example.com',
+    purpose: 'Insurance claim',
+    items: [{ record_type: 'MEDICAL_CERTIFICATE' }],
+    copy_type: 'DIGITAL',
+  };
+  const post = (b) => call('/records', { method: 'POST', body: b });
+
+  assert.match((await post({ ...body, email: '' })).data.error, /Email/);
+  assert.match((await post(body)).data.error, /valid ID/);
+  assert.match((await post({ ...body, id_photo: png, selfie_photo: 'data:image/png;base64,PHNjcmlwdD4=' })).data.error, /selfie/);
+  assert.match(
+    (await post({ ...body, requester_relation: 'Spouse', requester_name: 'Maria', patient_address: 'X', id_photo: png, selfie_photo: png })).data.error,
+    /only available when the patient/,
+  );
+
+  let res = await post({ ...body, id_photo: png, selfie_photo: png });
+  assert.equal(res.status, 201, JSON.stringify(res.data));
+  assert.equal(res.data.copy_type, 'DIGITAL');
+  assert.equal(res.data.id_status, 'PENDING');
+  const ref = res.data.ref_no;
+  const { id } = await db.one('SELECT id FROM record_requests WHERE ref_no = $1', [ref]);
+  assert.match((await db.one("SELECT message FROM sms_log WHERE ref_no = $1 AND kind = 'RECORD_SUBMITTED'", [ref])).message, /digital copy.*verify your ID/);
+
+  // Photos: staff with Records access only
+  const admin = await login();
+  assert.equal((await fetch(base + `/admin/records/${id}/id-photo/selfie`)).status, 401);
+  const photo = await fetch(base + `/admin/records/${id}/id-photo/selfie`, { headers: { Cookie: admin } });
+  assert.equal(photo.headers.get('content-type'), 'image/png');
+
+  // Can't prepare or release before the ID is verified
+  assert.match((await call(`/admin/records/${id}`, { method: 'PATCH', cookie: admin, body: { status: 'READY' } })).data.error, /Verify/);
+  assert.match((await call(`/admin/records/${id}/emailed`, { method: 'POST', cookie: admin })).data.error, /Verify/);
+
+  // Reject → requester is told why and uploads new photos on the Track page
+  assert.match((await call(`/admin/records/${id}/verify-id`, { method: 'POST', cookie: admin, body: { decision: 'REJECTED' } })).data.error, /reason/);
+  res = await call(`/admin/records/${id}/verify-id`, { method: 'POST', cookie: admin, body: { decision: 'REJECTED', remarks: 'ID photo is blurry' } });
+  assert.equal(res.data.id_status, 'REJECTED');
+  assert.match((await db.one("SELECT message FROM sms_log WHERE ref_no = $1 AND kind = 'RECORD_ID_REJECTED'", [ref])).message, /ID photo is blurry/);
+  const tracked = (await call('/track', { method: 'POST', body: { ref_no: ref, mobile: '09171234567' } })).data;
+  assert.equal(tracked.id_remarks, 'ID photo is blurry');
+  res = await call('/track/id-photos', { method: 'POST', body: { ref_no: ref, mobile: '09171234567', id_photo: png, selfie_photo: png } });
+  assert.equal(res.data.id_status, 'PENDING');
+
+  // Approve → processing, assigned to the verifier, requester texted
+  res = await call(`/admin/records/${id}/verify-id`, { method: 'POST', cookie: admin, body: { decision: 'VERIFIED' } });
+  assert.equal(res.data.status, 'PROCESSING');
+  assert.equal(res.data.assigned_to, 'admin');
+
+  // Reassign to a records staff member; OPD-only staff can't be assigned
+  await call('/admin/users', { method: 'POST', cookie: admin, body: { username: 'opd.x', full_name: 'X', role: 'STAFF', password: 'password123', can_records: false, can_opd: true } });
+  assert.match((await call(`/admin/records/${id}`, { method: 'PATCH', cookie: admin, body: { assigned_to: 'opd.x' } })).data.error, /cannot be assigned/);
+  res = await call(`/admin/records/${id}`, { method: 'PATCH', cookie: admin, body: { assigned_to: 'rec.only' } });
+  assert.equal(res.data.assigned_to, 'rec.only');
+  const rec = (await loginAs('rec.only', 'password123')).cookie;
+  const mine = (await call('/admin/records?assigned=me&copy_type=DIGITAL', { cookie: rec })).data.rows;
+  assert.deepEqual(mine.map((r) => r.ref_no), [ref]);
+  assert.match((await call(`/admin/records/${id}`, { method: 'PATCH', cookie: rec, body: { status: 'RELEASED' } })).data.error, /Send by email/);
+
+  // Sent from the hospital's email → released, requester texted (email masked)
+  res = await call(`/admin/records/${id}/emailed`, { method: 'POST', cookie: rec });
+  assert.equal(res.data.status, 'RELEASED');
+  assert.equal(res.data.emailed_by, 'rec.only');
+  assert.match((await db.one("SELECT message FROM sms_log WHERE ref_no = $1 AND kind = 'RECORD_EMAILED'", [ref])).message, /sent to ju\*\*\*@example\.com/);
+
+  // Photos are deleted after the retention period
+  const { purgeIdPhotos } = require('../src/idphotos');
+  assert.equal(await purgeIdPhotos(db), 0);
+  assert.equal(await purgeIdPhotos(db, new Date(Date.now() + 31 * 86400e3)), 2);
+  assert.equal((await fetch(base + `/admin/records/${id}/id-photo/id`, { headers: { Cookie: admin } })).status, 404);
 });
 
 test('mobile normalisation', () => {

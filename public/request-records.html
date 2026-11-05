@@ -67,7 +67,7 @@
           </select></label>
         <label class="field"><span class="req">Requester full name</span><input name="requester_name" autocomplete="name" required></label>
         <label class="field"><span class="req">Mobile number</span><span class="hint">SMS updates are sent here</span><input name="mobile" type="tel" inputmode="tel" placeholder="09XXXXXXXXX" autocomplete="tel" required></label>
-        <label class="field">Email<input name="email" type="email" autocomplete="email"></label>
+        <label class="field"><span class="req">Email</span><span class="hint">Digital copies and updates are sent here</span><input name="email" type="email" autocomplete="email" required></label>
       </div>
       <div class="alert info small hidden" id="repNote">Representatives must present an authorization letter signed by the patient and representative, plus their valid IDs, when claiming. <b>We'll fill in the hospital's authorization letter with these details</b> — download it after submitting, print it, and have both of you sign it.</div>
       <div class="actions"><button type="button" class="btn secondary" data-prev>Back</button><button type="button" class="btn" data-next>Next</button></div>
@@ -76,8 +76,41 @@
     <section class="card hidden" data-panel="3">
       <h2>Review your request</h2>
       <div id="review"></div>
-      <h3 style="margin-top:18px">Requirements when claiming</h3>
-      <ul class="list-tight muted small" id="reqList"></ul>
+
+      <h3 style="margin-top:22px">How do you want to receive your documents?</h3>
+      <div class="copy-choice" role="radiogroup" aria-label="Copy type">
+        <label class="copy-opt"><input type="radio" name="copy_type" value="HARDCOPY">
+          <span><b>Hardcopy</b><small>Claim the printed documents at the Hospital Health Information Management Section (HHIMS).</small></span></label>
+        <label class="copy-opt" id="digitalOpt"><input type="radio" name="copy_type" value="DIGITAL">
+          <span><b>Digital copy</b><small>Sent to your email after we verify your identity. Requires a photo of your valid ID and a selfie holding it.</small></span></label>
+      </div>
+      <p class="small muted hidden" id="digitalBlocked">Digital copies are only available when the patient is the one requesting. Representatives can claim a hardcopy with the signed authorization letter.</p>
+
+      <div id="hardcopyInfo" class="hidden">
+        <h3 style="margin-top:18px">Requirements when claiming</h3>
+        <ul class="list-tight muted small" id="reqList"></ul>
+      </div>
+
+      <div id="digitalInfo" class="hidden">
+        <div class="alert info small">
+          We'll compare your selfie with your valid ID to make sure the records go only to you. Your documents will be emailed to <b id="digitalEmail"></b> once your ID is verified.
+          Your photos are seen only by authorized HHIMS staff and are deleted after your request is completed.
+        </div>
+        <div class="grid grid-2">
+          <div class="id-upload">
+            <span class="req" style="font-weight:600">Photo of your valid ID</span>
+            <span class="small muted">Government-issued ID, front side. All four corners visible, text readable, no glare.</span>
+            <label class="btn secondary sm upload-btn"><input type="file" accept="image/*" id="idPhotoInput" hidden>Take or choose photo</label>
+            <img id="idPhotoPreview" alt="Valid ID preview" class="hidden">
+          </div>
+          <div class="id-upload">
+            <span class="req" style="font-weight:600">Selfie holding the same ID</span>
+            <span class="small muted">Hold the ID beside your face. Your face and the ID must both be clear.</span>
+            <label class="btn secondary sm upload-btn"><input type="file" accept="image/*" id="selfiePhotoInput" hidden>Take or choose photo</label>
+            <img id="selfiePhotoPreview" alt="Selfie preview" class="hidden">
+          </div>
+        </div>
+      </div>
       <label style="display:flex;gap:10px;margin-top:18px;align-items:flex-start">
         <input type="checkbox" name="consent" id="consent" style="margin-top:4px">
         <span class="small" id="consentText"></span>

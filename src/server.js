@@ -6,6 +6,7 @@ const dbModule = require('./db');
 const publicRoutes = require('./routes/public');
 const adminRoutes = require('./routes/admin');
 const { runReminders, startReminderScheduler } = require('./reminders');
+const { purgeIdPhotos } = require('./idphotos');
 
 function cronAuthorized(req) {
   if (!config.cronSecret) return false;
@@ -19,9 +20,16 @@ function createApp(db) {
   const app = express();
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
-  // Map uploads carry an image, so they get a larger body limit (set on that route); everything else stays small
+  // Requests that carry photos (map uploads, ID photos for digital copies) get a larger body limit;
+  // everything else stays small
   const smallJson = express.json({ limit: '100kb' });
-  app.use((req, res, next) => (req.path.startsWith('/api/admin/maps') ? next() : smallJson(req, res, next)));
+  const photoJson = express.json({ limit: '6mb' });
+  const carriesPhotos = (req) =>
+    req.method === 'POST' && (req.path === '/api/records' || req.path === '/api/track/id-photos');
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/admin/maps')) return next(); // parsed on that route
+    return (carriesPhotos(req) ? photoJson : smallJson)(req, res, next);
+  });
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -34,7 +42,8 @@ function createApp(db) {
   app.get('/api/cron/reminders', async (req, res) => {
     if (!config.cronSecret) return res.status(503).json({ error: 'CRON_SECRET is not configured.' });
     if (!cronAuthorized(req)) return res.status(401).json({ error: 'Unauthorized.' });
-    res.json({ ok: true, sent: await runReminders(db) });
+    // The same scheduled call also deletes ID photos that are past their retention period
+    res.json({ ok: true, sent: await runReminders(db), purgedIdPhotos: await purgeIdPhotos(db) });
   });
 
   app.use('/api/admin', adminRoutes(db));

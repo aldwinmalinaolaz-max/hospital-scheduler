@@ -85,3 +85,46 @@ document.addEventListener('input', (e) => {
   el.value = upper;
   el.setSelectionRange?.(selectionStart, selectionEnd);
 });
+
+// Shrinks a photo from the camera or gallery to at most `max` pixels on its longest side and
+// returns it as a JPEG data URL, so uploads stay small even on slow mobile data.
+async function photoToDataUrl(file, max = 1600) {
+  if (!file || !/^image\//.test(file.type)) throw new Error('Please choose a photo (JPG or PNG).');
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('That photo could not be read. Please try another one.'));
+      i.src = url;
+    });
+    const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * scale);
+    c.height = Math.round(img.naturalHeight * scale);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.85);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Wires a hidden file input to a preview <img>; calls onPhoto(dataUrl) when a photo is chosen
+function photoPicker(input, preview, onPhoto, onError) {
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      const dataUrl = await photoToDataUrl(file);
+      preview.src = dataUrl;
+      preview.classList.remove('hidden');
+      onPhoto(dataUrl);
+    } catch (err) {
+      onError(err.message);
+    }
+    input.value = '';
+  });
+}

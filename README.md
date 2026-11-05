@@ -80,6 +80,18 @@ Each call sends any reminders that are due. A reminder is never sent twice, even
 - Statuses run **Pending → Processing → Ready → Released**. A request can also end as **Rejected** (a reason is required) or **Cancelled** (by the requester, only while Pending).
 - SMS is sent when the request is submitted, when it's Ready, when it's Rejected, and when staff move the pickup date. A pickup reminder goes out at 7:00 AM on the pickup date if the request is Ready.
 
+### Hardcopy or digital copy
+On the last step of a records request (email is required), the requester chooses:
+- **Hardcopy:** claim the printed documents at HHIMS on the claiming date.
+- **Digital copy:** documents are emailed after the requester's identity is checked. The requester uploads a **photo of a valid ID** and a **selfie holding the same ID**, taken with the phone camera or chosen from the gallery and shrunk in the browser before upload. Digital copies are only offered when the **patient** is the requester; representatives claim hardcopies with the signed authorization letter.
+
+Staff workflow (Records Requests; filter by *Digital copy*, *ID to check* or *Assigned to me*):
+1. **Verify ID:** compare the ID and selfie with the request, then **Approve** or **Reject (with a reason)**. Approving moves the request to Processing and assigns it to you. Rejecting texts the reason, and the requester uploads new photos on **Track / Cancel**.
+2. Reassign the request with **Edit → Assigned to** if someone else will send it.
+3. **Send by email:** opens the staff member's email app with the recipient, subject and message filled in. Attach the scanned documents, send from the hospital's official account, then click **Mark as sent**. This releases the request and texts the requester (email partly hidden).
+
+ID photos are visible only to staff with Records access and are deleted automatically `ID_PHOTO_RETENTION_DAYS` (default 30) days after the request is released, rejected or cancelled. Deletion runs with the scheduled reminders job. The dashboard shows how many digital requests are waiting for an ID check.
+
 ### Authorization letter (requests by a representative)
 When the requester is not the patient, the form also asks for the **patient's address**. After submitting, the requester can download the hospital's **Authorization Letter (FM-HHIM-05 Rev 2)** as a Word file, already filled in:
 - the patient's name and address, and the representative's name;

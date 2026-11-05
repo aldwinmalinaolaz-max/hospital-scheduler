@@ -7,6 +7,7 @@ const { sendSms } = require('../sms');
 const { lock } = require('../db');
 const faq = require('../faq');
 const letter = require('../letter');
+const idphotos = require('../idphotos');
 const crypto = require('node:crypto');
 const directory = require('../directory');
 const clinics = require('../clinics');
@@ -90,6 +91,11 @@ async function publicRecord(db, r) {
     status: r.status,
     remarks: r.remarks,
     created_at: u.toStamp(r.created_at),
+    copy_type: r.copy_type,
+    id_status: r.id_status,
+    id_remarks: r.id_status === 'REJECTED' ? r.id_remarks : null,
+    email: r.email,
+    emailed_at: u.toStamp(r.emailed_at),
     items: await itemsFor(db, r.id),
   };
 }
@@ -142,6 +148,7 @@ module.exports = function publicRoutes(db) {
       ['requester_name', 'Requester name'],
       ['requester_relation', 'Relationship to patient'],
       ['mobile', 'Mobile number'],
+      ['email', 'Email'],
       ['purpose', 'Purpose'],
     ]);
     if (b.consent !== true) throw new ValidationError('You must agree to the Data Privacy consent to continue.');
@@ -172,14 +179,27 @@ module.exports = function publicRoutes(db) {
     const address = up(b.patient_address, 300) || null;
     if (letter.needsLetter(b) && !address) throw new ValidationError("Please enter the patient's address (needed for the authorization letter).");
 
+    // Digital copies are emailed after staff check the requester's valid ID and selfie with the ID.
+    // Only the patient can choose them; representatives claim hardcopies with the signed letter.
+    const copyType = str(b.copy_type).toUpperCase() || 'HARDCOPY';
+    if (!['HARDCOPY', 'DIGITAL'].includes(copyType)) throw new ValidationError('Please choose hardcopy or digital copy.');
+    let photos = null;
+    if (copyType === 'DIGITAL') {
+      if (letter.needsLetter(b)) throw new ValidationError('Digital copies are only available when the patient is the one requesting. Please choose hardcopy.');
+      let err;
+      [photos, err] = idphotos.readPhotos(b);
+      if (err) throw new ValidationError(err);
+    }
+
     const record = await db.tx(async (t) => {
       // Claiming date follows the posted rule; the requester does not choose it
       const pickup = await sched.claimingDate(t);
       const ref = await uniqueRef(t, 'record_requests', 'R');
       const row = await t.one(
         `INSERT INTO record_requests (ref_no, patient_last, patient_first, patient_middle, birthdate, hospital_no,
-          admission_date, discharge_date, requester_name, requester_relation, mobile, email, purpose, pickup_date, patient_address)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+          admission_date, discharge_date, requester_name, requester_relation, mobile, email, purpose, pickup_date, patient_address,
+          copy_type, id_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
         [
           ref,
           up(b.patient_last, 80),
@@ -196,8 +216,11 @@ module.exports = function publicRoutes(db) {
           up(b.purpose, 300),
           pickup,
           address,
+          copyType,
+          copyType === 'DIGITAL' ? 'PENDING' : null,
         ],
       );
+      if (photos) await idphotos.savePhotos(t, row.id, photos);
       for (const it of cleanItems) {
         await t.query('INSERT INTO record_request_items (request_id, record_type, details, copies) VALUES ($1, $2, $3, $4)', [
           row.id,
@@ -404,6 +427,24 @@ module.exports = function publicRoutes(db) {
     const found = await findByRef(req.body?.ref_no, req.body?.mobile);
     if (!found) return res.status(404).json({ error: 'No request found with that reference number and mobile number.' });
     res.json(found.kind === 'record' ? await publicRecord(db, found.row) : publicAppointment(await clinics.withClinicName(db, found.row)));
+  });
+
+  // New ID / selfie photos after staff could not verify the first ones (reference no. + mobile must match)
+  router.post('/track/id-photos', submitLimit, async (req, res) => {
+    const found = await findByRef(req.body?.ref_no, req.body?.mobile);
+    if (!found || found.kind !== 'record') return res.status(404).json({ error: 'No request found with that reference number and mobile number.' });
+    const r = found.row;
+    if (r.copy_type !== 'DIGITAL' || r.id_status !== 'REJECTED') throw new ValidationError('New ID photos are not needed for this request.');
+    const [photos, err] = idphotos.readPhotos(req.body || {});
+    if (err) throw new ValidationError(err);
+    const updated = await db.tx(async (t) => {
+      await idphotos.savePhotos(t, r.id, photos);
+      return t.one(
+        "UPDATE record_requests SET id_status = 'PENDING', id_remarks = NULL, updated_at = now() WHERE id = $1 RETURNING *",
+        [r.id],
+      );
+    });
+    res.json(await publicRecord(db, updated));
   });
 
   router.post('/track/cancel', submitLimit, async (req, res) => {

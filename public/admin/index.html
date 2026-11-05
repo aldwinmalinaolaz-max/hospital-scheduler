@@ -57,6 +57,9 @@
         <select name="status"><option value="">All statuses</option></select>
         <select name="type"><option value="">All documents</option></select>
         <input type="date" name="pickup_date" title="Pickup date">
+        <select name="copy_type"><option value="">Hardcopy &amp; digital</option><option value="HARDCOPY">Hardcopy</option><option value="DIGITAL">Digital copy</option></select>
+        <select name="id_status"><option value="">Any ID check</option><option value="PENDING">ID to check</option><option value="VERIFIED">ID verified</option><option value="REJECTED">ID not verified</option></select>
+        <select name="assigned"><option value="">Anyone</option><option value="me">Assigned to me</option><option value="none">Unassigned</option></select>
         <button class="btn secondary" type="button" data-clear>Clear</button>
         <button class="btn secondary" type="button" onclick="window.print()">Print</button>
       </form>

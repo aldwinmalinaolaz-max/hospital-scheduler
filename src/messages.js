@@ -7,9 +7,20 @@ const H = () => config.hospitalName;
 // Appointment rows carry department_name (see clinics.withClinicName)
 const dept = (a) => a.department_name || a.department;
 
+// "juan.delacruz@gmail.com" → "ju***@gmail.com" (SMS can be seen by others)
+const maskEmail = (e) => String(e || '').replace(/^(.{1,2})[^@]*@/, '$1***@');
+
 module.exports = {
   recordSubmitted: (r) =>
-    `${H()}: Records request ${r.ref_no} received. Claiming date: ${formatDateLong(r.pickup_date)}. Bring valid ID. We'll text you when it's ready.`,
+    r.copy_type === 'DIGITAL'
+      ? `${H()}: Records request ${r.ref_no} received (digital copy). We'll verify your ID, then email the documents on or after ${formatDateLong(r.pickup_date)}.`
+      : `${H()}: Records request ${r.ref_no} received. Claiming date: ${formatDateLong(r.pickup_date)}. Bring valid ID. We'll text you when it's ready.`,
+  recordIdVerified: (r) =>
+    `${H()}: Your ID for records request ${r.ref_no} is verified. Your documents will be emailed to ${maskEmail(r.email)}.`,
+  recordIdRejected: (r) =>
+    `${H()}: We could not verify your ID for request ${r.ref_no}.${r.id_remarks ? ` Reason: ${r.id_remarks}.` : ''} Please upload new photos on the Track page.`,
+  recordEmailed: (r) =>
+    `${H()}: Your requested records (${r.ref_no}) were sent to ${maskEmail(r.email)}. Please check your inbox and spam folder.`,
   recordReady: (r) =>
     `${H()}: Your requested records (${r.ref_no}) are READY for pickup at the ${catalog.RECORDS_OFFICE_SHORT}. Bring valid ID and this reference no.`,
   recordRejected: (r) =>

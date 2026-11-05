@@ -64,12 +64,39 @@
         <dt>Mobile</dt><dd>${esc(d.mobile)}</dd>
         ${d.patient_address ? `<dt>Patient's address</dt><dd>${esc(d.patient_address)}</dd>` : ''}
         <dt>Purpose</dt><dd>${esc(d.purpose)}</dd>
-        <dt>Claiming date</dt><dd>${esc(fmtDate(claimDate))} <span class="muted small">(8:00 AM – 5:00 PM, no noon break)</span></dd>
+        <dt>Email</dt><dd>${esc(d.email)}</dd>
+        <dt id="dateLabel">Claiming date</dt><dd>${esc(fmtDate(claimDate))} <span class="muted small" id="dateHint">(8:00 AM – 5:00 PM, no noon break)</span></dd>
       </dl>
       ${d.patient_address ? '<div class="alert info small" style="margin-top:14px">Because you are not the patient, the hospital\'s <b>authorization letter</b> will be filled in with these details for you to download after you submit.</div>' : ''}`;
     const reqs = new Set([...selected.keys()].flatMap((c) => cat.recordTypes.find((t) => t.code === c).requirements));
     $('#reqList').innerHTML = [...reqs].map((r) => `<li>${esc(r)}</li>`).join('');
+    updateCopyUI();
   }
+
+  // ----- Hardcopy or digital copy -----
+  const photos = { id: '', selfie: '' };
+  const isRepresentative = () => !!form.requester_relation.value && !form.requester_relation.value.startsWith('Self');
+  const copyType = () => form.querySelector('[name=copy_type]:checked')?.value || '';
+  function updateCopyUI() {
+    const rep = isRepresentative();
+    const digital = form.querySelector('[name=copy_type][value=DIGITAL]');
+    digital.disabled = rep;
+    $('#digitalOpt').classList.toggle('disabled', rep);
+    $('#digitalBlocked').classList.toggle('hidden', !rep);
+    if (rep && digital.checked) digital.checked = false;
+    const type = copyType();
+    $('#hardcopyInfo').classList.toggle('hidden', type !== 'HARDCOPY');
+    $('#digitalInfo').classList.toggle('hidden', type !== 'DIGITAL');
+    $('#digitalEmail').textContent = form.email.value;
+    if ($('#dateLabel')) {
+      $('#dateLabel').textContent = type === 'DIGITAL' ? 'Documents emailed' : 'Claiming date';
+      $('#dateHint').textContent = type === 'DIGITAL' ? '(on or after this date, once your ID is verified)' : '(8:00 AM – 5:00 PM, no noon break)';
+    }
+  }
+  $$('[name=copy_type]').forEach((r) => r.addEventListener('change', updateCopyUI));
+  const photoError = (m) => showError($('#error'), m);
+  photoPicker($('#idPhotoInput'), $('#idPhotoPreview'), (d) => (photos.id = d), photoError);
+  photoPicker($('#selfiePhotoInput'), $('#selfiePhotoPreview'), (d) => (photos.selfie = d), photoError);
 
   wizard({
     total: 3,
@@ -98,6 +125,10 @@
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (!copyType()) return showError($('#error'), 'Please choose hardcopy or digital copy.');
+    if (copyType() === 'DIGITAL' && (!photos.id || !photos.selfie)) {
+      return showError($('#error'), 'For a digital copy, please add a photo of your valid ID and a selfie holding the ID.');
+    }
     if (!$('#consent').checked) return showError($('#error'), 'Please tick the Data Privacy consent box to continue.');
     const btn = $('#submitBtn');
     btn.disabled = true;
@@ -110,6 +141,7 @@
           ...d,
           consent: true,
           items: [...selected].map(([record_type, v]) => ({ record_type, copies: v.copies, details: v.details })),
+          ...(copyType() === 'DIGITAL' ? { id_photo: photos.id, selfie_photo: photos.selfie } : {}),
         },
       });
       form.classList.add('hidden');
@@ -120,9 +152,13 @@
         <h2>Request submitted</h2>
         <p class="muted">Your reference number is</p>
         <div class="ref-no">${esc(res.ref_no)}</div>
-        <p>Claiming date: <b>${esc(fmtDate(res.pickup_date))}</b>, 8:00 AM – 5:00 PM (no noon break), at the Hospital Health Information Management Section (HHIMS).<br>
-        We sent an SMS to <b>${esc(d.mobile)}</b> and will text you again once your documents are ready.</p>
-        <p class="muted small">Please keep this reference number and bring a valid ID when claiming.</p>
+        ${res.copy_type === 'DIGITAL'
+          ? `<p><b>Digital copy.</b> HHIMS staff will check your ID and selfie, then email your documents to <b>${esc(res.email)}</b> on or after <b>${esc(fmtDate(res.pickup_date))}</b>.<br>
+             We sent an SMS to <b>${esc(d.mobile)}</b> and will text you when your ID is verified and when the documents are sent.</p>
+             <p class="muted small">If we can't verify your ID, we'll text you the reason and you can upload new photos on the Track page.</p>`
+          : `<p>Claiming date: <b>${esc(fmtDate(res.pickup_date))}</b>, 8:00 AM – 5:00 PM (no noon break), at the Hospital Health Information Management Section (HHIMS).<br>
+             We sent an SMS to <b>${esc(d.mobile)}</b> and will text you again once your documents are ready.</p>
+             <p class="muted small">Please keep this reference number and bring a valid ID when claiming.</p>`}
         ${res.letter_url ? `<div class="alert warn" style="text-align:left">
           <b>Authorization letter</b><br>
           We filled in the hospital's authorization letter with your details. Download and print it, have it <b>signed by the patient and by you</b>, and bring it with both your valid IDs when claiming.

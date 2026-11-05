@@ -37,6 +37,8 @@ module.exports = {
     // moved to the next working day if that falls on a weekend or holiday.
     claimDays: int(env.RECORDS_CLAIM_DAYS, 3),
     openSaturday: env.RECORDS_OPEN_SATURDAY === 'true',
+    // ID / selfie photos for digital copies are deleted this many days after the request is finished
+    idPhotoRetentionDays: int(env.ID_PHOTO_RETENTION_DAYS, 30),
   },
 
   // OPD clinic slots
