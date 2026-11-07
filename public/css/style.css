@@ -132,6 +132,7 @@ body:not(.can-records) .needs-records, body:not(.can-opd) .needs-opd { display: 
 .sidenav a.active, .sidenav button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; opacity: 1; }
 .sidenav a:focus-visible, .sidenav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sidenav hr { border: 0; border-top: 1px solid rgba(255, 255, 255, 0.15); margin: 8px 4px; }
+.sidenav .nav-sub { display: block; font-size: 0.75rem; opacity: 0.75; font-weight: 400; }
 /* Staff page: no menu until signed in */
 body:is([data-page='staff'], [data-page='facility']):not(.signed-in) .sidenav { display: none; }
 body:is([data-page='staff'], [data-page='facility']):not(.signed-in) .layout { grid-template-columns: minmax(0, 1fr); }
