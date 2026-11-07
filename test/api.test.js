@@ -783,6 +783,13 @@ test('referrals from RHUs, health centers and hospitals', async () => {
   // Facility and staff sessions are separate
   assert.equal((await call('/admin/me', { cookie: fc })).status, 401);
   assert.equal((await fcall('/me', { cookie: admin })).status, 401);
+  // A staff account typed into the facility login is told where to go, without being signed in
+  const wrongDoor = await fcall('/login', { method: 'POST', body: { username: 'admin', password: 'admin123' } });
+  assert.equal(wrongDoor.status, 401);
+  assert.match(wrongDoor.data.error, /staff account/i);
+  assert.equal(wrongDoor.headers.get('set-cookie'), null);
+  const badPw = await fcall('/login', { method: 'POST', body: { username: 'admin', password: 'nope' } });
+  assert.equal(badPw.data.error, 'Invalid username or password.');
   const me = (await fcall('/me', { cookie: fc })).data;
   assert.equal(me.facility.name, 'TETUAN RHU');
   assert.ok(me.departments.some((d) => d.code === 'ER') && me.departments.some((d) => d.code === 'IM'));

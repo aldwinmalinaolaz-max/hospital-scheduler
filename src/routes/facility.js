@@ -29,6 +29,11 @@ module.exports = function facilityRoutes(db) {
       [String(username || '').trim()],
     );
     if (!user || !auth.verifyPassword(String(password || ''), user.password_hash)) {
+      // A ZRMC staff account typed here by mistake: say where it belongs (only once the password is right)
+      const staff = await db.one('SELECT password_hash FROM admins WHERE lower(username) = lower($1) AND active', [String(username || '').trim()]);
+      if (staff && auth.verifyPassword(String(password || ''), staff.password_hash)) {
+        return res.status(401).json({ error: 'This is a ZRMC staff account. Staff manage referrals in the Staff Portal (/admin → Referrals). This page is only for referring facilities.' });
+      }
       return res.status(401).json({ error: 'Invalid username or password.' });
     }
     if (!user.active || !user.facility_active) return res.status(403).json({ error: 'This account has been deactivated. Please contact ZRMC.' });
