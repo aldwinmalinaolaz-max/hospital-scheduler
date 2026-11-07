@@ -12,6 +12,7 @@ const letter = require('../letter');
 const faq = require('../faq');
 const directory = require('../directory');
 const clinics = require('../clinics');
+const registerReferralRoutes = require('./adminReferrals');
 const payments = require('../payments');
 
 const COOKIE = 'hs_admin';
@@ -73,6 +74,7 @@ module.exports = function adminRoutes(db) {
   const access = (user) => ({
     records: user.role === 'ADMIN' || user.can_records,
     opd: user.role === 'ADMIN' || user.can_opd,
+    referrals: user.role === 'ADMIN' || user.can_referrals,
   });
   const SECTION_NAMES = { records: 'Records Requests', opd: 'OPD Appointments' };
   const requireAccess = (section) => (req, res, next) =>
@@ -105,16 +107,17 @@ module.exports = function adminRoutes(db) {
     role: row.role,
     active: row.active,
     can_records: row.can_records,
+    can_referrals: row.can_referrals,
     can_opd: row.can_opd,
     last_login_at: row.last_login_at ? u.toStamp(row.last_login_at) : null,
     created_at: u.toStamp(row.created_at),
   });
 
-  // Staff need at least one section; Administrators always get both
-  function checkAccess(role, canRecords, canOpd) {
-    if (role === 'ADMIN') return { canRecords: true, canOpd: true };
-    if (!canRecords && !canOpd) throw new ValidationError('Give the user access to Records Requests, OPD Appointments, or both.');
-    return { canRecords: !!canRecords, canOpd: !!canOpd };
+  // Staff need at least one section; Administrators always get all of them
+  function checkAccess(role, canRecords, canOpd, canReferrals = false) {
+    if (role === 'ADMIN') return { canRecords: true, canOpd: true, canReferrals: true };
+    if (!canRecords && !canOpd && !canReferrals) throw new ValidationError('Give the user access to at least one section: Records Requests, OPD Appointments or Referrals.');
+    return { canRecords: !!canRecords, canOpd: !!canOpd, canReferrals: !!canReferrals };
   }
 
   function checkPassword(pw) {
@@ -140,11 +143,11 @@ module.exports = function adminRoutes(db) {
     if (!fullName) throw new ValidationError('Please enter the full name.');
     if (!ROLES.includes(role)) throw new ValidationError('Invalid role.');
     checkPassword(b.password);
-    const { canRecords, canOpd } = checkAccess(role, b.can_records ?? true, b.can_opd ?? true);
+    const { canRecords, canOpd, canReferrals } = checkAccess(role, b.can_records ?? true, b.can_opd ?? true, b.can_referrals ?? false);
     if (await db.one('SELECT 1 FROM admins WHERE lower(username) = $1', [username])) throw new ValidationError('That username is already taken.');
     const user = await db.one(
-      'INSERT INTO admins (username, password_hash, full_name, role, can_records, can_opd) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [username, auth.hashPassword(b.password), fullName, role, canRecords, canOpd],
+      'INSERT INTO admins (username, password_hash, full_name, role, can_records, can_opd, can_referrals) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [username, auth.hashPassword(b.password), fullName, role, canRecords, canOpd, canReferrals],
     );
     res.status(201).json(publicUser(user));
   });
@@ -164,14 +167,16 @@ module.exports = function adminRoutes(db) {
         throw new ValidationError('You cannot change your own role or deactivate your own account.');
       }
       if (before.role === 'ADMIN' && before.active && (role !== 'ADMIN' || !active)) await ensureAnotherAdmin(t, id);
-      const { canRecords, canOpd } = checkAccess(role, b.can_records ?? before.can_records, b.can_opd ?? before.can_opd);
+      const { canRecords, canOpd, canReferrals } = checkAccess(
+        role, b.can_records ?? before.can_records, b.can_opd ?? before.can_opd, b.can_referrals ?? before.can_referrals,
+      );
       // Deactivating or changing role signs the user out so it takes effect immediately.
       // (Access changes apply on the user's next request without signing them out.)
       const revoke = role !== before.role || active !== before.active;
       return t.one(
-        `UPDATE admins SET full_name = $1, role = $2, active = $3, can_records = $4, can_opd = $5,
+        `UPDATE admins SET full_name = $1, role = $2, active = $3, can_records = $4, can_opd = $5, can_referrals = $8,
           session_version = session_version + CASE WHEN $6 THEN 1 ELSE 0 END WHERE id = $7 RETURNING *`,
-        [fullName, role, !!active, canRecords, canOpd, revoke, id],
+        [fullName, role, !!active, canRecords, canOpd, revoke, id, canReferrals],
       );
     });
     if (!user) return res.status(404).json({ error: 'Not found.' });
@@ -199,6 +204,8 @@ module.exports = function adminRoutes(db) {
         (SELECT COUNT(*)::int FROM record_requests WHERE status IN ('PENDING','PROCESSING')) AS "recordsPending",
         (SELECT COUNT(*)::int FROM record_requests WHERE status = 'READY') AS "recordsReady",
         (SELECT COUNT(*)::int FROM record_requests WHERE copy_type = 'DIGITAL' AND id_status = 'PENDING' AND status NOT IN ('CANCELLED','REJECTED')) AS "idsToCheck",
+        (SELECT COUNT(*)::int FROM referrals WHERE status IN ('SENT','RECEIVED')) AS "referralsOpen",
+        (SELECT COUNT(*)::int FROM referrals WHERE status IN ('SENT','RECEIVED') AND urgency = 'EMERGENCY') AS "referralsEmergency",
         (SELECT COUNT(*)::int FROM record_requests WHERE pickup_date = $1 AND status NOT IN ('CANCELLED','REJECTED')) AS "pickupsToday",
         (SELECT COUNT(*)::int FROM sms_log WHERE status = 'FAILED' AND created_at >= now() - interval '7 days') AS "smsFailed"`,
       [today],
@@ -207,6 +214,7 @@ module.exports = function adminRoutes(db) {
     const a = access(req.user);
     const visible = {
       ...(a.opd && { appointmentsToday: s.appointmentsToday, checkedInToday: s.checkedInToday, upcomingAppointments: s.upcomingAppointments }),
+      ...(a.referrals && { referralsOpen: s.referralsOpen, referralsEmergency: s.referralsEmergency }),
       ...(a.records && { recordsPending: s.recordsPending, recordsReady: s.recordsReady, pickupsToday: s.pickupsToday, idsToCheck: s.idsToCheck }),
     };
     res.json({ today, ...visible, smsFailed: s.smsFailed, smsProvider: config.sms.provider });
@@ -870,6 +878,9 @@ module.exports = function adminRoutes(db) {
     await db.query('DELETE FROM closed_dates WHERE date = $1', [req.params.date]);
     res.json({ ok: true });
   });
+
+  // Referrals from RHUs, barangay health centers and other hospitals (routes/adminReferrals.js)
+  registerReferralRoutes(router, { db, requireAccess, ValidationError, whereClause });
 
   return router;
 };

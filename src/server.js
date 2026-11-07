@@ -5,6 +5,7 @@ const config = require('./config');
 const dbModule = require('./db');
 const publicRoutes = require('./routes/public');
 const adminRoutes = require('./routes/admin');
+const facilityRoutes = require('./routes/facility');
 const { runReminders, startReminderScheduler } = require('./reminders');
 const { purgeIdPhotos } = require('./idphotos');
 
@@ -27,7 +28,8 @@ function createApp(db) {
   const carriesPhotos = (req) =>
     req.method === 'POST' && (req.path === '/api/records' || req.path === '/api/track/id-photos');
   app.use((req, res, next) => {
-    if (req.path.startsWith('/api/admin/maps') || req.path === '/api/admin/payment-qr') return next(); // parsed on that route
+    // These routes parse their own bodies (uploads need a larger limit)
+    if (req.path.startsWith('/api/admin/maps') || req.path === '/api/admin/payment-qr' || req.path.startsWith('/api/facility/')) return next();
     return (carriesPhotos(req) ? photoJson : smallJson)(req, res, next);
   });
   app.use((req, res, next) => {
@@ -47,6 +49,7 @@ function createApp(db) {
     res.json({ ok: true, sent: await runReminders(db), purgedIdPhotos: await purgeIdPhotos(db) });
   });
 
+  app.use('/api/facility', facilityRoutes(db));
   app.use('/api/admin', adminRoutes(db));
   app.use('/api', publicRoutes(db));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
@@ -55,7 +58,7 @@ function createApp(db) {
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
-    if (err instanceof publicRoutes.ValidationError) return res.status(400).json({ error: err.message });
+    if (err instanceof publicRoutes.ValidationError) return res.status(err.status || 400).json({ error: err.message });
     if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid request body.' });
     if (err.type === 'entity.too.large') return res.status(413).json({ error: 'The upload is too large.' });
     console.error(err);

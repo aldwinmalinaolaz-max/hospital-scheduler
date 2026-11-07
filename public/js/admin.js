@@ -19,6 +19,7 @@
       document.body.classList.toggle('is-admin', me.role === 'ADMIN');
       document.body.classList.toggle('can-records', me.access.records);
       document.body.classList.toggle('can-opd', me.access.opd);
+      document.body.classList.toggle('can-referrals', me.access.referrals);
       $('#whoami').innerHTML = `${esc(me.full_name || me.username)} · <b>${me.role === 'ADMIN' ? 'Administrator' : 'Staff'}</b>`;
       $('#whoami').classList.remove('hidden');
       $('#login').classList.add('hidden');
@@ -27,7 +28,7 @@
       showTab(location.hash.slice(1) || 'dashboard');
     } catch {
       me = null;
-      document.body.classList.remove('signed-in', 'is-admin', 'can-records', 'can-opd');
+      document.body.classList.remove('signed-in', 'is-admin', 'can-records', 'can-opd', 'can-referrals');
       $('#whoami').classList.add('hidden');
       $('#login').classList.remove('hidden');
       $('#app').classList.add('hidden');
@@ -63,7 +64,7 @@
   // ---------- Tabs ----------
   const loaders = {};
   function showTab(name) {
-    const allowed = { schedules: me?.access.opd, users: me?.role === 'ADMIN', faqs: me?.role === 'ADMIN', directory: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
+    const allowed = { referrals: me?.access.referrals, schedules: me?.access.opd, users: me?.role === 'ADMIN', faqs: me?.role === 'ADMIN', directory: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
     if (!loaders[name] || allowed[name] === false) name = 'dashboard';
     $$('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $$('[data-view]').forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -85,6 +86,7 @@
       me.access.records && stat(s.recordsPending, 'Records pending / processing'),
       me.access.records && stat(s.recordsReady, 'Records ready for claiming'),
       me.access.records && stat(s.idsToCheck, 'Digital copies: IDs to check'),
+      me.access.referrals && stat(s.referralsOpen, `Referrals waiting${s.referralsEmergency ? ` (${s.referralsEmergency} emergency)` : ''}`),
       stat(s.smsFailed, `Failed SMS (7 days) · ${esc(s.smsProvider)}`),
     ]
       .filter(Boolean)
@@ -473,14 +475,15 @@ ${cat.hospitalName}`;
   const roleLabel = (r) => (r === 'ADMIN' ? 'Administrator' : 'Staff');
   const roleOpts = (sel) => ['STAFF', 'ADMIN'].map((r) => `<option value="${r}"${r === sel ? ' selected' : ''}>${roleLabel(r)}</option>`).join('');
   const accessLabel = (x) =>
-    x.role === 'ADMIN' ? 'All' : [x.can_records && 'Records Requests', x.can_opd && 'OPD Appointments'].filter(Boolean).join('<br>');
+    x.role === 'ADMIN' ? 'All' : [x.can_records && 'Records Requests', x.can_opd && 'OPD Appointments', x.can_referrals && 'Referrals'].filter(Boolean).join('<br>');
   // Access checkboxes; disabled for Administrators, who always have both
   const accessFields = (x) => `
     <fieldset class="access" ${x.role === 'ADMIN' ? 'disabled' : ''}>
       <legend>Access</legend>
       <label><input type="checkbox" name="can_records" ${x.can_records !== false ? 'checked' : ''}> Records Requests</label>
       <label><input type="checkbox" name="can_opd" ${x.can_opd !== false ? 'checked' : ''}> OPD Appointments</label>
-      <p class="hint">Administrators always have access to both.</p>
+      <label><input type="checkbox" name="can_referrals" ${x.can_referrals ? 'checked' : ''}> Referrals (RHUs, health centers, hospitals)</label>
+      <p class="hint">Administrators always have access to all sections.</p>
     </fieldset>`;
   const wireAccess = () => {
     const role = $('#dlgForm [name=role]');
@@ -490,6 +493,7 @@ ${cat.hospitalName}`;
   const readAccess = () => ({
     can_records: $('#dlgForm [name=can_records]').checked,
     can_opd: $('#dlgForm [name=can_opd]').checked,
+    can_referrals: $('#dlgForm [name=can_referrals]').checked,
   });
 
   loaders.users = guard(async () => {
@@ -654,6 +658,318 @@ ${cat.hospitalName}`;
     await api('/admin/faq-unanswered', { method: 'DELETE' });
     loaders.faqs();
   }));
+
+  // ---------- Referrals ----------
+  let refOpts = null;
+  let refRows = [];
+  const refBadge = (status, label) => `<span class="badge r-${esc(status)}">${esc(label || status)}</span>`;
+  const urgBadge = (u, label) => `<span class="badge u-${esc(u)}">${esc(label || u)}</span>`;
+  const refFilters = $('#refFilters');
+
+  async function loadRefOptions() {
+    refOpts = await api('/admin/referrals/options');
+    refFilters.urgency.innerHTML = '<option value="">Any urgency</option>' + Object.entries(refOpts.urgency).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+    refFilters.status.innerHTML =
+      '<option value="OPEN">Waiting for response</option><option value="">All</option>' +
+      Object.entries(refOpts.statuses).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+    refFilters.facility_id.innerHTML = '<option value="">All facilities</option>' + refOpts.facilities.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join('');
+  }
+
+  loaders.referrals = guard(async () => {
+    if (!refOpts) await loadRefOptions();
+    const q = new URLSearchParams(Object.entries(formData(refFilters)).filter(([, v]) => v));
+    const data = await api(`/admin/referrals?${q}`);
+    refRows = data.rows;
+    $('#refOpenCount').textContent = data.open.n ? `· ${data.open.n} waiting${data.open.emergency ? `, ${data.open.emergency} emergency` : ''}` : '';
+    $('#refAdminRows').innerHTML =
+      refRows
+        .map(
+          (r) => `<tr class="${r.urgency === 'EMERGENCY' && ['SENT', 'RECEIVED'].includes(r.status) ? 'urgent-row' : ''}">
+        <td>${urgBadge(r.urgency, r.urgency_label)}</td>
+        <td class="mono">${esc(r.ref_no)}<div class="sub">${esc(r.created_at)}</div></td>
+        <td>${esc(r.facility_name)}<div class="sub">${esc(r.facility_type_label)}</div></td>
+        <td>${esc(r.patient_last)}, ${esc(r.patient_first)}<div class="sub">${esc(r.age)} / ${esc(r.sex)}</div></td>
+        <td class="small">${esc(r.department_name)}</td>
+        <td class="small">${esc(r.working_diagnosis)}</td>
+        <td>${refBadge(r.status, r.status_label)}${r.appt_date ? `<div class="sub">${esc(fmtDate(r.appt_date, { month: 'short', day: 'numeric' }))} ${esc(fmtTime(r.appt_time))}</div>` : ''}${r.exported_at ? '<div class="sub">Exported</div>' : ''}</td>
+        <td class="no-print"><button class="btn sm" data-open-ref="${r.id}">Open</button></td>
+      </tr>`,
+        )
+        .join('') || '<tr><td colspan="8" class="empty">No referrals found.</td></tr>';
+  });
+  refFilters.addEventListener('input', debounce(loaders.referrals));
+
+  function refDetailHtml(r) {
+    const kv = (k, v) => (v ? `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>` : '');
+    const vit = [['BP', r.bp], ['HR', r.hr], ['RR', r.rr], ['Temp', r.temp], ['O2 sat', r.o2sat], ['Wt', r.weight]].filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ');
+    const thumbs = r.attachments
+      .map((a) => {
+        const url = `/api/admin/referrals/${r.id}/attachments/${a.id}`;
+        return a.mime.startsWith('image/')
+          ? `<a href="${url}" target="_blank" rel="noopener" title="${esc(a.filename)}"><img src="${url}" alt="${esc(a.filename)}"></a>`
+          : `<a href="${url}" target="_blank" rel="noopener"><span class="pdf">PDF<br>${esc(a.filename)}</span></a>`;
+      })
+      .join('');
+    return `<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
+        <h2 style="margin:0">Referral <span class="mono">${esc(r.ref_no)}</span></h2><div>${urgBadge(r.urgency, r.urgency_label)} ${refBadge(r.status, r.status_label)}</div></div>
+      <p class="small muted" style="margin:6px 0 10px">From <b>${esc(r.facility_name)}</b> (${esc(r.facility_type_label)}${r.facility_municipality ? `, ${esc(r.facility_municipality)}` : ''}) · sent ${esc(r.created_at)}</p>
+      ${r.response_note || r.appt_date ? `<div class="alert ${r.status === 'REDIRECTED' ? 'warn' : 'ok'} small"><b>Response:</b> ${esc(r.response_note || '')}${r.appt_date ? ` · Appointment ${esc(fmtDate(r.appt_date))} ${esc(fmtTime(r.appt_time))}` : ''}${r.responded_by ? ` · by ${esc(r.responded_by)}` : ''}</div>` : ''}
+      <div class="grid grid-2">
+        <dl class="kv small">
+          ${kv('Patient', `${r.patient_last}, ${r.patient_first} ${r.patient_middle || ''}`)}${kv('Birthdate / age / sex', `${r.birthdate} / ${r.age} / ${r.sex}`)}
+          ${kv('Address', r.address)}${kv('Mobile', r.mobile)}${kv('PhilHealth no.', r.philhealth_no)}
+          ${kv('Referred by', [r.referring_name, r.referring_designation, r.referring_contact].filter(Boolean).join(' · '))}
+        </dl>
+        <dl class="kv small">
+          ${kv('Refer to', r.department_name)}${kv('Reason', r.reason)}${kv('Chief complaint', r.chief_complaint)}
+          ${kv('Vital signs', vit)}${kv('Working diagnosis', r.working_diagnosis)}
+        </dl>
+      </div>
+      <dl class="kv small" style="margin-top:8px">${kv('History', r.history)}${kv('Treatment given', r.treatment_given)}${kv('Return slip feedback', r.feedback)}</dl>
+      ${thumbs ? `<p class="small" style="margin:10px 0 4px"><b>Attachments</b></p><div class="ref-thumbs">${thumbs}</div>` : ''}
+      <div class="actions">
+        ${['SENT', 'RECEIVED'].includes(r.status) ? '<button class="btn danger" type="button" data-act="redirect">Redirect</button><button class="btn" type="button" data-act="accept">Accept</button>' : ''}
+        ${r.status === 'ACCEPTED' ? '<button class="btn" type="button" data-act="arrived">Patient arrived</button>' : ''}
+        ${['ACCEPTED', 'ARRIVED'].includes(r.status) ? '<button class="btn" type="button" data-act="seen">Seen / return slip</button>' : ''}
+        ${r.status === 'SEEN' ? '<button class="btn secondary" type="button" data-print="return">Print return slip</button>' : ''}
+        <button class="btn secondary" type="button" data-print="referral">Print referral slip</button>
+        <button class="btn secondary" type="button" data-act="close">Close</button>
+      </div>`;
+  }
+
+  // The referral dialog uses its own content (several action buttons), not the shared form dialog
+  async function openReferral(id) {
+    const r = await api(`/admin/referrals/${id}`);
+    const dlg = $('#dlg');
+    dlg.classList.add('wide');
+    const form = $('#dlgForm');
+    form.onsubmit = (e) => e.preventDefault();
+    form.innerHTML = refDetailHtml(r);
+    form.onclick = async (e) => {
+      const p = e.target.closest('[data-print]');
+      if (p) return printReferral(r, { kind: p.dataset.print, systemName: cat.systemName, hospitalName: cat.hospitalName });
+      const act = e.target.closest('[data-act]')?.dataset.act;
+      if (!act) return;
+      form.onclick = null;
+      if (act === 'close') return dlg.close();
+      if (act === 'accept') return acceptDialog(r);
+      if (act === 'redirect') return redirectDialog(r);
+      if (act === 'seen') return seenDialog(r);
+      if (act === 'arrived') {
+        await api(`/admin/referrals/${r.id}/arrived`, { method: 'POST', body: {} });
+        dlg.close();
+        loaders.referrals();
+      }
+    };
+    if (!dlg.open) dlg.showModal();
+    loaders.referrals();
+  }
+  $('#refAdminRows').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-open-ref]');
+    if (b) guard(openReferral)(Number(b.dataset.openRef));
+  });
+  // Reset handlers left by the referral dialog when other dialogs reuse it
+  $('#dlg').addEventListener('close', () => ($('#dlgForm').onclick = null));
+
+  function acceptDialog(r) {
+    const clinicOpts = refOpts.clinics.map((c) => `<option value="${esc(c.code)}"${c.code === r.department ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+    openDialog(
+      `<h2>Accept referral ${esc(r.ref_no)}</h2>
+       <p class="small muted">${esc(r.patient_last)}, ${esc(r.patient_first)} · ${esc(r.department_name)} · ${esc(r.urgency_label)}</p>
+       <label class="field">Message to the referring facility<span class="hint">e.g. "Proceed to ER", "Bring latest CBC"</span><input name="note" data-nocaps maxlength="500"></label>
+       <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="bookToggle" ${r.urgency === 'ROUTINE' && refOpts.clinics.some((c) => c.code === r.department) ? 'checked' : ''}> Book an OPD appointment for the patient</label>
+       <div class="grid grid-3 hidden" id="bookFields" style="margin-top:8px">
+         <label class="field">Clinic<select name="clinic">${clinicOpts}</select></label>
+         <label class="field">Date<input type="date" name="date" min="${esc(cat.today)}"></label>
+         <label class="field">Time<select name="time"><option value="">Pick a date</option></select></label>
+       </div>
+       <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" name="notify" checked> Send SMS to the facility${r.mobile ? ' and the patient' : ''}</label>`,
+      async (d) => {
+        const book = $('#bookToggle').checked ? { clinic: d.clinic, date: d.date, time: d.time } : null;
+        if (book && (!book.date || !book.time)) throw new Error('Choose the appointment date and time, or untick "Book an OPD appointment".');
+        await api(`/admin/referrals/${r.id}/accept`, { method: 'POST', body: { note: d.note, book, notify: d.notify === 'on' } });
+        loaders.referrals();
+      },
+      { wide: true, saveLabel: 'Accept referral' },
+    );
+    const toggle = () => $('#bookFields').classList.toggle('hidden', !$('#bookToggle').checked);
+    $('#bookToggle').addEventListener('change', toggle);
+    toggle();
+    const loadSlots = guard(async () => {
+      const clinic = $('#dlgForm [name=clinic]').value;
+      const date = $('#dlgForm [name=date]').value;
+      const sel = $('#dlgForm [name=time]');
+      if (!clinic || !date) return;
+      const { slots } = await api(`/admin/opd/slots?department=${encodeURIComponent(clinic)}&date=${date}`);
+      sel.innerHTML = slots.length
+        ? slots.map((s) => `<option value="${s.time}" ${s.remaining ? '' : 'disabled'}>${s.label} (${s.remaining} left)</option>`).join('')
+        : '<option value="">No clinic on this date</option>';
+    });
+    $('#dlgForm [name=clinic]').addEventListener('change', loadSlots);
+    $('#dlgForm [name=date]').addEventListener('change', loadSlots);
+  }
+
+  function redirectDialog(r) {
+    openDialog(
+      `<h2>Redirect referral ${esc(r.ref_no)}</h2>
+       <p class="small muted">The referring facility is told why ZRMC can't accept the patient, and where to send them instead.</p>
+       <label class="field">Reason and advice<textarea name="note" rows="4" data-nocaps required placeholder="e.g. No available bed in Pediatrics ICU; please refer to …"></textarea></label>
+       <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" name="notify" checked> Send SMS to the facility</label>`,
+      async (d) => {
+        await api(`/admin/referrals/${r.id}/redirect`, { method: 'POST', body: { note: d.note, notify: d.notify === 'on' } });
+        loaders.referrals();
+      },
+      { wide: true, saveLabel: 'Redirect' },
+    );
+  }
+
+  function seenDialog(r) {
+    openDialog(
+      `<h2>Patient seen — ${esc(r.ref_no)}</h2>
+       <p class="small muted">This feedback goes on the <b>return slip</b> the referring facility can see and print.</p>
+       <label class="field">Findings, management and follow-up instructions<textarea name="feedback" rows="6"></textarea></label>`,
+      async (d) => {
+        await api(`/admin/referrals/${r.id}/seen`, { method: 'POST', body: { feedback: d.feedback } });
+        loaders.referrals();
+      },
+      { wide: true, saveLabel: 'Save' },
+    );
+  }
+
+  // ----- Export for Bizbox -----
+  $('#refExportBtn').addEventListener('click', () => {
+    openDialog(
+      `<h2>Export referrals for Bizbox</h2>
+       <p class="small muted">Downloads a CSV file (opens in Excel) of <b>accepted</b> referrals, to import into Bizbox.
+         Columns: ${esc((refOpts?.export_columns || []).join(', '))}.</p>
+       <div class="grid grid-2">
+         <label class="field">Referred from<input type="date" name="from" value="${esc(cat.today)}"></label>
+         <label class="field">Referred to<input type="date" name="to" value="${esc(cat.today)}"></label>
+       </div>
+       <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" name="only_new" checked> Only referrals not exported before</label>`,
+      async (d) => {
+        const q = new URLSearchParams({ from: d.from, to: d.to, ...(d.only_new === 'on' || $('#dlgForm [name=only_new]').checked ? { only_new: '1' } : {}) });
+        window.location.href = `/api/admin/referrals/export.csv?${q}`;
+        setTimeout(loaders.referrals, 1500);
+      },
+      { wide: true, saveLabel: 'Download CSV' },
+    );
+  });
+
+  // ----- Monthly report -----
+  $('#refReportBtn').addEventListener('click', guard(async () => {
+    const month = cat.today.slice(0, 7);
+    const draw = async (m) => {
+      const rep = await api(`/admin/referrals/report?month=${m}`);
+      $('#repBody').innerHTML = `
+        <h3>By facility</h3>
+        <div class="table-wrap"><table><thead><tr><th>Facility</th><th>Type</th><th>Total</th><th>Accepted</th><th>Redirected</th><th>Emergency</th></tr></thead><tbody>
+        ${rep.by_facility.map((f) => `<tr><td>${esc(f.name)}</td><td class="small">${esc(f.type_label)}</td><td>${f.total}</td><td>${f.accepted}</td><td>${f.redirected}</td><td>${f.emergency}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">No referrals this month.</td></tr>'}
+        </tbody></table></div>
+        <div class="grid grid-2" style="margin-top:12px">
+          <div><h3>By receiving service</h3><table>${rep.by_department.map((d) => `<tr><td>${esc(d.name)}</td><td>${d.total}</td></tr>`).join('') || '<tr><td class="muted">—</td></tr>'}</table></div>
+          <div><h3>By status</h3><table>${rep.by_status.map((s) => `<tr><td>${esc(s.label)}</td><td>${s.total}</td></tr>`).join('') || '<tr><td class="muted">—</td></tr>'}</table></div>
+        </div>`;
+    };
+    openDialog(
+      `<h2>Referrals report</h2>
+       <label class="field" style="max-width:220px">Month<input type="month" name="month" value="${month}"></label>
+       <div id="repBody" style="margin-top:12px"></div>`,
+      async () => window.print(),
+      { wide: true, saveLabel: 'Print' },
+    );
+    $('#dlgForm [name=month]').addEventListener('change', (e) => guard(draw)(e.target.value));
+    await draw(month);
+  }));
+
+  // ----- Facilities and their accounts -----
+  $('#refFacilitiesBtn').addEventListener('click', () => guard(facilitiesDialog)());
+  async function facilitiesDialog() {
+    const { rows } = await api('/admin/facilities');
+    openDialog(
+      `<h2>Referring facilities</h2>
+       <div class="dir-actions" style="margin:0 0 10px"><button class="btn sm" type="button" data-fac-add>+ Add facility</button></div>
+       <div class="table-wrap"><table><thead><tr><th>Facility</th><th>Type</th><th>SMS number</th><th>Accounts</th><th>Referrals</th><th></th></tr></thead><tbody>
+       ${rows.map((f) => `<tr${f.active ? '' : ' style="opacity:.6"'}><td><b>${esc(f.name)}</b><div class="sub">${esc(f.municipality || '')}${f.contact_person ? ` · ${esc(f.contact_person)}` : ''}</div></td>
+         <td class="small">${esc(f.type_label)}</td><td class="small">${esc(f.phone || '—')}</td><td>${f.users}</td><td>${f.referrals}</td>
+         <td class="nowrap"><button class="btn sm secondary" type="button" data-fac-edit="${f.id}">Edit</button> <button class="btn sm secondary" type="button" data-fac-users="${f.id}">Accounts</button></td></tr>`).join('') || '<tr><td colspan="6" class="empty">No facilities yet.</td></tr>'}
+       </tbody></table></div>
+       <p class="small muted" style="margin-top:10px">Facility staff log in at <b>${esc(location.origin)}/facility</b>.</p>`,
+      async () => {},
+      { wide: true, saveLabel: 'Done' },
+    );
+    $('#dlgForm').onclick = (e) => {
+      if (e.target.closest('[data-fac-add]')) return facilityDialog({});
+      const ed = e.target.closest('[data-fac-edit]');
+      if (ed) return facilityDialog(rows.find((f) => f.id === Number(ed.dataset.facEdit)));
+      const us = e.target.closest('[data-fac-users]');
+      if (us) return guard(facilityUsersDialog)(rows.find((f) => f.id === Number(us.dataset.facUsers)));
+    };
+  }
+
+  function facilityDialog(f) {
+    openDialog(
+      `<h2>${f.id ? 'Edit facility' : 'Add facility'}</h2>
+       <div class="grid grid-2">
+         <label class="field span-2">Facility name<input name="name" value="${esc(f.name || '')}" required></label>
+         <label class="field">Type<select name="type">${Object.entries(refOpts.facility_types).map(([k, v]) => `<option value="${k}"${k === f.type ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
+         <label class="field">Municipality / city<input name="municipality" value="${esc(f.municipality || '')}"></label>
+         <label class="field">Contact person<input name="contact_person" value="${esc(f.contact_person || '')}"></label>
+         <label class="field">Mobile for SMS<span class="hint">Gets an SMS when ZRMC accepts or redirects a referral</span><input name="phone" type="tel" value="${esc(f.phone || '')}"></label>
+         <label class="field">Email<input name="email" type="email" value="${esc(f.email || '')}"></label>
+         <label style="display:flex;gap:8px;align-items:center;margin-top:22px"><input type="checkbox" name="active" ${f.active === false ? '' : 'checked'}> Active (can send referrals)</label>
+       </div>`,
+      async (d) => {
+        const body = { ...d, active: $('#dlgForm [name=active]').checked };
+        if (f.id) await api(`/admin/facilities/${f.id}`, { method: 'PATCH', body });
+        else await api('/admin/facilities', { method: 'POST', body });
+        await loadRefOptions();
+        setTimeout(() => guard(facilitiesDialog)(), 0);
+      },
+      { wide: true },
+    );
+  }
+
+  async function facilityUsersDialog(f) {
+    const { rows } = await api(`/admin/facilities/${f.id}/users`);
+    openDialog(
+      `<h2>Accounts — ${esc(f.name)}</h2>
+       <div class="table-wrap"><table><thead><tr><th>Username</th><th>Name</th><th>Status</th><th>Last login</th><th></th></tr></thead><tbody>
+       ${rows.map((x) => `<tr><td class="mono">${esc(x.username)}</td><td>${esc(x.full_name)}</td><td>${x.active ? '<span class="badge COMPLETED">Active</span>' : '<span class="badge CANCELLED">Inactive</span>'}</td>
+         <td class="small">${esc(x.last_login_at || 'Never')}</td>
+         <td class="nowrap"><button class="btn sm secondary" type="button" data-fu-toggle="${x.id}" data-active="${x.active}">${x.active ? 'Deactivate' : 'Activate'}</button>
+           <button class="btn sm secondary" type="button" data-fu-pw="${x.id}">Reset password</button></td></tr>`).join('') || '<tr><td colspan="5" class="empty">No accounts yet.</td></tr>'}
+       </tbody></table></div>
+       <h3 style="margin-top:14px">Add account</h3>
+       <div class="grid grid-3">
+         <label class="field">Full name<input name="full_name"></label>
+         <label class="field">Username<input name="username" autocomplete="off"></label>
+         <label class="field">Temporary password<input name="password" type="password" autocomplete="new-password"></label>
+       </div>
+       <p class="small muted">Give the username and temporary password to the facility; they can change it under Account after logging in at /facility.</p>`,
+      async (d) => {
+        if (d.username || d.full_name || d.password) {
+          await api(`/admin/facilities/${f.id}/users`, { method: 'POST', body: { username: d.username, full_name: d.full_name, password: d.password } });
+        }
+        setTimeout(() => guard(facilityUsersDialog)(f), 0);
+      },
+      { wide: true, saveLabel: 'Add account' },
+    );
+    $('#dlgForm').onclick = guard(async (e) => {
+      const t = e.target.closest('[data-fu-toggle]');
+      if (t) {
+        await api(`/admin/facility-users/${t.dataset.fuToggle}`, { method: 'PATCH', body: { active: t.dataset.active !== 'true' } });
+        return facilityUsersDialog(f);
+      }
+      const p = e.target.closest('[data-fu-pw]');
+      if (p) {
+        const pw = prompt('New password for this account (at least 8 characters):');
+        if (!pw) return;
+        await api(`/admin/facility-users/${p.dataset.fuPw}/password`, { method: 'POST', body: { password: pw } });
+        alert('Password reset. The user is signed out and must log in with the new password.');
+      }
+    });
+  }
 
   // ---------- OPD Schedules ----------
   const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -1075,6 +1391,7 @@ ${cat.hospitalName}`;
     const dlg = $('#dlg');
     dlg.classList.toggle('wide', wide);
     const form = $('#dlgForm');
+    form.onclick = null; // a previous dialog may have left a click handler
     form.innerHTML = `${html}<div class="alert error hidden" id="dlgError"></div>
       <div class="actions"><button class="btn secondary" value="cancel" formnovalidate>Close</button><button class="btn" value="save">${esc(saveLabel)}</button></div>`;
     form.onsubmit = async (e) => {
@@ -1089,7 +1406,7 @@ ${cat.hospitalName}`;
         showError($('#dlgError'), err.message);
       }
     };
-    dlg.showModal();
+    if (!dlg.open) dlg.showModal();
   }
 
   start();

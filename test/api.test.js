@@ -319,7 +319,7 @@ test('per-user access: records-only and OPD-only staff', async () => {
   const opd = (await loginAs('opd.only', 'password123')).cookie;
 
   // /me tells the browser which tabs to show
-  assert.deepEqual((await call('/admin/me', { cookie: rec })).data.access, { records: true, opd: false });
+  assert.deepEqual((await call('/admin/me', { cookie: rec })).data.access, { records: true, opd: false, referrals: false });
 
   // Records-only user
   assert.equal((await call('/admin/records', { cookie: rec })).status, 200);
@@ -345,7 +345,7 @@ test('per-user access: records-only and OPD-only staff', async () => {
   assert.equal((await call('/admin/records', { cookie: opd })).status, 200);
 
   // Administrators always have both
-  assert.deepEqual((await call('/admin/me', { cookie: admin })).data.access, { records: true, opd: true });
+  assert.deepEqual((await call('/admin/me', { cookie: admin })).data.access, { records: true, opd: true, referrals: true });
 });
 
 test('patient-entered text is stored in capitals', async () => {
@@ -754,6 +754,123 @@ test('fees and payment QR are managed by administrators', async () => {
   assert.equal((await call('/catalog')).data.payment.note, 'Pay via the official ZRMC GCash account.');
   info = (await call('/admin/payment-qr', { method: 'DELETE', cookie: admin })).data;
   assert.equal(info.qr_url, '/img/payment-qr.jpg');
+});
+
+test('referrals from RHUs, health centers and hospitals', async () => {
+  const admin = await login();
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const pdf = `data:application/pdf;base64,${Buffer.from('%PDF-1.4\n%test\n').toString('base64')}`;
+
+  // Facilities and their accounts (managed by staff with Referrals access)
+  let res = await call('/admin/facilities', { method: 'POST', cookie: admin, body: { name: 'Tetuan RHU', type: 'RHU', municipality: 'Zamboanga City', phone: '09170001111' } });
+  assert.equal(res.status, 201, JSON.stringify(res.data));
+  const rhu = res.data;
+  assert.equal(rhu.name, 'TETUAN RHU');
+  const other = (await call('/admin/facilities', { method: 'POST', cookie: admin, body: { name: 'Ayala BHS', type: 'BHS' } })).data;
+  assert.equal((await call(`/admin/facilities/${rhu.id}/users`, { method: 'POST', cookie: admin, body: { username: 'admin', full_name: 'x', password: 'password123' } })).data.error, 'That username is already taken.');
+  await call(`/admin/facilities/${rhu.id}/users`, { method: 'POST', cookie: admin, body: { username: 'rhu.nurse', full_name: 'Ana Nurse', password: 'password123' } });
+  await call(`/admin/facilities/${other.id}/users`, { method: 'POST', cookie: admin, body: { username: 'bhs.mw', full_name: 'Midwife', password: 'password123' } });
+
+  const fcall = (path, opts = {}) => call(`/facility${path}`, opts);
+  const flogin = async (username) => {
+    const r = await fcall('/login', { method: 'POST', body: { username, password: 'password123' } });
+    assert.equal(r.status, 200);
+    return r.headers.get('set-cookie').split(';')[0];
+  };
+  const fc = await flogin('rhu.nurse');
+  const fc2 = await flogin('bhs.mw');
+
+  // Facility and staff sessions are separate
+  assert.equal((await call('/admin/me', { cookie: fc })).status, 401);
+  assert.equal((await fcall('/me', { cookie: admin })).status, 401);
+  const me = (await fcall('/me', { cookie: fc })).data;
+  assert.equal(me.facility.name, 'TETUAN RHU');
+  assert.ok(me.departments.some((d) => d.code === 'ER') && me.departments.some((d) => d.code === 'IM'));
+
+  // Sending a referral
+  const body = {
+    patient_last: 'Santos', patient_first: 'Pedro', birthdate: '1975-03-02', sex: 'M', address: 'Brgy. Tetuan, Zamboanga City',
+    mobile: '09175556666', philhealth_no: '12-345678901-2', urgency: 'URGENT', department: 'IM',
+    reason: 'For further evaluation', chief_complaint: '=HYPERLINK("http://x") chest heaviness', working_diagnosis: 'Hypertension, uncontrolled',
+    bp: '170/100', hr: '96', referring_name: 'Dr. Reyes', referring_designation: 'MHO',
+  };
+  assert.match((await fcall('/referrals', { method: 'POST', cookie: fc, body: { ...body, working_diagnosis: '' } })).data.error, /diagnosis/);
+  assert.match((await fcall('/referrals', { method: 'POST', cookie: fc, body: { ...body, attachments: [{ name: 'x.exe', data: 'data:application/octet-stream;base64,TVqQ' }] } })).data.error, /photos|PDF/);
+  res = await fcall('/referrals', { method: 'POST', cookie: fc, body: { ...body, attachments: [{ name: 'ecg.png', data: png }, { name: 'labs.pdf', data: pdf }] } });
+  assert.equal(res.status, 201, JSON.stringify(res.data));
+  const r1 = res.data;
+  assert.match(r1.ref_no, /^F-\d{6}-/);
+  assert.equal(r1.status, 'SENT');
+  assert.equal(r1.patient_last, 'SANTOS');
+  assert.equal(r1.attachments.length, 2);
+  const r2 = (await fcall('/referrals', { method: 'POST', cookie: fc, body: { ...body, patient_first: 'Maria', urgency: 'EMERGENCY', department: 'ER' } })).data;
+
+  // Each facility sees only its own referrals
+  assert.equal((await fcall('/referrals', { cookie: fc2 })).data.rows.length, 0);
+  assert.equal((await fcall(`/referrals/${r1.id}`, { cookie: fc2 })).status, 404);
+  assert.equal((await fcall(`/referrals/${r1.id}/attachments/${r1.attachments[1].id}`, { cookie: fc2 })).status, 404);
+  const att = await fetch(`${base}/facility/referrals/${r1.id}/attachments/${r1.attachments[1].id}`, { headers: { Cookie: fc } });
+  assert.equal(att.headers.get('content-type'), 'application/pdf');
+
+  // Staff need the Referrals permission
+  const rec = (await loginAs('rec.only', 'password123')).cookie;
+  assert.equal((await call('/admin/referrals', { cookie: rec })).status, 403);
+  await call('/admin/users', { method: 'POST', cookie: admin, body: { username: 'ref.desk', full_name: 'Referral Desk', role: 'STAFF', password: 'password123', can_records: false, can_opd: false, can_referrals: true } });
+  const desk = (await loginAs('ref.desk', 'password123')).cookie;
+  let inbox = (await call('/admin/referrals?status=OPEN', { cookie: desk })).data;
+  assert.equal(inbox.open.n, 2);
+  assert.equal(inbox.rows[0].ref_no, r2.ref_no, 'emergencies first');
+
+  // Opening marks it received; accept with an OPD appointment
+  assert.equal((await call(`/admin/referrals/${r1.id}`, { cookie: desk })).data.status, 'RECEIVED');
+  assert.equal((await fcall(`/referrals/${r1.id}`, { cookie: fc })).data.status_label, 'Received by ZRMC');
+  // A slot with room left (earlier tests filled some)
+  const dates = (await call('/opd/dates?department=IM')).data.dates.filter((d) => d.date > u.todayStr() && d.remaining > 0);
+  const date = dates[dates.length - 1].date;
+  const time = (await call(`/opd/slots?department=IM&date=${date}`)).data.slots.find((x) => x.remaining > 0).time;
+  res = await call(`/admin/referrals/${r1.id}/accept`, { method: 'POST', cookie: desk, body: { note: 'Proceed to OPD, bring referral slip', book: { clinic: 'IM', date, time } } });
+  assert.equal(res.status, 200, JSON.stringify(res.data));
+  assert.equal(res.data.status, 'ACCEPTED');
+  assert.equal(res.data.appt_date, date);
+  const appt = await db.one('SELECT * FROM appointments WHERE id = $1', [res.data.appointment_id]);
+  assert.equal(appt.patient_last, 'SANTOS');
+  assert.match(appt.remarks, /Referral F-/);
+  const smsKinds = (await db.query('SELECT recipient FROM sms_log WHERE ref_no = $1', [r1.ref_no])).map((x) => x.recipient).sort();
+  assert.deepEqual(smsKinds, ['+639170001111', '+639175556666']); // facility and patient
+  assert.match((await call(`/admin/referrals/${r1.id}/accept`, { method: 'POST', cookie: desk, body: {} })).data.error, /already/);
+  assert.equal((await fcall(`/referrals/${r1.id}/cancel`, { method: 'POST', cookie: fc })).status, 400);
+
+  // Redirect needs a reason
+  assert.match((await call(`/admin/referrals/${r2.id}/redirect`, { method: 'POST', cookie: desk, body: {} })).data.error, /reason/);
+  assert.equal((await call(`/admin/referrals/${r2.id}/redirect`, { method: 'POST', cookie: desk, body: { note: 'No ICU bed; refer to another hospital' } })).data.status, 'REDIRECTED');
+
+  // Arrived, seen with feedback for the return slip
+  assert.equal((await call(`/admin/referrals/${r1.id}/arrived`, { method: 'POST', cookie: desk })).data.status, 'ARRIVED');
+  res = await call(`/admin/referrals/${r1.id}/seen`, { method: 'POST', cookie: desk, body: { feedback: 'Started on amlodipine; follow up at RHU in 2 weeks' } });
+  assert.equal(res.data.status, 'SEEN');
+  assert.equal((await fcall(`/referrals/${r1.id}`, { cookie: fc })).data.feedback, 'STARTED ON AMLODIPINE; FOLLOW UP AT RHU IN 2 WEEKS');
+
+  // Export for Bizbox: accepted referrals only, marked as exported; formulas neutralised
+  const csv = await fetch(`${base}/admin/referrals/export.csv?only_new=1`, { headers: { Cookie: desk } });
+  assert.match(csv.headers.get('content-disposition'), /ZRMC-referrals-/);
+  const text = await csv.text();
+  const lines = text.replace(/^﻿/, '').trim().split('\r\n');
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /^Referral No,Date Referred,Referring Facility/);
+  assert.match(lines[1], new RegExp(r1.ref_no));
+  assert.match(lines[1], /"'=HYPERLINK\(""HTTP:\/\/X""\) CHEST HEAVINESS"/);
+  assert.ok((await db.one('SELECT exported_at FROM referrals WHERE id = $1', [r1.id])).exported_at);
+  assert.equal((await (await fetch(`${base}/admin/referrals/export.csv?only_new=1`, { headers: { Cookie: desk } })).text()).trim().split('\r\n').length, 1);
+
+  // Monthly report
+  const rep = (await call('/admin/referrals/report', { cookie: desk })).data;
+  const row = rep.by_facility.find((f) => f.name === 'TETUAN RHU');
+  assert.deepEqual([row.total, row.accepted, row.redirected, row.emergency], [2, 1, 1, 1]);
+
+  // Deactivating a facility user signs them out
+  const users = (await call(`/admin/facilities/${rhu.id}/users`, { cookie: desk })).data.rows;
+  await call(`/admin/facility-users/${users[0].id}`, { method: 'PATCH', cookie: desk, body: { active: false } });
+  assert.equal((await fcall('/me', { cookie: fc })).status, 401);
 });
 
 test('mobile normalisation', () => {

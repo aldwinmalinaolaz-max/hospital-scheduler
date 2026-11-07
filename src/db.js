@@ -252,6 +252,77 @@ const SCHEMA = `
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
 
+  -- Referrals from RHUs, barangay health centers and other hospitals
+  CREATE TABLE IF NOT EXISTS facilities (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,                   -- RHU | BHS | HOSPITAL | OTHER
+    municipality TEXT,
+    contact_person TEXT,
+    phone TEXT,                           -- receives SMS when ZRMC responds
+    email TEXT,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  -- Logins for referring facilities: separate from hospital staff (admins), so a facility
+  -- account can never reach the staff panel
+  CREATE TABLE IF NOT EXISTS facility_users (
+    id SERIAL PRIMARY KEY,
+    facility_id INTEGER NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
+    username TEXT NOT NULL UNIQUE,
+    full_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    session_version INTEGER NOT NULL DEFAULT 0,
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE TABLE IF NOT EXISTS referrals (
+    id SERIAL PRIMARY KEY,
+    ref_no TEXT NOT NULL UNIQUE,
+    facility_id INTEGER NOT NULL REFERENCES facilities(id),
+    status TEXT NOT NULL DEFAULT 'SENT',  -- SENT | RECEIVED | ACCEPTED | REDIRECTED | ARRIVED | SEEN | CANCELLED
+    urgency TEXT NOT NULL,                -- EMERGENCY | URGENT | ROUTINE
+    department TEXT NOT NULL,             -- receiving service, e.g. an OPD clinic or the Emergency Room
+    patient_last TEXT NOT NULL,
+    patient_first TEXT NOT NULL,
+    patient_middle TEXT,
+    birthdate TEXT NOT NULL,
+    sex TEXT NOT NULL,
+    address TEXT NOT NULL,
+    mobile TEXT,
+    philhealth_no TEXT,
+    reason TEXT NOT NULL,
+    chief_complaint TEXT NOT NULL,
+    history TEXT,
+    working_diagnosis TEXT NOT NULL,
+    treatment_given TEXT,
+    bp TEXT, hr TEXT, rr TEXT, temp TEXT, o2sat TEXT, weight TEXT,
+    referring_name TEXT NOT NULL,
+    referring_designation TEXT,
+    referring_contact TEXT,
+    response_note TEXT,                   -- ZRMC's reply to the facility
+    appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
+    feedback TEXT,                        -- return slip: findings / instructions after the patient was seen
+    responded_by TEXT, responded_at TIMESTAMPTZ,
+    arrived_at TIMESTAMPTZ, seen_at TIMESTAMPTZ,
+    exported_at TIMESTAMPTZ,              -- last exported for Bizbox
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_referrals_facility ON referrals(facility_id, created_at);
+  CREATE TABLE IF NOT EXISTS referral_attachments (
+    id SERIAL PRIMARY KEY,
+    referral_id INTEGER NOT NULL REFERENCES referrals(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    data BYTEA NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  -- Staff permission for the Referrals tab (administrators always have it)
+  ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_referrals BOOLEAN NOT NULL DEFAULT FALSE;
+
   -- One-time content updates that have already been applied (see MIGRATIONS below)
   CREATE TABLE IF NOT EXISTS schema_migrations (
     id TEXT PRIMARY KEY,
@@ -274,6 +345,10 @@ const SCHEMA = `
   ALTER TABLE opd_clinics ENABLE ROW LEVEL SECURITY;
   ALTER TABLE record_id_photos ENABLE ROW LEVEL SECURITY;
   ALTER TABLE document_fees ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE facilities ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE facility_users ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE referrals ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE referral_attachments ENABLE ROW LEVEL SECURITY;
   ALTER TABLE site_images ENABLE ROW LEVEL SECURITY;
   ALTER TABLE opd_schedules ENABLE ROW LEVEL SECURITY;
 `;

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Referral Portal · ZRMC ONE Hospital System</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="icon" type="image/png" href="/img/favicon.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+</head>
+<body data-page="facility">
+<header class="topbar"><div class="inner">
+  <a class="brand" href="/facility"><img class="brand-logo" src="/img/logo.png" alt="" width="60" height="60"><span class="brand-text"><span data-system>ZRMC ONE Hospital System</span><small>Referral Portal · <span data-hospital>Zamboanga Regional Medical Center</span></small></span></a>
+  <span id="whoami" class="who hidden"></span>
+</div></header>
+<div class="layout">
+<nav class="sidenav no-print" id="tabs" aria-label="Referral portal menu">
+  <button data-tab="list" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>My referrals</span></button>
+  <button data-tab="new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>New referral</span></button>
+  <button data-tab="account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/></svg><span>Account</span></button>
+  <hr>
+  <a href="#" id="logoutBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg><span>Log out</span></a>
+</nav>
+<div class="content">
+<main class="admin-shell">
+  <section class="card login-box hidden" id="login">
+    <h2>Referring facility login</h2>
+    <p class="muted small">For Rural Health Units, Barangay Health Centers and hospitals referring patients to ZRMC. Accounts are created by ZRMC.</p>
+    <form id="loginForm" class="grid">
+      <label class="field">Username<input name="username" autocomplete="username" required></label>
+      <label class="field">Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <div class="alert error hidden" id="loginError"></div>
+      <button class="btn" type="submit">Log in</button>
+    </form>
+  </section>
+
+  <section id="app" class="hidden">
+    <div data-view="list">
+      <div class="sched-bar">
+        <h2 style="margin:0">Referrals from <span id="facilityName"></span></h2>
+        <button class="btn" type="button" data-goto="new">+ New referral</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Ref no. / date</th><th>Patient</th><th>Urgency</th><th>To</th><th>Status</th><th>ZRMC response</th><th></th></tr></thead>
+        <tbody id="refRows"></tbody>
+      </table></div>
+    </div>
+
+    <div data-view="new" class="hidden">
+      <h2>New referral to ZRMC</h2>
+      <p class="muted small">For emergencies, call ZRMC's Emergency Room as well and send the patient with this referral slip.</p>
+      <div class="alert error hidden" id="refError" role="alert"></div>
+      <form id="refForm" novalidate>
+        <section class="card">
+          <h3>Patient</h3>
+          <div class="grid grid-3">
+            <label class="field"><span class="req">Last name</span><input name="patient_last" required></label>
+            <label class="field"><span class="req">First name</span><input name="patient_first" required></label>
+            <label class="field">Middle name<input name="patient_middle"></label>
+            <label class="field"><span class="req">Birthdate</span><input type="date" name="birthdate" required></label>
+            <label class="field"><span class="req">Sex</span><select name="sex" required><option value="">Select…</option><option value="F">Female</option><option value="M">Male</option></select></label>
+            <label class="field">PhilHealth no.<input name="philhealth_no" maxlength="20"></label>
+            <label class="field span-2"><span class="req">Address</span><input name="address" required></label>
+            <label class="field">Patient / relative mobile<span class="hint">Gets an SMS when ZRMC accepts the referral</span><input name="mobile" type="tel" placeholder="09XXXXXXXXX"></label>
+          </div>
+        </section>
+        <section class="card">
+          <h3>Referral</h3>
+          <div class="field"><span class="req">Urgency</span>
+            <div class="copy-choice" id="urgencyChoice"></div></div>
+          <div class="grid grid-2" style="margin-top:12px">
+            <label class="field"><span class="req">Refer to (receiving service)</span><select name="department" id="deptSelect" required></select></label>
+            <label class="field"><span class="req">Reason for referral</span><input name="reason" required placeholder="e.g. for specialist evaluation, no diagnostic facility"></label>
+          </div>
+        </section>
+        <section class="card">
+          <h3>Clinical information</h3>
+          <div class="grid">
+            <label class="field"><span class="req">Chief complaint</span><input name="chief_complaint" required></label>
+            <label class="field">Pertinent history and physical findings<textarea name="history" rows="4"></textarea></label>
+          </div>
+          <div class="grid grid-3" style="margin-top:12px">
+            <label class="field">BP<input name="bp" placeholder="120/80"></label>
+            <label class="field">Heart rate<input name="hr" placeholder="per min"></label>
+            <label class="field">Respiratory rate<input name="rr" placeholder="per min"></label>
+            <label class="field">Temperature<input name="temp" placeholder="°C"></label>
+            <label class="field">O2 saturation<input name="o2sat" placeholder="%"></label>
+            <label class="field">Weight<input name="weight" placeholder="kg"></label>
+          </div>
+          <div class="grid" style="margin-top:12px">
+            <label class="field"><span class="req">Working / impression diagnosis</span><input name="working_diagnosis" required></label>
+            <label class="field">Treatment / medicines given<textarea name="treatment_given" rows="3"></textarea></label>
+          </div>
+        </section>
+        <section class="card">
+          <h3>Attachments (optional)</h3>
+          <p class="small muted">Lab results, X-ray or ECG photos, or a scan of your referral form. Photos or PDF, up to 5 files, 3 MB in total.</p>
+          <label class="btn secondary sm upload-btn"><input type="file" id="attachInput" accept="image/*,application/pdf" multiple hidden>Add files</label>
+          <ul class="list-tight small" id="attachList" style="margin-top:8px"></ul>
+        </section>
+        <section class="card">
+          <h3>Referred by</h3>
+          <div class="grid grid-3">
+            <label class="field"><span class="req">Name of health worker</span><input name="referring_name" required></label>
+            <label class="field">Designation<input name="referring_designation" placeholder="e.g. MHO, nurse, midwife"></label>
+            <label class="field">Contact number<input name="referring_contact" type="tel"></label>
+          </div>
+          <label style="display:flex;gap:10px;margin-top:14px;align-items:flex-start">
+            <input type="checkbox" id="refConsent" style="margin-top:4px">
+            <span class="small">The patient (or guardian) agreed to this referral and to sharing their health information with ZRMC for their care, in accordance with the Data Privacy Act of 2012 (RA 10173).</span>
+          </label>
+          <div class="actions"><button class="btn" type="submit" id="refSubmit">Send referral to ZRMC</button></div>
+        </section>
+      </form>
+      <section class="card confirm-box hidden" id="refDone"></section>
+    </div>
+
+    <div data-view="account" class="hidden">
+      <div class="card" style="max-width:480px">
+        <h3>Change password</h3>
+        <form id="pwForm" class="grid">
+          <label class="field">Current password<input name="current" type="password" autocomplete="current-password" required></label>
+          <label class="field">New password<span class="hint">At least 8 characters</span><input name="next" type="password" autocomplete="new-password" minlength="8" required></label>
+          <button class="btn secondary" type="submit">Update password</button>
+          <div class="small" id="pwResult"></div>
+        </form>
+      </div>
+    </div>
+  </section>
+</main>
+</div>
+</div>
+
+<dialog id="dlg" class="wide"><div class="dlg-body" id="dlgBody"></div></dialog>
+
+<script src="/js/common.js"></script>
+<script src="/js/referral-print.js"></script>
+<script src="/js/facility.js"></script>
+</body>
+</html>

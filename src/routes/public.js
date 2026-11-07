@@ -132,6 +132,7 @@ module.exports = function publicRoutes(db) {
     ]);
     res.json({
       hospitalName: config.hospitalName,
+      systemName: config.systemName,
       recordTypes: catalog.RECORD_TYPES.map((t) => ({ ...t, fee: fees.get(t.code) ?? 0 })),
       payment,
       departments: list.map((c) => {
@@ -368,6 +369,7 @@ module.exports = function publicRoutes(db) {
     for (const k of ['facebook', 'website']) if (contact[k] && !/^https:\/\//i.test(contact[k])) delete contact[k];
     res.json({
       hospitalName: config.hospitalName,
+      systemName: config.systemName,
       entries,
       guides,
       maps: maps.map((m) => ({ id: m.id, title: m.title, description: m.description, url: `/api/maps/${m.id}/image?v=${m.v}` })),

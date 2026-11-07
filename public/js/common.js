@@ -66,7 +66,8 @@ const badge = (s) => `<span class="badge ${esc(s)}">${esc(STATUS_LABELS[s] || s)
 async function loadCatalog() {
   const cat = await api('/catalog');
   $$('[data-hospital]').forEach((el) => (el.textContent = cat.hospitalName));
-  document.title = `${document.title.split(' · ')[0]} · ${cat.hospitalName}`;
+  $$('[data-system]').forEach((el) => (el.textContent = cat.systemName));
+  document.title = `${document.title.split(' · ')[0]} · ${cat.systemName}`;
   return cat;
 }
 

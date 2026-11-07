@@ -1,4 +1,6 @@
-# Hospital Online Scheduling
+# ZRMC ONE Hospital System
+
+Zamboanga Regional Medical Center's online system for patients, staff and referring facilities.
 
 A web app with two patient services:
 
@@ -142,6 +144,21 @@ Administrators manage everything in **Admin → Directory**:
 - **Contact information:** empty fields are hidden on the public page.
 
 Starter content (the OPD clinics, the Hospital Health Information Management Section (HHIMS), the Emergency Room and four transaction guides) is created on first start. Locations, phone numbers, maps and contact details are left blank on purpose. Please fill them in with the hospital's real information.
+
+### Referrals (RHUs, barangay health centers, other hospitals)
+Referring facilities use the **Referral Portal** at `/facility`, with their own accounts. These are separate from staff accounts and can't open the staff panel. There they can:
+- send a referral: patient details, urgency (Emergency / Urgent / Routine), receiving service (ER, Admission, or an OPD clinic), reason, chief complaint, history, vital signs, working diagnosis, treatment given, the referring health worker, and up to 5 photo or PDF attachments (3 MB total);
+- follow its status (Sent → Received → Accepted / Redirected → Patient arrived → Seen) and ZRMC's response or appointment;
+- print the **referral slip**, and the **return slip** once ZRMC has entered its feedback;
+- cancel a referral ZRMC hasn't answered yet.
+
+Staff with the **Referrals** permission (Users → Access; administrators always have it) use **Referrals** in the staff panel:
+- **Inbox:** emergencies first. Opening a referral marks it received, and the dashboard shows how many are waiting.
+- **Accept:** with a message to the facility and, optionally, an **OPD appointment** booked straight from the clinic schedules. SMS goes to the facility's number and the patient.
+- **Redirect:** a reason is required and is texted to the facility. **Patient arrived** and **Seen** add return-slip feedback.
+- **Export for Bizbox:** a CSV (opens in Excel) of accepted referrals for a date range, optionally only those not exported before. The columns are generic until the Bizbox vendor provides their import layout, which can then be matched in `EXPORT_COLUMNS` in `src/referrals.js`.
+- **Monthly report:** referrals by facility (total, accepted, redirected, emergency), by receiving service and by status.
+- **Facilities & accounts:** add or edit facilities (type, municipality, contact person, SMS number) and their user accounts (add, deactivate, reset password).
 
 ### FAQ assistant
 Every public page has a **Questions? Ask us** button that opens a chat window. Visitors can tap a suggested question or type their own. The assistant picks the staff-written FAQ whose keywords best match the message, so it only ever gives answers you have approved.
