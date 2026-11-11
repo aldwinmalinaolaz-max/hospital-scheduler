@@ -17,6 +17,8 @@ A web app with two patient services:
 
 Patients get SMS messages at each step, plus automatic reminders.
 
+The home page has two buttons: **Public** (records, OPD, tracking, directory and the referral portal) and **Staff** (Attendance Monitoring and the Staff Panel). `/#staff` opens the Staff side directly, e.g. for a bookmark on hospital PCs.
+
 ## Quick start (on your computer)
 
 Requires **Node.js 22**. Without a `DATABASE_URL`, the app uses a built-in database stored in `./data`, so nothing else needs installing.
@@ -160,6 +162,23 @@ Staff with the **Referrals** permission (Users → Access; administrators always
 - **Monthly report:** referrals by facility (total, accepted, redirected, emergency), by receiving service and by status.
 - **Facilities & accounts:** add or edit facilities (type, municipality, contact person, SMS number) and their user accounts (add, deactivate, reset password).
 
+### Attendance Monitoring (staff)
+Employees time in and out at **attendance kiosks**: a tablet or PC at an entrance with `/attendance` open. They type their employee no. and PIN and tap **TIME IN** or **TIME OUT**; the screen greets them and shows the time recorded. The time always comes from the server, never from the device.
+
+- **Kiosks only.** Time in/out works only on devices registered as kiosks, so nobody can clock in from home. To register one, open `/attendance` on the device, choose **Set up this device as an attendance kiosk**, name it (e.g. MAIN LOBBY) and log in with an account that has Attendance access. Remove a kiosk in **Staff Panel → Attendance → Kiosks**.
+- **Photo at every punch** (optional per kiosk, on by default): the kiosk camera takes a small photo so supervisors can spot buddy punching. Photos are visible only to staff with Attendance access and deleted after `ATTENDANCE_PHOTO_RETENTION_DAYS` (default 90).
+- **PINs:** 4–6 digits. HR sets or generates one when adding the employee; employees can change it at the kiosk (**Change my PIN**). After `ATTENDANCE_MAX_PIN_ATTEMPTS` wrong PINs (default 5) the employee no. is locked for `ATTENDANCE_LOCK_MINUTES` (default 15); **Reset PIN** unlocks it.
+- Tapping the same button twice within 5 minutes records it once. A time-out without a time-in (or two time-ins in a row) shows a warning to the employee and appears in the DTR remarks.
+
+**Staff Panel → Attendance** (Administrators, and Staff given **Attendance Monitoring** access in Users):
+- **Today:** who is on duty now, who has not timed in, who was late; filter by department; printable.
+- **Time logs:** every time in/out with kiosk, photo and who made manual entries. **Manual entry** adds a missed punch (e.g. kiosk down, official business) with a required reason. Wrong entries are **voided** with a reason, never deleted, and stay visible crossed out for audit.
+- **Employees:** add, edit, deactivate, reset PIN, or **Import list** pasted from Excel (employee no., last, first, middle, position, department); imported employees get random PINs listed once for printing.
+- **DTR & reports:** prints the **Daily Time Record (CSC Form No. 48)**, two copies per page, for one employee or a whole department; an on-screen monthly summary; and a CSV (days present, times late, tardiness, undertime, missing time-in/out, hours worked).
+- **Kiosks:** registered devices, last used, photo on/off, remove.
+
+How the DTR is computed: each time-in is paired with the next time-out (up to 20 hours later), so night shifts count for the day they started. With one time-in/out pair, the times go to A.M. arrival and P.M. departure; with a lunch break out/in they fill all four columns. **Undertime** is tardiness (time-in after the official start plus `ATTENDANCE_GRACE_MINUTES`, default 0) plus leaving before the official end. Each employee has official hours (default `ATTENDANCE_SHIFT_START`–`ATTENDANCE_SHIFT_END`, 08:00–17:00) or is marked **Shifting**, in which case no tardiness/undertime is computed.
+
 ### FAQ assistant
 Every public page has a **Questions? Ask us** button that opens a chat window. Visitors can tap a suggested question or type their own. The assistant picks the staff-written FAQ whose keywords best match the message, so it only ever gives answers you have approved.
 
@@ -176,7 +195,7 @@ Staff accounts are managed in **Admin → Users** by administrators. There are t
 - **Administrator:** everything, plus managing users, holidays/closed dates and the test SMS.
 - **Staff:** works only in the sections they're given access to, can view the SMS log for those sections, and can change their own password.
 
-Each Staff user has two access checkboxes: **Records Requests** and **OPD Appointments**. They need at least one. A Records-only user doesn't see the OPD tab, OPD dashboard numbers or OPD text messages, and the server refuses OPD requests from them; the same applies the other way round. Access changes take effect on the user's next click, without logging them out. Administrators always have both.
+Each Staff user has access checkboxes: **Records Requests**, **OPD Appointments**, **Referrals** and **Attendance Monitoring**. They need at least one. A Records-only user doesn't see the OPD tab, OPD dashboard numbers or OPD text messages, and the server refuses OPD requests from them; the same applies the other way round. Access changes take effect on the user's next click, without logging them out. Administrators always have both.
 
 Usernames aren't case-sensitive. Resetting a user's password, changing their role or deactivating them signs them out of every device immediately. You can't deactivate or demote yourself, and there is always at least one active administrator. Each records request and appointment shows which user last changed it.
 
@@ -217,6 +236,7 @@ src/
   db.js           Postgres schema + drivers (Supabase via DATABASE_URL, else embedded PGlite)
   scheduling.js   pickup-date & OPD slot availability
   reminders.js    background SMS reminder job
+  attendance.js   attendance: time-in/out pairing, DTR (CSC Form 48), PIN and kiosk helpers
   sms.js          SMS providers + logging
   messages.js     SMS templates
   routes/         public and admin JSON APIs

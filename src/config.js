@@ -53,6 +53,20 @@ module.exports = {
     maxDaysAhead: int(env.OPD_MAX_DAYS_AHEAD, 30),
   },
 
+  // Employee attendance (Staff → Attendance Monitoring)
+  attendance: {
+    // Official hours used for new employees on a regular schedule (each employee can have their own)
+    shiftStart: env.ATTENDANCE_SHIFT_START || '08:00',
+    shiftEnd: env.ATTENDANCE_SHIFT_END || '17:00',
+    // Minutes after the start of the shift before a time-in counts as late
+    graceMinutes: int(env.ATTENDANCE_GRACE_MINUTES, 0),
+    // Wrong PINs allowed before an employee number is locked, and for how long
+    maxPinAttempts: int(env.ATTENDANCE_MAX_PIN_ATTEMPTS, 5),
+    lockMinutes: int(env.ATTENDANCE_LOCK_MINUTES, 15),
+    // Kiosk photos taken at time-in/out are deleted after this many days
+    photoRetentionDays: int(env.ATTENDANCE_PHOTO_RETENTION_DAYS, 90),
+  },
+
   sms: {
     provider: (env.SMS_PROVIDER || 'console').toLowerCase(), // console | unisms | semaphore | twilio
     // Registered sender ID / sender name (optional; the gateway's default is used when empty)

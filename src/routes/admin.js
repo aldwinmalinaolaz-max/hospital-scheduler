@@ -13,6 +13,7 @@ const faq = require('../faq');
 const directory = require('../directory');
 const clinics = require('../clinics');
 const registerReferralRoutes = require('./adminReferrals');
+const registerAttendanceRoutes = require('./adminAttendance');
 const payments = require('../payments');
 
 const COOKIE = 'hs_admin';
@@ -75,8 +76,9 @@ module.exports = function adminRoutes(db) {
     records: user.role === 'ADMIN' || user.can_records,
     opd: user.role === 'ADMIN' || user.can_opd,
     referrals: user.role === 'ADMIN' || user.can_referrals,
+    attendance: user.role === 'ADMIN' || user.can_attendance,
   });
-  const SECTION_NAMES = { records: 'Records Requests', opd: 'OPD Appointments' };
+  const SECTION_NAMES = { records: 'Records Requests', opd: 'OPD Appointments', referrals: 'Referrals', attendance: 'Attendance Monitoring' };
   const requireAccess = (section) => (req, res, next) =>
     access(req.user)[section] ? next() : res.status(403).json({ error: `You don't have access to ${SECTION_NAMES[section]}.` });
 
@@ -108,16 +110,19 @@ module.exports = function adminRoutes(db) {
     active: row.active,
     can_records: row.can_records,
     can_referrals: row.can_referrals,
+    can_attendance: row.can_attendance,
     can_opd: row.can_opd,
     last_login_at: row.last_login_at ? u.toStamp(row.last_login_at) : null,
     created_at: u.toStamp(row.created_at),
   });
 
   // Staff need at least one section; Administrators always get all of them
-  function checkAccess(role, canRecords, canOpd, canReferrals = false) {
-    if (role === 'ADMIN') return { canRecords: true, canOpd: true, canReferrals: true };
-    if (!canRecords && !canOpd && !canReferrals) throw new ValidationError('Give the user access to at least one section: Records Requests, OPD Appointments or Referrals.');
-    return { canRecords: !!canRecords, canOpd: !!canOpd, canReferrals: !!canReferrals };
+  function checkAccess(role, canRecords, canOpd, canReferrals = false, canAttendance = false) {
+    if (role === 'ADMIN') return { canRecords: true, canOpd: true, canReferrals: true, canAttendance: true };
+    if (!canRecords && !canOpd && !canReferrals && !canAttendance) {
+      throw new ValidationError('Give the user access to at least one section: Records Requests, OPD Appointments, Referrals or Attendance Monitoring.');
+    }
+    return { canRecords: !!canRecords, canOpd: !!canOpd, canReferrals: !!canReferrals, canAttendance: !!canAttendance };
   }
 
   function checkPassword(pw) {
@@ -143,11 +148,14 @@ module.exports = function adminRoutes(db) {
     if (!fullName) throw new ValidationError('Please enter the full name.');
     if (!ROLES.includes(role)) throw new ValidationError('Invalid role.');
     checkPassword(b.password);
-    const { canRecords, canOpd, canReferrals } = checkAccess(role, b.can_records ?? true, b.can_opd ?? true, b.can_referrals ?? false);
+    const { canRecords, canOpd, canReferrals, canAttendance } = checkAccess(
+      role, b.can_records ?? true, b.can_opd ?? true, b.can_referrals ?? false, b.can_attendance ?? false,
+    );
     if (await db.one('SELECT 1 FROM admins WHERE lower(username) = $1', [username])) throw new ValidationError('That username is already taken.');
     const user = await db.one(
-      'INSERT INTO admins (username, password_hash, full_name, role, can_records, can_opd, can_referrals) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [username, auth.hashPassword(b.password), fullName, role, canRecords, canOpd, canReferrals],
+      `INSERT INTO admins (username, password_hash, full_name, role, can_records, can_opd, can_referrals, can_attendance)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [username, auth.hashPassword(b.password), fullName, role, canRecords, canOpd, canReferrals, canAttendance],
     );
     res.status(201).json(publicUser(user));
   });
@@ -167,16 +175,17 @@ module.exports = function adminRoutes(db) {
         throw new ValidationError('You cannot change your own role or deactivate your own account.');
       }
       if (before.role === 'ADMIN' && before.active && (role !== 'ADMIN' || !active)) await ensureAnotherAdmin(t, id);
-      const { canRecords, canOpd, canReferrals } = checkAccess(
+      const { canRecords, canOpd, canReferrals, canAttendance } = checkAccess(
         role, b.can_records ?? before.can_records, b.can_opd ?? before.can_opd, b.can_referrals ?? before.can_referrals,
+        b.can_attendance ?? before.can_attendance,
       );
       // Deactivating or changing role signs the user out so it takes effect immediately.
       // (Access changes apply on the user's next request without signing them out.)
       const revoke = role !== before.role || active !== before.active;
       return t.one(
-        `UPDATE admins SET full_name = $1, role = $2, active = $3, can_records = $4, can_opd = $5, can_referrals = $8,
+        `UPDATE admins SET full_name = $1, role = $2, active = $3, can_records = $4, can_opd = $5, can_referrals = $8, can_attendance = $9,
           session_version = session_version + CASE WHEN $6 THEN 1 ELSE 0 END WHERE id = $7 RETURNING *`,
-        [fullName, role, !!active, canRecords, canOpd, revoke, id, canReferrals],
+        [fullName, role, !!active, canRecords, canOpd, revoke, id, canReferrals, canAttendance],
       );
     });
     if (!user) return res.status(404).json({ error: 'Not found.' });
@@ -881,6 +890,7 @@ module.exports = function adminRoutes(db) {
 
   // Referrals from RHUs, barangay health centers and other hospitals (routes/adminReferrals.js)
   registerReferralRoutes(router, { db, requireAccess, ValidationError, whereClause });
+  registerAttendanceRoutes(router, { db, requireAccess, ValidationError, whereClause });
 
   return router;
 };

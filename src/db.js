@@ -323,6 +323,57 @@ const SCHEMA = `
   -- Staff permission for the Referrals tab (administrators always have it)
   ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_referrals BOOLEAN NOT NULL DEFAULT FALSE;
 
+  -- Attendance Monitoring: hospital employees time in/out at registered kiosk devices
+  ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_attendance BOOLEAN NOT NULL DEFAULT FALSE;
+  CREATE TABLE IF NOT EXISTS employees (
+    id SERIAL PRIMARY KEY,
+    employee_no TEXT NOT NULL UNIQUE,
+    last_name TEXT NOT NULL,
+    first_name TEXT NOT NULL,
+    middle_name TEXT,
+    position TEXT,
+    department TEXT,
+    shift_start TEXT,                     -- NULL with shift_end NULL = shifting / no fixed schedule
+    shift_end TEXT,
+    pin_hash TEXT NOT NULL,
+    failed_pins INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMPTZ,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE TABLE IF NOT EXISTS attendance_kiosks (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    require_photo BOOLEAN NOT NULL DEFAULT TRUE,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ
+  );
+  CREATE TABLE IF NOT EXISTS attendance_logs (
+    id SERIAL PRIMARY KEY,
+    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('IN', 'OUT')),
+    logged_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    source TEXT NOT NULL DEFAULT 'KIOSK', -- KIOSK | MANUAL
+    kiosk_id INTEGER REFERENCES attendance_kiosks(id) ON DELETE SET NULL,
+    reason TEXT,                          -- why a manual entry was added
+    created_by TEXT,
+    voided_at TIMESTAMPTZ, voided_by TEXT, void_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_attendance_logs_emp ON attendance_logs(employee_id, logged_at);
+  CREATE INDEX IF NOT EXISTS idx_attendance_logs_time ON attendance_logs(logged_at);
+  CREATE TABLE IF NOT EXISTS attendance_photos (
+    log_id INTEGER PRIMARY KEY REFERENCES attendance_logs(id) ON DELETE CASCADE,
+    image BYTEA NOT NULL,
+    mime TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
   -- One-time content updates that have already been applied (see MIGRATIONS below)
   CREATE TABLE IF NOT EXISTS schema_migrations (
     id TEXT PRIMARY KEY,
@@ -351,6 +402,10 @@ const SCHEMA = `
   ALTER TABLE referral_attachments ENABLE ROW LEVEL SECURITY;
   ALTER TABLE site_images ENABLE ROW LEVEL SECURITY;
   ALTER TABLE opd_schedules ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE attendance_kiosks ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE attendance_logs ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE attendance_photos ENABLE ROW LEVEL SECURITY;
 `;
 
 function wrap(run, execRaw) {

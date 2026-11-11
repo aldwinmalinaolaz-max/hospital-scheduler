@@ -21,13 +21,29 @@
   <a href="/directory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z"/><path d="M8 2v16M16 6v16"/></svg><span>Hospital Directory</span></a>
   <hr>
   <a href="/facility" title="For Rural Health Units, Barangay Health Centers and hospitals referring patients to ZRMC"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6M12 7v4M10 9h4"/></svg><span>Referral Portal<small class="nav-sub">For health facilities</small></span></a>
+  <div class="nav-group">Staff</div>
+  <a href="/attendance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Attendance<small class="nav-sub">Time in / time out</small></span></a>
+  <a href="/admin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Staff Panel</span></a>
 </nav>
 <div class="content">
 <main>
   <section class="hero">
     <h1>Welcome to the ZRMC ONE Hospital System</h1>
-    <p class="muted">Request medical records and book outpatient (OPD) consultations without falling in line. You'll get an SMS confirmation and reminders on your mobile phone.</p>
+    <p class="muted">Choose who you are to see the services for you.</p>
   </section>
+  <div class="audience" role="tablist" aria-label="Choose services">
+    <button type="button" role="tab" id="audPublic" data-audience="public" aria-controls="publicServices" aria-selected="true">
+      <span class="aud-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+      <span><b>Public</b><small>Patients, families and referring facilities</small></span>
+    </button>
+    <button type="button" role="tab" id="audStaff" data-audience="staff" aria-controls="staffServices" aria-selected="false">
+      <span class="aud-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M8 17c.8-1.8 2.3-2.7 4-2.7s3.2.9 4 2.7M10 3v2h4V3"/></svg></span>
+      <span><b>Staff</b><small>ZRMC employees and personnel</small></span>
+    </button>
+  </div>
+
+  <section id="publicServices" role="tabpanel" aria-labelledby="audPublic" data-audience-panel="public">
+  <p class="muted">Request medical records and book outpatient (OPD) consultations without falling in line. You'll get an SMS confirmation and reminders on your mobile phone.</p>
   <div class="service-grid">
     <a class="card service" href="/request-records">
       <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg></div>
@@ -54,6 +70,11 @@
       <span class="go">Open directory →</span>
     </a>
   </div>
+  <a class="card service-wide" href="/facility">
+    <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6M12 7v4M10 9h4"/></svg></div>
+    <div><h2>Referral Portal</h2><p class="muted small">For Rural Health Units, Barangay Health Centers and hospitals referring patients to ZRMC.</p></div>
+    <span class="go">Facility login →</span>
+  </a>
   <div class="card">
     <h2>Before you go</h2>
     <ul class="list-tight muted">
@@ -63,11 +84,53 @@
       <li>Requested documents may be claimed three (3) days after the date of request, or on the next working day if that falls on a weekend or holiday.</li>
     </ul>
   </div>
+  </section>
+
+  <section id="staffServices" role="tabpanel" aria-labelledby="audStaff" data-audience-panel="staff" hidden>
+  <p class="muted">Services for ZRMC employees. Patients and visitors do not need these.</p>
+  <div class="service-grid">
+    <a class="card service" href="/attendance">
+      <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+      <h2>Attendance Monitoring</h2>
+      <p class="muted small">Time in and time out with your employee number and PIN at the hospital's attendance kiosks.</p>
+      <span class="go">Open time clock →</span>
+    </a>
+    <a class="card service" href="/admin#attendance">
+      <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h2M8 17h2M13 13h3M13 17h3"/></svg></div>
+      <h2>Attendance Records &amp; DTR</h2>
+      <p class="muted small">For HR and supervisors: who is on duty today, time logs and corrections, monthly Daily Time Records (CSC Form No. 48) and reports.</p>
+      <span class="go">Staff login →</span>
+    </a>
+    <a class="card service" href="/admin">
+      <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg></div>
+      <h2>Staff Panel</h2>
+      <p class="muted small">Process records requests, OPD appointments and schedules, referrals, the hospital directory and FAQs.</p>
+      <span class="go">Staff login →</span>
+    </a>
+  </div>
+  </section>
 </main>
-<footer><span data-system>ZRMC ONE Hospital System</span> · <span data-hospital>Zamboanga Regional Medical Center</span> · <a href="/facility">Referring facility login</a> · <a href="/admin">Staff login</a></footer>
+<footer><span data-system>ZRMC ONE Hospital System</span> · <span data-hospital>Zamboanga Regional Medical Center</span> · <a href="/facility">Referring facility login</a> · <a href="/attendance">Attendance</a> · <a href="/admin">Staff login</a></footer>
 </div>
 </div>
 <script src="/js/common.js"></script>
 <script src="/js/chat.js" defer></script>
-<script>loadCatalog();</script>
+<script>
+loadCatalog();
+// Public / Staff switch; remembered in the address (#staff) so it can be bookmarked
+(function () {
+  const show = (who) => {
+    $$('[data-audience]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.audience === who)));
+    $$('[data-audience-panel]').forEach((p) => (p.hidden = p.dataset.audiencePanel !== who));
+  };
+  $$('[data-audience]').forEach((b) =>
+    b.addEventListener('click', () => {
+      show(b.dataset.audience);
+      history.replaceState(null, '', b.dataset.audience === 'staff' ? '#staff' : location.pathname);
+    }),
+  );
+  show(location.hash === '#staff' ? 'staff' : 'public');
+  window.addEventListener('hashchange', () => show(location.hash === '#staff' ? 'staff' : 'public'));
+})();
+</script>
 </body></html>

@@ -20,6 +20,7 @@
       document.body.classList.toggle('can-records', me.access.records);
       document.body.classList.toggle('can-opd', me.access.opd);
       document.body.classList.toggle('can-referrals', me.access.referrals);
+      document.body.classList.toggle('can-attendance', me.access.attendance);
       $('#whoami').innerHTML = `${esc(me.full_name || me.username)} · <b>${me.role === 'ADMIN' ? 'Administrator' : 'Staff'}</b>`;
       $('#whoami').classList.remove('hidden');
       $('#login').classList.add('hidden');
@@ -28,7 +29,7 @@
       showTab(location.hash.slice(1) || 'dashboard');
     } catch {
       me = null;
-      document.body.classList.remove('signed-in', 'is-admin', 'can-records', 'can-opd', 'can-referrals');
+      document.body.classList.remove('signed-in', 'is-admin', 'can-records', 'can-opd', 'can-referrals', 'can-attendance');
       $('#whoami').classList.add('hidden');
       $('#login').classList.remove('hidden');
       $('#app').classList.add('hidden');
@@ -64,7 +65,7 @@
   // ---------- Tabs ----------
   const loaders = {};
   function showTab(name) {
-    const allowed = { referrals: me?.access.referrals, schedules: me?.access.opd, users: me?.role === 'ADMIN', faqs: me?.role === 'ADMIN', directory: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
+    const allowed = { attendance: me?.access.attendance, referrals: me?.access.referrals, schedules: me?.access.opd, users: me?.role === 'ADMIN', faqs: me?.role === 'ADMIN', directory: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
     if (!loaders[name] || allowed[name] === false) name = 'dashboard';
     $$('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $$('[data-view]').forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -475,7 +476,7 @@ ${cat.hospitalName}`;
   const roleLabel = (r) => (r === 'ADMIN' ? 'Administrator' : 'Staff');
   const roleOpts = (sel) => ['STAFF', 'ADMIN'].map((r) => `<option value="${r}"${r === sel ? ' selected' : ''}>${roleLabel(r)}</option>`).join('');
   const accessLabel = (x) =>
-    x.role === 'ADMIN' ? 'All' : [x.can_records && 'Records Requests', x.can_opd && 'OPD Appointments', x.can_referrals && 'Referrals'].filter(Boolean).join('<br>');
+    x.role === 'ADMIN' ? 'All' : [x.can_records && 'Records Requests', x.can_opd && 'OPD Appointments', x.can_referrals && 'Referrals', x.can_attendance && 'Attendance'].filter(Boolean).join('<br>');
   // Access checkboxes; disabled for Administrators, who always have both
   const accessFields = (x) => `
     <fieldset class="access" ${x.role === 'ADMIN' ? 'disabled' : ''}>
@@ -483,6 +484,7 @@ ${cat.hospitalName}`;
       <label><input type="checkbox" name="can_records" ${x.can_records !== false ? 'checked' : ''}> Records Requests</label>
       <label><input type="checkbox" name="can_opd" ${x.can_opd !== false ? 'checked' : ''}> OPD Appointments</label>
       <label><input type="checkbox" name="can_referrals" ${x.can_referrals ? 'checked' : ''}> Referrals (RHUs, health centers, hospitals)</label>
+      <label><input type="checkbox" name="can_attendance" ${x.can_attendance ? 'checked' : ''}> Attendance Monitoring (employees, time logs, DTR)</label>
       <p class="hint">Administrators always have access to all sections.</p>
     </fieldset>`;
   const wireAccess = () => {
@@ -494,6 +496,7 @@ ${cat.hospitalName}`;
     can_records: $('#dlgForm [name=can_records]').checked,
     can_opd: $('#dlgForm [name=can_opd]').checked,
     can_referrals: $('#dlgForm [name=can_referrals]').checked,
+    can_attendance: $('#dlgForm [name=can_attendance]').checked,
   });
 
   loaders.users = guard(async () => {
@@ -1384,6 +1387,330 @@ ${cat.hospitalName}`;
     else if (d.delMap && confirm('Delete this map? Places on it will lose their pins.')) await api(`/admin/maps/${d.delMap}`, { method: 'DELETE' });
     else return;
     loaders.directory();
+  }));
+
+  // ---------- Attendance Monitoring ----------
+  let attOpts = null;
+  let attSub = 'today';
+  let attEmployees = [];
+  const hoursLabel = (e) => (e.shift_start ? `${fmtTime(e.shift_start)} – ${fmtTime(e.shift_end)}` : 'Shifting');
+  const mins = (m) => (m ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : '—');
+  const ATT_STATUS = { IN: 'On duty', OUT: 'Timed out', NONE: 'No time-in' };
+  const t24 = (t) => (t ? fmtTime(t.replace('+1', '')) + (t.endsWith('+1') ? ' (next day)' : '') : '');
+
+  async function loadAttOptions(force) {
+    if (attOpts && !force) return;
+    attOpts = await api('/admin/attendance/options');
+    if (!logF.from.value) logF.from.value = logF.to.value = attOpts.today;
+    if (!dtrF.month.value) dtrF.month.value = attOpts.today.slice(0, 7);
+    $$('[data-att-dept]').forEach((sel) => {
+      const v = sel.value;
+      sel.innerHTML = '<option value="">All departments</option>' + attOpts.departments.map((d) => `<option${d === v ? ' selected' : ''}>${esc(d)}</option>`).join('');
+    });
+    $('#attRules').textContent =
+      `Late = time-in after the employee's official start${attOpts.grace_minutes ? ` plus ${attOpts.grace_minutes} minutes grace` : ''}. ` +
+      'Undertime = time-out before the official end. Employees on shifting schedules have no late/undertime computed. ' +
+      `Kiosk photos are kept ${attOpts.photo_retention_days} days.`;
+  }
+
+  function showAttSub(name) {
+    attSub = name;
+    $$('#attTabs button').forEach((b) => b.classList.toggle('on', b.dataset.att === name));
+    $$('[data-attview]').forEach((v) => v.classList.toggle('hidden', v.dataset.attview !== name));
+    attLoaders[name]();
+  }
+  $$('#attTabs button').forEach((b) => b.addEventListener('click', () => showAttSub(b.dataset.att)));
+  loaders.attendance = guard(async () => {
+    await loadAttOptions();
+    showAttSub(attSub);
+  });
+
+  const attLoaders = {};
+
+  // Today
+  const todayF = $('#attTodayFilters');
+  let todayData = null;
+  function renderToday() {
+    const f = formData(todayF);
+    const q = (f.q || '').toUpperCase();
+    const rows = todayData.rows.filter(
+      (r) =>
+        (!q || r.name.includes(q) || r.employee_no.includes(q)) &&
+        (!f.status || (f.status === 'LATE' ? r.late : f.status === 'NONE' ? !r.first_in && r.status !== 'IN' : r.status === f.status)),
+    );
+    $('#attTodayRows').innerHTML =
+      rows
+        .map(
+          (r) => `<tr>
+        <td>${esc(r.name)}<div class="sub mono">${esc(r.employee_no)}${r.position ? ` · ${esc(r.position)}` : ''}</div></td>
+        <td class="small">${esc(r.department || '')}</td>
+        <td class="small nowrap">${hoursLabel(r)}</td>
+        <td class="nowrap">${r.first_in ? fmtTime(r.first_in) : '—'}${r.late ? `<div class="sub" style="color:var(--warn)">Late ${r.late} min</div>` : ''}</td>
+        <td><span class="att-status ${r.status}">${ATT_STATUS[r.status]}</span>${r.last_time ? `<div class="sub">since ${r.last_date !== todayData.date ? 'yesterday ' : ''}${fmtTime(r.last_time)}</div>` : ''}</td>
+      </tr>`,
+        )
+        .join('') || '<tr><td colspan="5" class="empty">No employees found. Add them under Employees.</td></tr>';
+  }
+  attLoaders.today = guard(async () => {
+    todayData = await api(`/admin/attendance/today?department=${encodeURIComponent(todayF.department.value)}`);
+    const c = todayData.counts;
+    const stat = (n, l) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+    $('#attStats').innerHTML = [
+      stat(c.in, 'On duty now'),
+      stat(c.timed_in_today, 'Timed in today'),
+      stat(c.employees - c.timed_in_today, 'No time-in today'),
+      stat(c.late, 'Late today'),
+    ].join('');
+    renderToday();
+  });
+  todayF.department.addEventListener('change', attLoaders.today);
+  todayF.status.addEventListener('change', renderToday);
+  todayF.q.addEventListener('input', renderToday);
+
+  // Time logs
+  const logF = $('#attLogFilters');
+  attLoaders.logs = guard(async () => {
+    const q = new URLSearchParams(Object.entries(formData(logF)).filter(([, v]) => v));
+    const { rows } = await api(`/admin/attendance/logs?${q}`);
+    $('#attLogRows').innerHTML =
+      rows
+        .map(
+          (l) => `<tr class="${l.voided ? 'voided' : ''}">
+        <td class="nowrap">${esc(fmtDate(l.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</td>
+        <td class="nowrap"><b>${fmtTime(l.time)}</b></td>
+        <td><span class="att-status ${l.kind === 'IN' ? 'IN' : 'OUT'}">${l.kind === 'IN' ? 'TIME IN' : 'TIME OUT'}</span></td>
+        <td>${esc(l.name)}<div class="sub mono">${esc(l.employee_no)}</div></td>
+        <td class="small">${esc(l.department || '')}</td>
+        <td>${l.has_photo ? `<img class="att-thumb" loading="lazy" src="/api/admin/attendance/logs/${l.id}/photo" alt="Photo at ${l.kind === 'IN' ? 'time in' : 'time out'}" data-att-photo="${l.id}">` : '<span class="muted small">—</span>'}</td>
+        <td class="small">${l.source === 'MANUAL' ? `<b>Manual</b> by ${esc(l.created_by)}<div class="sub">${esc(l.reason)}</div>` : esc(l.kiosk || 'Kiosk')}
+          ${l.voided ? `<div class="sub" style="color:var(--danger)">VOIDED by ${esc(l.voided_by)}: ${esc(l.void_reason)}</div>` : ''}</td>
+        <td class="no-print">${l.voided ? '' : `<button class="btn sm secondary" data-att-void="${l.id}">Void</button>`}</td>
+      </tr>`,
+        )
+        .join('') || '<tr><td colspan="8" class="empty">No time logs for these dates.</td></tr>';
+  });
+  logF.addEventListener('input', debounce(attLoaders.logs));
+  $('#attLogRows').addEventListener('click', (e) => {
+    const img = e.target.closest('[data-att-photo]');
+    if (img) return openDialog(`<h2>Kiosk photo</h2><img src="${img.src}" alt="" style="width:100%;max-width:480px;border-radius:8px">`, async () => {}, { saveLabel: 'OK' });
+    const v = e.target.closest('[data-att-void]');
+    if (v)
+      openDialog(
+        `<h2>Void this entry?</h2><p class="muted small">The entry stays in the log (crossed out) for audit but no longer counts in the DTR.</p>
+         <label class="field"><span class="req">Reason</span><input name="reason" required placeholder="E.G. WRONG BUTTON, DUPLICATE"></label>`,
+        async (d) => {
+          await api(`/admin/attendance/logs/${v.dataset.attVoid}/void`, { method: 'POST', body: d });
+          attLoaders.logs();
+        },
+        { saveLabel: 'Void entry' },
+      );
+  });
+
+  async function employeeOptions() {
+    if (!attEmployees.length) attEmployees = (await api('/admin/attendance/employees?active=1')).rows;
+    return attEmployees.map((e) => `<option value="${e.id}">${esc(e.name)} (${esc(e.employee_no)})</option>`).join('');
+  }
+  $('#attManualBtn').addEventListener('click', guard(async () => {
+    openDialog(
+      `<h2>Manual time entry</h2>
+       <p class="muted small">For a missed time-in/out (e.g. kiosk not working, official business). Your name and the reason are recorded.</p>
+       <div class="grid grid-2">
+         <label class="field span-2"><span class="req">Employee</span><select name="employee_id" required><option value="">Choose…</option>${await employeeOptions()}</select></label>
+         <label class="field"><span class="req">Type</span><select name="kind"><option value="IN">Time in</option><option value="OUT">Time out</option></select></label>
+         <span></span>
+         <label class="field"><span class="req">Date</span><input type="date" name="date" value="${attOpts.today}" max="${attOpts.today}" required></label>
+         <label class="field"><span class="req">Time</span><input type="time" name="time" required></label>
+         <label class="field span-2"><span class="req">Reason</span><input name="reason" required placeholder="E.G. KIOSK DOWN, OFFICIAL BUSINESS (OB SLIP NO. …)"></label>
+       </div>`,
+      async (d) => {
+        await api('/admin/attendance/logs', { method: 'POST', body: d });
+        attLoaders.logs();
+      },
+      { saveLabel: 'Add entry' },
+    );
+  }));
+
+  // Employees
+  const empF = $('#attEmpFilters');
+  attLoaders.employees = guard(async () => {
+    const q = new URLSearchParams(Object.entries(formData(empF)).filter(([, v]) => v));
+    const { rows } = await api(`/admin/attendance/employees?${q}`);
+    $('#attEmpRows').innerHTML =
+      rows
+        .map(
+          (e) => `<tr>
+        <td class="mono">${esc(e.employee_no)}</td>
+        <td>${esc(e.name)}</td>
+        <td class="small">${esc(e.position || '')}</td>
+        <td class="small">${esc(e.department || '')}</td>
+        <td class="small nowrap">${hoursLabel(e)}</td>
+        <td>${e.active ? '<span class="badge ok">Active</span>' : '<span class="badge">Inactive</span>'}${e.locked ? '<div class="sub" style="color:var(--danger)">PIN locked</div>' : ''}</td>
+        <td class="no-print nowrap"><button class="btn sm" data-emp-edit="${e.id}">Edit</button> <button class="btn sm secondary" data-emp-pin="${e.id}">Reset PIN</button></td>
+      </tr>`,
+        )
+        .join('') || '<tr><td colspan="7" class="empty">No employees yet. Add them one by one or import a list.</td></tr>';
+    empF._rows = rows;
+  });
+  empF.addEventListener('input', debounce(attLoaders.employees));
+
+  const deptList = () => `<datalist id="attDeptList">${(attOpts?.departments || []).map((d) => `<option value="${esc(d)}">`).join('')}</datalist>`;
+  const pinShown = (e) =>
+    openDialog(
+      `<h2>PIN for ${esc(e.name)}</h2>
+       <p>Employee no. <b class="mono">${esc(e.employee_no)}</b></p>
+       <p class="pin-slip">${esc(e.pin)}</p>
+       <p class="muted small">Give this PIN to the employee privately. It is shown only now; they can change it at the kiosk (Change my PIN).</p>`,
+      async () => {},
+      { saveLabel: 'Done' },
+    );
+
+  function employeeDialog(e) {
+    const isNew = !e;
+    e = e || { shift_start: attOpts.shift_start, shift_end: attOpts.shift_end };
+    const shifting = !isNew && !e.shift_start;
+    openDialog(
+      `<h2>${isNew ? 'Add employee' : 'Edit employee'}</h2>
+       <div class="grid grid-2">
+         <label class="field"><span class="req">Employee no.</span><input name="employee_no" value="${esc(e.employee_no || '')}" required></label>
+         <span></span>
+         <label class="field"><span class="req">Last name</span><input name="last_name" value="${esc(e.last_name || '')}" required></label>
+         <label class="field"><span class="req">First name</span><input name="first_name" value="${esc(e.first_name || '')}" required></label>
+         <label class="field">Middle name<input name="middle_name" value="${esc(e.middle_name || '')}"></label>
+         <label class="field">Position<input name="position" value="${esc(e.position || '')}"></label>
+         <label class="field span-2">Department / unit<input name="department" list="attDeptList" value="${esc(e.department || '')}">${deptList()}</label>
+         <label class="check span-2"><input type="checkbox" name="shifting" ${shifting ? 'checked' : ''}> Shifting / no fixed schedule (no late or undertime computed)</label>
+         <label class="field">Official time in<input type="time" name="shift_start" value="${esc(e.shift_start || attOpts.shift_start)}"></label>
+         <label class="field">Official time out<input type="time" name="shift_end" value="${esc(e.shift_end || attOpts.shift_end)}"></label>
+         ${isNew ? '<label class="field span-2">PIN (4–6 digits)<input name="pin" inputmode="numeric" maxlength="6" placeholder="Leave blank for a random PIN"></label>' : `<label class="check span-2"><input type="checkbox" name="active" ${e.active ? 'checked' : ''}> Active (can time in/out)</label>`}
+       </div>`,
+      async (d) => {
+        const body = { ...d, shifting: $('#dlgForm [name=shifting]').checked };
+        if (!isNew) body.active = $('#dlgForm [name=active]').checked;
+        const saved = await api(isNew ? '/admin/attendance/employees' : `/admin/attendance/employees/${e.id}`, { method: isNew ? 'POST' : 'PATCH', body });
+        attEmployees = [];
+        await loadAttOptions(true);
+        attLoaders.employees();
+        if (isNew) setTimeout(() => pinShown(saved), 0);
+      },
+    );
+    const sh = $('#dlgForm [name=shifting]');
+    const toggle = () => $$('#dlgForm [name=shift_start], #dlgForm [name=shift_end]').forEach((i) => (i.disabled = sh.checked));
+    sh.addEventListener('change', toggle);
+    toggle();
+  }
+  $('#attAddEmpBtn').addEventListener('click', guard(async () => (await loadAttOptions(), employeeDialog(null))));
+  $('#attEmpRows').addEventListener('click', (ev) => {
+    const ed = ev.target.closest('[data-emp-edit]');
+    if (ed) return employeeDialog(empF._rows.find((r) => r.id === Number(ed.dataset.empEdit)));
+    const pb = ev.target.closest('[data-emp-pin]');
+    if (pb) {
+      const e = empF._rows.find((r) => r.id === Number(pb.dataset.empPin));
+      openDialog(
+        `<h2>Reset PIN</h2><p>${esc(e.name)} · <span class="mono">${esc(e.employee_no)}</span></p>
+         <label class="field">New PIN (4–6 digits)<input name="pin" inputmode="numeric" maxlength="6" placeholder="Leave blank for a random PIN"></label>
+         <p class="muted small">This also unlocks the employee no. after too many wrong PINs.</p>`,
+        async (d) => {
+          const r = await api(`/admin/attendance/employees/${e.id}/pin`, { method: 'POST', body: d });
+          attLoaders.employees();
+          setTimeout(() => pinShown(r), 0);
+        },
+        { saveLabel: 'Reset PIN' },
+      );
+    }
+  });
+
+  $('#attImportBtn').addEventListener('click', () =>
+    openDialog(
+      `<h2>Import employees</h2>
+       <p class="muted small">Paste from Excel or a CSV file, one employee per line, in this column order:<br>
+       <b>Employee no., Last name, First name, Middle name, Position, Department</b>. A header row is skipped. Each employee gets a random PIN, listed after the import for printing.</p>
+       <textarea name="csv" rows="10" data-nocaps placeholder="2023-0001, DELA CRUZ, JUAN, SANTOS, NURSE II, EMERGENCY ROOM" required></textarea>
+       <label class="check"><input type="checkbox" name="shifting"> These employees are on shifting schedules (otherwise ${esc(fmtTime(attOpts?.shift_start || '08:00'))} – ${esc(fmtTime(attOpts?.shift_end || '17:00'))})</label>`,
+      async (d) => {
+        const { rows } = await api('/admin/attendance/employees/import', { method: 'POST', body: { csv: d.csv, shifting: $('#dlgForm [name=shifting]').checked } });
+        attEmployees = [];
+        await loadAttOptions(true);
+        attLoaders.employees();
+        setTimeout(
+          () =>
+            openDialog(
+              `<h2>${rows.length} employee${rows.length === 1 ? '' : 's'} imported</h2>
+               <p class="muted small">Print this list and give each employee their PIN privately. The PINs are not shown again.</p>
+               <div class="table-wrap"><table><thead><tr><th>Employee no.</th><th>Name</th><th>PIN</th></tr></thead><tbody>
+               ${rows.map((r) => `<tr><td class="mono">${esc(r.employee_no)}</td><td>${esc(r.name)}</td><td class="mono"><b>${esc(r.pin)}</b></td></tr>`).join('')}
+               </tbody></table></div>`,
+              async () => window.print(),
+              { wide: true, saveLabel: 'Print' },
+            ),
+          0,
+        );
+      },
+      { wide: true, saveLabel: 'Import' },
+    ),
+  );
+
+  // DTR & reports
+  const dtrF = $('#attDtrForm');
+  async function fillDtrEmployees() {
+    const dept = dtrF.department.value;
+    const { rows } = await api(`/admin/attendance/employees?active=1${dept ? `&department=${encodeURIComponent(dept)}` : ''}`);
+    dtrF.employee_id.innerHTML = `<option value="">Everyone${dept ? ' in the department' : ''} (${rows.length})</option>` + rows.map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+  }
+  attLoaders.dtr = guard(fillDtrEmployees);
+  dtrF.department.addEventListener('change', guard(fillDtrEmployees));
+  const dtrQuery = () => new URLSearchParams(Object.entries(formData(dtrF)).filter(([, v]) => v));
+  $('#attDtrPrint').addEventListener('click', guard(async () => {
+    if (!dtrF.month.value) return alert('Choose a month.');
+    const data = await api(`/admin/attendance/dtr?${dtrQuery()}`);
+    if (!data.rows.length) return alert('No employees to print.');
+    printDtr(data, { systemName: cat.systemName });
+  }));
+  $('#attSummaryBtn').addEventListener('click', guard(async () => {
+    const data = await api(`/admin/attendance/dtr?${dtrQuery()}`);
+    $('#attSummaryWrap').classList.remove('hidden');
+    $('#attSummaryRows').innerHTML =
+      data.rows
+        .map(
+          ({ employee: e, totals: t }) => `<tr>
+        <td>${esc(e.name)}<div class="sub mono">${esc(e.employee_no)}</div></td>
+        <td class="small">${esc(e.department || '')}</td>
+        <td>${t.days_present}</td><td>${t.late_count || '—'}</td><td>${mins(t.late)}</td><td>${mins(t.undertime)}</td>
+        <td>${t.missing ? `<span style="color:var(--danger)">${t.missing}</span>` : '—'}</td><td>${(t.worked / 60).toFixed(1)}</td>
+      </tr>`,
+        )
+        .join('') || '<tr><td colspan="8" class="empty">No employees.</td></tr>';
+  }));
+  $('#attCsvBtn').addEventListener('click', () => {
+    if (!dtrF.month.value) return alert('Choose a month.');
+    window.location.href = `/api/admin/attendance/summary.csv?${dtrQuery()}`;
+  });
+
+  // Kiosks
+  attLoaders.kiosks = guard(async () => {
+    const { rows } = await api('/admin/attendance/kiosks');
+    $('#attKioskRows').innerHTML =
+      rows
+        .map(
+          (k) => `<tr>
+        <td><b>${esc(k.name)}</b></td>
+        <td>${k.require_photo ? 'Required' : 'Not taken'}</td>
+        <td class="small">${esc(k.created_by || '')}<div class="sub">${esc(k.created_at)}</div></td>
+        <td class="small">${esc(k.last_seen_at || '—')}</td>
+        <td>${k.active ? '<span class="badge ok">Active</span>' : '<span class="badge">Removed</span>'}</td>
+        <td class="nowrap">${k.active ? `<button class="btn sm secondary" data-kiosk-photo="${k.id}" data-on="${k.require_photo ? 0 : 1}">${k.require_photo ? 'Stop photos' : 'Require photo'}</button> <button class="btn sm danger" data-kiosk-off="${k.id}">Remove</button>` : ''}</td>
+      </tr>`,
+        )
+        .join('') || '<tr><td colspan="6" class="empty">No kiosks yet.</td></tr>';
+  });
+  $('#attKioskRows').addEventListener('click', guard(async (e) => {
+    const off = e.target.closest('[data-kiosk-off]');
+    const ph = e.target.closest('[data-kiosk-photo]');
+    if (off && confirm('Remove this kiosk? Employees will no longer be able to time in/out on that device.')) {
+      await api(`/admin/attendance/kiosks/${off.dataset.kioskOff}`, { method: 'PATCH', body: { active: false } });
+    } else if (ph) {
+      await api(`/admin/attendance/kiosks/${ph.dataset.kioskPhoto}`, { method: 'PATCH', body: { require_photo: ph.dataset.on === '1' } });
+    } else return;
+    attLoaders.kiosks();
   }));
 
   // ---------- Dialog ----------

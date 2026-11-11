@@ -6,6 +6,8 @@ const dbModule = require('./db');
 const publicRoutes = require('./routes/public');
 const adminRoutes = require('./routes/admin');
 const facilityRoutes = require('./routes/facility');
+const attendanceRoutes = require('./routes/attendance');
+const { purgeAttendancePhotos } = require('./attendance');
 const { runReminders, startReminderScheduler } = require('./reminders');
 const { purgeIdPhotos } = require('./idphotos');
 
@@ -29,7 +31,7 @@ function createApp(db) {
     req.method === 'POST' && (req.path === '/api/records' || req.path === '/api/track/id-photos');
   app.use((req, res, next) => {
     // These routes parse their own bodies (uploads need a larger limit)
-    if (req.path.startsWith('/api/admin/maps') || req.path === '/api/admin/payment-qr' || req.path.startsWith('/api/facility/')) return next();
+    if (req.path.startsWith('/api/admin/maps') || req.path === '/api/admin/payment-qr' || req.path.startsWith('/api/facility/') || req.path.startsWith('/api/attendance/')) return next();
     return (carriesPhotos(req) ? photoJson : smallJson)(req, res, next);
   });
   app.use((req, res, next) => {
@@ -45,11 +47,12 @@ function createApp(db) {
   app.get('/api/cron/reminders', async (req, res) => {
     if (!config.cronSecret) return res.status(503).json({ error: 'CRON_SECRET is not configured.' });
     if (!cronAuthorized(req)) return res.status(401).json({ error: 'Unauthorized.' });
-    // The same scheduled call also deletes ID photos that are past their retention period
-    res.json({ ok: true, sent: await runReminders(db), purgedIdPhotos: await purgeIdPhotos(db) });
+    // The same scheduled call also deletes ID and attendance photos that are past their retention period
+    res.json({ ok: true, sent: await runReminders(db), purgedIdPhotos: await purgeIdPhotos(db), purgedAttendancePhotos: await purgeAttendancePhotos(db) });
   });
 
   app.use('/api/facility', facilityRoutes(db));
+  app.use('/api/attendance', attendanceRoutes(db));
   app.use('/api/admin', adminRoutes(db));
   app.use('/api', publicRoutes(db));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));

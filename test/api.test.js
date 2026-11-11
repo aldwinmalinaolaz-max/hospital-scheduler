@@ -319,7 +319,7 @@ test('per-user access: records-only and OPD-only staff', async () => {
   const opd = (await loginAs('opd.only', 'password123')).cookie;
 
   // /me tells the browser which tabs to show
-  assert.deepEqual((await call('/admin/me', { cookie: rec })).data.access, { records: true, opd: false, referrals: false });
+  assert.deepEqual((await call('/admin/me', { cookie: rec })).data.access, { records: true, opd: false, referrals: false, attendance: false });
 
   // Records-only user
   assert.equal((await call('/admin/records', { cookie: rec })).status, 200);
@@ -345,7 +345,7 @@ test('per-user access: records-only and OPD-only staff', async () => {
   assert.equal((await call('/admin/records', { cookie: opd })).status, 200);
 
   // Administrators always have both
-  assert.deepEqual((await call('/admin/me', { cookie: admin })).data.access, { records: true, opd: true, referrals: true });
+  assert.deepEqual((await call('/admin/me', { cookie: admin })).data.access, { records: true, opd: true, referrals: true, attendance: true });
 });
 
 test('patient-entered text is stored in capitals', async () => {
@@ -878,6 +878,188 @@ test('referrals from RHUs, health centers and hospitals', async () => {
   const users = (await call(`/admin/facilities/${rhu.id}/users`, { cookie: desk })).data.rows;
   await call(`/admin/facility-users/${users[0].id}`, { method: 'PATCH', cookie: desk, body: { active: false } });
   assert.equal((await fcall('/me', { cookie: fc })).status, 401);
+});
+
+test('attendance: kiosks, employees, time in/out, PIN lockout, corrections and DTR', async () => {
+  const admin = await login();
+  const att = require('../src/attendance');
+  const PHOTO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  // Staff with only Attendance access
+  const created = await call('/admin/users', {
+    method: 'POST', cookie: admin,
+    body: { username: 'hr.clerk', full_name: 'hr clerk', password: 'password123', role: 'STAFF', can_records: false, can_opd: false, can_attendance: true },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.can_attendance, true);
+  const hr = (await call('/admin/login', { method: 'POST', body: { username: 'hr.clerk', password: 'password123' } })).headers.get('set-cookie').split(';')[0];
+  assert.deepEqual((await call('/admin/me', { cookie: hr })).data.access, { records: false, opd: false, referrals: false, attendance: true });
+  assert.equal((await call('/admin/records', { cookie: hr })).status, 403);
+  // ...and someone without it
+  await call('/admin/users', { method: 'POST', cookie: admin, body: { username: 'opd.only', full_name: 'opd', password: 'password123', role: 'STAFF', can_records: false } });
+  const opd = (await call('/admin/login', { method: 'POST', body: { username: 'opd.only', password: 'password123' } })).headers.get('set-cookie').split(';')[0];
+  assert.equal((await call('/admin/attendance/employees', { cookie: opd })).status, 403);
+
+  // Employees: one regular 08:00-17:00, one on a night shift 22:00-06:00, plus an import
+  const e1 = await call('/admin/attendance/employees', {
+    method: 'POST', cookie: hr,
+    body: { employee_no: '2023-0001', last_name: 'dela cruz', first_name: 'juan', middle_name: 'santos', position: 'nurse ii', department: 'emergency room', pin: '1234' },
+  });
+  assert.equal(e1.status, 201);
+  assert.equal(e1.data.pin, '1234');
+  assert.equal(e1.data.shift_start, '08:00');
+  assert.equal(e1.data.name, 'DELA CRUZ, JUAN S.');
+  const e2 = await call('/admin/attendance/employees', {
+    method: 'POST', cookie: hr,
+    body: { employee_no: '2023-0002', last_name: 'reyes', first_name: 'ana', shift_start: '22:00', shift_end: '06:00', pin: '5678' },
+  });
+  assert.equal(e2.status, 201);
+  assert.equal((await call('/admin/attendance/employees', { method: 'POST', cookie: hr, body: { employee_no: '2023-0001', last_name: 'x', first_name: 'y' } })).status, 400);
+  const imp = await call('/admin/attendance/employees/import', {
+    method: 'POST', cookie: hr,
+    body: { csv: 'Employee No,Last,First,Middle,Position,Department\n2023-0003,SANTOS,MARIA,,MIDWIFE,OB WARD\n"2023-0004","LIM, JR.","PEDRO","",CLERK,HHIMS\n', shifting: true },
+  });
+  assert.equal(imp.status, 201);
+  assert.equal(imp.data.rows.length, 2);
+  assert.match(imp.data.rows[0].pin, /^\d{4}$/);
+  assert.equal(imp.data.rows[1].last_name, 'LIM, JR.');
+  assert.equal(imp.data.rows[1].shift_start, null);
+  // A bad line imports nothing
+  const badImp = await call('/admin/attendance/employees/import', { method: 'POST', cookie: hr, body: { csv: '2023-0005,A,B\n2023-0001,C,D' } });
+  assert.equal(badImp.status, 400);
+  assert.match(badImp.data.error, /Line 2/);
+  assert.equal((await db.one("SELECT COUNT(*)::int AS n FROM employees WHERE employee_no = '2023-0005'")).n, 0);
+
+  // Punching needs a registered kiosk
+  const notKiosk = await call('/attendance/punch', { method: 'POST', body: { employee_no: '2023-0001', pin: '1234', kind: 'IN' } });
+  assert.equal(notKiosk.status, 401);
+  assert.equal(notKiosk.data.setup, true);
+  assert.equal((await call('/attendance/kiosk')).data.kiosk, null);
+  assert.equal((await call('/attendance/kiosk', { method: 'POST', body: { username: 'opd.only', password: 'password123', name: 'x' } })).status, 403);
+  assert.equal((await call('/attendance/kiosk', { method: 'POST', body: { username: 'hr.clerk', password: 'wrong', name: 'x' } })).status, 401);
+  const setup = await call('/attendance/kiosk', { method: 'POST', body: { username: 'hr.clerk', password: 'password123', name: 'main lobby', require_photo: true } });
+  assert.equal(setup.status, 201);
+  const kc = setup.headers.get('set-cookie').split(';')[0];
+  assert.match(setup.headers.get('set-cookie'), /HttpOnly/);
+  assert.equal((await call('/attendance/kiosk', { cookie: kc })).data.kiosk.name, 'MAIN LOBBY');
+  const punch = (body) => call('/attendance/punch', { method: 'POST', cookie: kc, body: { photo: PHOTO, ...body } });
+
+  // Photo required on this kiosk
+  assert.equal((await punch({ employee_no: '2023-0001', pin: '1234', kind: 'IN', photo: undefined })).status, 400);
+  const in1 = await punch({ employee_no: '2023-0001', pin: '1234', kind: 'IN' });
+  assert.equal(in1.status, 201);
+  assert.equal(in1.data.name, 'JUAN DELA CRUZ');
+  assert.equal(in1.data.duplicate, false);
+  // Double tap is recorded once
+  const again = await punch({ employee_no: '2023-0001', pin: '1234', kind: 'IN' });
+  assert.equal(again.status, 200);
+  assert.equal(again.data.duplicate, true);
+  assert.equal((await db.one('SELECT COUNT(*)::int AS n FROM attendance_logs WHERE employee_id = $1', [e1.data.id])).n, 1);
+  assert.equal((await db.one('SELECT COUNT(*)::int AS n FROM attendance_photos')).n, 1);
+  // Time-out without a time-in gets a warning
+  const orphan = await punch({ employee_no: '2023-0002', pin: '5678', kind: 'OUT' });
+  assert.equal(orphan.status, 201);
+  assert.match(orphan.data.warnings[0], /No time-in/);
+
+  // Wrong PINs lock the employee no. (5 attempts by default); HR's PIN reset unlocks it
+  for (let i = 0; i < 5; i++) assert.equal((await punch({ employee_no: '2023-0002', pin: '0000', kind: 'IN' })).status, 401);
+  const locked = await punch({ employee_no: '2023-0002', pin: '5678', kind: 'IN' });
+  assert.equal(locked.status, 423);
+  assert.equal((await call('/admin/attendance/employees?q=reyes', { cookie: hr })).data.rows[0].locked, true);
+  const reset = await call(`/admin/attendance/employees/${e2.data.id}/pin`, { method: 'POST', cookie: hr, body: {} });
+  assert.match(reset.data.pin, /^\d{4}$/);
+  assert.equal((await punch({ employee_no: '2023-0002', pin: reset.data.pin, kind: 'IN' })).status, 201);
+  // Unknown employee and inactive employee
+  assert.equal((await punch({ employee_no: 'NOPE', pin: '1234', kind: 'IN' })).status, 401);
+  await call(`/admin/attendance/employees/${imp.data.rows[0].id}`, { method: 'PATCH', cookie: hr, body: { active: false } });
+  assert.equal((await punch({ employee_no: '2023-0003', pin: imp.data.rows[0].pin, kind: 'IN' })).status, 403);
+
+  // Employee changes their own PIN at the kiosk
+  assert.equal((await call('/attendance/pin', { method: 'POST', cookie: kc, body: { employee_no: '2023-0001', pin: '1234', new_pin: '12' } })).status, 400);
+  assert.equal((await call('/attendance/pin', { method: 'POST', cookie: kc, body: { employee_no: '2023-0001', pin: '1234', new_pin: '4321' } })).status, 200);
+
+  // Today board
+  const today = (await call('/admin/attendance/today', { cookie: hr })).data;
+  const juan = today.rows.find((r) => r.employee_no === '2023-0001');
+  assert.equal(juan.status, 'IN');
+  assert.ok(juan.first_in);
+  assert.ok(!today.rows.some((r) => r.employee_no === '2023-0003')); // inactive
+
+  // Logs, photo, manual entry with reason, void with reason
+  const logs = (await call('/admin/attendance/logs', { cookie: hr })).data.rows;
+  const juanIn = logs.find((l) => l.employee_no === '2023-0001');
+  assert.equal(juanIn.kiosk, 'MAIN LOBBY');
+  assert.equal(juanIn.has_photo, true);
+  const photo = await fetch(`${base}/admin/attendance/logs/${juanIn.id}/photo`, { headers: { Cookie: hr } });
+  assert.equal(photo.headers.get('content-type'), 'image/png');
+  assert.equal((await fetch(`${base}/admin/attendance/logs/${juanIn.id}/photo`, { headers: { Cookie: opd } })).status, 403);
+  assert.equal((await call('/admin/attendance/logs', { method: 'POST', cookie: hr, body: { employee_id: e1.data.id, kind: 'IN', date: '2026-10-05', time: '08:00' } })).status, 400);
+  const future = u.addDays(u.todayStr(), 2);
+  assert.equal((await call('/admin/attendance/logs', { method: 'POST', cookie: hr, body: { employee_id: e1.data.id, kind: 'IN', date: future, time: '08:00', reason: 'x' } })).status, 400);
+  const man = await call('/admin/attendance/logs', { method: 'POST', cookie: hr, body: { employee_id: e1.data.id, kind: 'OUT', date: '2026-10-05', time: '17:30', reason: 'kiosk down' } });
+  assert.equal(man.status, 201);
+  assert.equal(man.data.source, 'MANUAL');
+  assert.equal(man.data.created_by, 'hr.clerk');
+  assert.equal((await call(`/admin/attendance/logs/${man.data.id}/void`, { method: 'POST', cookie: hr, body: {} })).status, 400);
+  const voided = await call(`/admin/attendance/logs/${man.data.id}/void`, { method: 'POST', cookie: hr, body: { reason: 'wrong date' } });
+  assert.equal(voided.data.voided, true);
+  assert.equal(voided.data.void_reason, 'WRONG DATE');
+
+  // DTR for October 2026 built from back-dated entries
+  const ins = async (empId, kind, date, time, source = 'MANUAL') =>
+    db.query("INSERT INTO attendance_logs (employee_id, kind, logged_at, source, reason) VALUES ($1, $2, $3, $4, 'TEST')", [
+      empId, kind, u.localDateTime(date, time).toISOString(), source,
+    ]);
+  // Juan: Oct 1 late 8:12, out 17:00; Oct 2 on time with lunch out/in, left 16:30 (30 min undertime); Oct 3 no time-out
+  await ins(e1.data.id, 'IN', '2026-10-01', '08:12', 'KIOSK');
+  await ins(e1.data.id, 'OUT', '2026-10-01', '17:00', 'KIOSK');
+  await ins(e1.data.id, 'IN', '2026-10-02', '07:55', 'KIOSK');
+  await ins(e1.data.id, 'OUT', '2026-10-02', '12:01', 'KIOSK');
+  await ins(e1.data.id, 'IN', '2026-10-02', '12:58', 'KIOSK');
+  await ins(e1.data.id, 'OUT', '2026-10-02', '16:30', 'KIOSK');
+  await ins(e1.data.id, 'IN', '2026-10-05', '07:50', 'KIOSK');
+  // Ana: night shift 22:00 Oct 1 to 06:05 Oct 2 counts for Oct 1
+  await ins(e2.data.id, 'IN', '2026-10-01', '21:50', 'KIOSK');
+  await ins(e2.data.id, 'OUT', '2026-10-02', '06:05', 'KIOSK');
+  // Ana: last day of September night shift ending Oct 1 belongs to September
+  await ins(e2.data.id, 'IN', '2026-09-30', '22:20', 'KIOSK');
+  await ins(e2.data.id, 'OUT', '2026-10-01', '06:00', 'KIOSK');
+
+  const dtr = (await call(`/admin/attendance/dtr?month=2026-10&employee_id=${e1.data.id}`, { cookie: hr })).data;
+  const d = (n) => dtr.rows[0].days[n - 1];
+  assert.equal(dtr.rows[0].days.length, 31);
+  assert.deepEqual([d(1).am_in, d(1).pm_out, d(1).late, d(1).undertime], ['08:12', '17:00', 12, 0]);
+  assert.deepEqual([d(2).am_in, d(2).am_out, d(2).pm_in, d(2).pm_out, d(2).late, d(2).undertime], ['07:55', '12:01', '12:58', '16:30', 0, 30]);
+  assert.equal(d(3).remarks, 'SATURDAY');
+  assert.match(d(5).remarks, /No time-out/);
+  assert.equal(d(5).am_in, '07:50');
+  assert.deepEqual(
+    [dtr.rows[0].totals.days_present, dtr.rows[0].totals.late_count, dtr.rows[0].totals.late, dtr.rows[0].totals.undertime, dtr.rows[0].totals.missing],
+    [3, 1, 12, 30, 1],
+  );
+  const ana = (await call(`/admin/attendance/dtr?month=2026-10&employee_id=${e2.data.id}`, { cookie: hr })).data.rows[0];
+  assert.deepEqual([ana.days[0].pm_in, ana.days[0].pm_out, ana.days[0].late, ana.days[0].undertime], ['21:50', '06:05+1', 0, 0]);
+  assert.equal(ana.days[0].worked, 8 * 60 + 15);
+  assert.equal(ana.days[1].am_in, ''); // the 06:05 time-out is not a new day
+  const sep = (await call(`/admin/attendance/dtr?month=2026-09&employee_id=${e2.data.id}`, { cookie: hr })).data.rows[0];
+  assert.deepEqual([sep.days[29].pm_in, sep.days[29].pm_out, sep.days[29].late], ['22:20', '06:00+1', 20]);
+
+  // Monthly summary CSV
+  const csv = await fetch(`${base}/admin/attendance/summary.csv?month=2026-10`, { headers: { Cookie: hr } });
+  assert.match(csv.headers.get('content-disposition'), /ZRMC-attendance-2026-10\.csv/);
+  const lines = (await csv.text()).replace(/^﻿/, '').trim().split('\r\n');
+  assert.match(lines[0], /^Employee No\.,Last Name/);
+  assert.match(lines.find((l) => l.startsWith('2023-0001')), /,08:00-17:00,3,1,12,30,1,/);
+  assert.match(lines.find((l) => l.startsWith('2023-0004')), /"LIM, JR\."/);
+
+  // Removing a kiosk stops it working
+  const kiosks = (await call('/admin/attendance/kiosks', { cookie: hr })).data.rows;
+  assert.equal(kiosks[0].created_by, 'hr.clerk');
+  await call(`/admin/attendance/kiosks/${kiosks[0].id}`, { method: 'PATCH', cookie: hr, body: { active: false } });
+  assert.equal((await punch({ employee_no: '2023-0001', pin: '4321', kind: 'OUT' })).status, 401);
+
+  // Old kiosk photos are purged
+  assert.equal(await att.purgeAttendancePhotos(db, new Date(Date.now() + 91 * 86400e3)), 3);
 });
 
 test('mobile normalisation', () => {
