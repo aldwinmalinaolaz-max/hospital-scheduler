@@ -162,6 +162,13 @@ Staff with the **Referrals** permission (Users → Access; administrators always
 - **Monthly report:** referrals by facility (total, accepted, redirected, emergency), by receiving service and by status.
 - **Facilities & accounts:** add or edit facilities (type, municipality, contact person, SMS number) and their user accounts (add, deactivate, reset password).
 
+### Automatic ID check (OCR) for digital copies
+When a requester adds the photo of their valid ID, the page reads the text on the ID with OCR (Tesseract.js) **in their own browser** and compares it with the patient's last, first and middle name and birthdate. Right under the photo they see either **✓ ID check passed** or a note listing exactly what didn't match, e.g. *Last name "DELA CRUZ" was not found on the ID* or *Birthdate May 14, 1990 was not found on the ID. Date read on the ID: May 15, 1990.* They can fix a typo in the patient details (the note updates immediately) or retake a clearer photo. A mismatch never blocks the request, because OCR can misread photos. The same check runs when new photos are uploaded on the Track page.
+
+- **Staff:** the records list shows an **ID check** badge (Matches / Partly matched / Does not match / ID not readable; hover for the notes). **Verify ID & payment** reads the stored ID photo again in the staff member's browser (the requester's own result could be tampered with) and shows the notes and the text read; **Re-check ID** runs it again. Staff still compare the photos themselves and decide.
+- **Matching:** names allow for OCR slips (one wrong letter in longer names, 0/O and 1/I mix-ups), accents (PEÑA = PENA) and joined or split surnames (DELACRUZ / DELA CRUZ); dates are recognised in the usual ID formats (MAY 14, 1990 · 14 MAY 1990 · 1990/05/14 · 05/14/1990). Middle names that are not found are noted but don't count as a mismatch, since many IDs show only the initial.
+- **Privacy:** the photo is not sent anywhere for reading; the OCR files are served from this site (`public/vendor/tesseract`, about 8 MB, downloaded once per browser). The text read from the ID is stored with the request for staff and deleted together with the ID photos after the retention period.
+
 ### Flag Ceremony Attendance (staff)
 Employees check in on **their own phones** at `/flag-ceremony` (home page → **Staff** → Flag Ceremony Attendance). They sign in once with their employee no. and 6-digit PIN and the phone remembers them (`FLAG_REMEMBER_DAYS`, default 180). During the check-in window the page shows how far they are from the venue and a big **CHECK IN** button.
 
@@ -235,11 +242,12 @@ src/
   db.js           Postgres schema + drivers (Supabase via DATABASE_URL, else embedded PGlite)
   scheduling.js   pickup-date & OPD slot availability
   reminders.js    background SMS reminder job
+  idphotos.js     ID / selfie / receipt photos and the automatic ID check result
   flag.js         flag ceremony: settings, weekly ceremonies, geofence check, PIN helpers
   sms.js          SMS providers + logging
   messages.js     SMS templates
   routes/         public and admin JSON APIs
-public/           HTML/CSS/JS front end (no build step)
+public/           HTML/CSS/JS front end (no build step); js/idmatch.js is shared with the server
 test/             node:test API + reminder tests (set TEST_DATABASE_URL to run against a throwaway Postgres)
 ```
 

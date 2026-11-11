@@ -111,7 +111,38 @@
   }
   $$('[name=copy_type]').forEach((r) => r.addEventListener('change', updateCopyUI));
   const photoError = (m) => showError($('#error'), m);
-  photoPicker($('#idPhotoInput'), $('#idPhotoPreview'), (d) => (photos.id = d), photoError);
+  // Automatic ID check: read the ID with OCR in this browser and compare it with the patient details
+  const ocr = { text: '', running: null };
+  const patientDetails = () => ({ last: form.patient_last.value, first: form.patient_first.value, middle: form.patient_middle.value, birthdate: form.birthdate.value });
+  const showIdCheck = () => {
+    if (ocr.text) $('#idOcr').innerHTML = IdOcr.requesterNote(IdMatch.check(ocr.text, patientDetails()));
+  };
+  function readId(dataUrl) {
+    ocr.text = '';
+    const box = $('#idOcr');
+    box.innerHTML = `<p class="muted small">${IdOcr.progressText()}</p>`;
+    const job = IdOcr.read(dataUrl, (m) => {
+      if (photos.id === dataUrl) box.innerHTML = `<p class="muted small">${esc(IdOcr.progressText(m))}</p>`;
+    })
+      .then((text) => {
+        if (photos.id !== dataUrl) return; // a newer photo was chosen meanwhile
+        ocr.text = text;
+        showIdCheck();
+      })
+      .catch(() => {
+        if (photos.id === dataUrl) box.innerHTML = '<p class="muted small">Automatic ID check is not available on this device. HHIMS staff will check your ID.</p>';
+      })
+      .finally(() => {
+        if (ocr.running === job) ocr.running = null;
+      });
+    ocr.running = job;
+  }
+  // The note follows corrections to the patient details
+  for (const name of ['patient_last', 'patient_first', 'patient_middle', 'birthdate']) form[name].addEventListener('change', showIdCheck);
+  photoPicker($('#idPhotoInput'), $('#idPhotoPreview'), (d) => {
+    photos.id = d;
+    readId(d);
+  }, photoError);
   photoPicker($('#selfiePhotoInput'), $('#selfiePhotoPreview'), (d) => (photos.selfie = d), photoError);
   photoPicker($('#receiptPhotoInput'), $('#receiptPhotoPreview'), (d) => (photos.receipt = d), photoError);
 
@@ -154,6 +185,12 @@
     btn.disabled = true;
     btn.textContent = 'Submitting…';
     try {
+      // Give a running ID check a little time to finish so its result goes with the request
+      if (copyType() === 'DIGITAL' && ocr.running) {
+        btn.textContent = 'Checking your ID…';
+        await Promise.race([ocr.running, new Promise((r) => setTimeout(r, 20000))]);
+        btn.textContent = 'Submitting…';
+      }
       const d = formData(form);
       const res = await api('/records', {
         method: 'POST',
@@ -161,7 +198,7 @@
           ...d,
           consent: true,
           items: [...selected].map(([record_type, v]) => ({ record_type, copies: v.copies, details: v.details })),
-          ...(copyType() === 'DIGITAL' ? { id_photo: photos.id, selfie_photo: photos.selfie, receipt_photo: photos.receipt } : {}),
+          ...(copyType() === 'DIGITAL' ? { id_photo: photos.id, selfie_photo: photos.selfie, receipt_photo: photos.receipt, id_ocr_text: ocr.text || undefined } : {}),
         },
       });
       form.classList.add('hidden');

@@ -62,7 +62,7 @@
       <div class="grid grid-2">
         <div class="id-upload"><b class="small">Photo of your valid ID</b>
           <label class="btn secondary sm upload-btn"><input type="file" accept="image/*" id="idPhotoInput" hidden>Take or choose photo</label>
-          <img id="idPhotoPreview" alt="Valid ID preview" class="hidden"></div>
+          <img id="idPhotoPreview" alt="Valid ID preview" class="hidden"><div id="idOcr" aria-live="polite"></div></div>
         <div class="id-upload"><b class="small">Selfie holding the same ID</b>
           <label class="btn secondary sm upload-btn"><input type="file" accept="image/*" id="selfiePhotoInput" hidden>Take or choose photo</label>
           <img id="selfiePhotoPreview" alt="Selfie preview" class="hidden"></div>
@@ -78,7 +78,22 @@
   function wireReupload() {
     const photos = { id: '', selfie: '', receipt: '' };
     const err = (m) => alert(m);
-    photoPicker($('#idPhotoInput'), $('#idPhotoPreview'), (d) => (photos.id = d), err);
+    let ocrText = '';
+    // Automatic ID check: read the new ID in this browser, then compare it with the request's patient details
+    photoPicker($('#idPhotoInput'), $('#idPhotoPreview'), async (d) => {
+      photos.id = d;
+      ocrText = '';
+      const box = $('#idOcr');
+      box.innerHTML = `<p class="muted small">${IdOcr.progressText()}</p>`;
+      try {
+        const text = await IdOcr.read(d, (m) => photos.id === d && (box.innerHTML = `<p class="muted small">${esc(IdOcr.progressText(m))}</p>`));
+        if (photos.id !== d) return;
+        ocrText = text;
+        box.innerHTML = IdOcr.requesterNote(await api('/track/id-check', { method: 'POST', body: { ref_no: current.ref_no, mobile: form.mobile.value, text } }));
+      } catch {
+        if (photos.id === d) box.innerHTML = '<p class="muted small">Automatic ID check is not available on this device. HHIMS staff will check your ID.</p>';
+      }
+    }, err);
     photoPicker($('#selfiePhotoInput'), $('#selfiePhotoPreview'), (d) => (photos.selfie = d), err);
     photoPicker($('#receiptPhotoInput'), $('#receiptPhotoPreview'), (d) => (photos.receipt = d), err);
     $('#reuploadBtn').addEventListener('click', async () => {
@@ -87,7 +102,7 @@
       btn.disabled = true;
       btn.textContent = 'Sending…';
       try {
-        render(await api('/track/id-photos', { method: 'POST', body: { ref_no: current.ref_no, mobile: form.mobile.value, id_photo: photos.id, selfie_photo: photos.selfie, receipt_photo: photos.receipt, payment_ref: $('#paymentRef').value } }));
+        render(await api('/track/id-photos', { method: 'POST', body: { ref_no: current.ref_no, mobile: form.mobile.value, id_photo: photos.id, selfie_photo: photos.selfie, receipt_photo: photos.receipt, payment_ref: $('#paymentRef').value, id_ocr_text: ocrText || undefined } }));
       } catch (e) {
         alert(e.message);
         btn.disabled = false;

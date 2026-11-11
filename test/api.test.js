@@ -722,6 +722,87 @@ test('digital copies: ID photos, staff verification, assignment and sending by e
   assert.equal((await fetch(base + `/admin/records/${id}/id-photo/id`, { headers: { Cookie: admin } })).status, 404);
 });
 
+test('automatic ID check (OCR text) against the patient details', async () => {
+  const m = require('../public/js/idmatch');
+  const p = { last: 'Dela Cruz', first: 'Juan', middle: 'Santos', birthdate: '1990-05-14' };
+  const philsys = 'REPUBLIKA NG PILIPINAS Philippine Identification Card Apelyido/Last Name DELA CRUZ Mga Pangalan/Given Names JUAN Gitnang Apelyido/Middle Name SANTOS Petsa ng Kapanganakan/Date of Birth MAY 14, 1990';
+  assert.equal(m.check(philsys, p).status, 'MATCH');
+  // Driver's license: joined surname, OCR reads O as 0, numeric dates incl. expiry
+  const lto = 'LAND TRANSPORTATION OFFICE DRIVERS LICENSE Last Name. First Name. Middle Name DELACRUZ, JUAN SANT0S Date of Birth 1990/05/14 Expiration Date 2031/05/14';
+  assert.equal(m.check(lto, p).status, 'MATCH');
+  assert.deepEqual(m.findDates(lto), ['1990-05-14', '2031-05-14']);
+  assert.deepEqual(m.findDates('BIRTH 14 MAY 1990 / 05-14-1990 / 1990 MAY 14'), ['1990-05-14']);
+  // One wrong letter in a long name is tolerated; a different name is not
+  assert.equal(m.check(philsys.replace('JUAN', 'JUAM').replace('DELA CRUZ', 'DELA CRUS'), { ...p, first: 'Juan' }).found.last, true);
+  const other = m.check('UNIFIED MULTI-PURPOSE ID SURNAME REYES GIVEN NAME ANA MIDDLE NAME LOPEZ DATE OF BIRTH 1985/02/03', p);
+  assert.equal(other.status, 'MISMATCH');
+  assert.deepEqual(other.notes.slice(0, 2), ['Last name "DELA CRUZ" was not found on the ID.', 'First name "JUAN" was not found on the ID.']);
+  assert.match(other.notes[3], /Birthdate May 14, 1990 was not found on the ID\. Date read on the ID: February 3, 1985\./);
+  const wrongDob = m.check('POSTAL IDENTITY CARD DELA CRUZ JUAN SANTOS 15 MAY 1990 VALID UNTIL 12/31/2027', p);
+  assert.equal(wrongDob.status, 'PARTIAL');
+  assert.deepEqual(wrongDob.notes, ['Birthdate May 14, 1990 was not found on the ID. Date read on the ID: May 15, 1990.']);
+  assert.equal(m.check('ab 12 x', p).status, 'UNREADABLE');
+  // Accents and Ñ
+  assert.equal(m.check('PHILIPPINE PASSPORT SURNAME PENA GIVEN NAMES JOSE MARIA DATE OF BIRTH 02 JAN 1980', { last: 'Peña', first: 'José María', birthdate: '1980-01-02' }).status, 'MATCH');
+
+  // Stored with the request, recomputed by the server from the text
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const body = {
+    ...patient,
+    patient_middle: 'santos',
+    requester_name: 'Juan Dela Cruz',
+    requester_relation: 'Self (patient)',
+    email: 'juan@example.com',
+    purpose: 'Insurance claim',
+    items: [{ record_type: 'MEDICAL_CERTIFICATE' }],
+    copy_type: 'DIGITAL',
+    id_photo: png,
+    selfie_photo: png,
+    receipt_photo: png,
+  };
+  let res = await call('/records', { method: 'POST', body: { ...body, id_ocr_text: 'POSTAL IDENTITY CARD DELA CRUZ JUAN SANTOS 15 MAY 1990 VALID UNTIL 12/31/2027' } });
+  assert.equal(res.status, 201);
+  const ref = res.data.ref_no;
+  let row = await db.one('SELECT * FROM record_requests WHERE ref_no = $1', [ref]);
+  assert.equal(row.id_ocr_status, 'PARTIAL');
+  assert.deepEqual(JSON.parse(row.id_ocr_notes), ['Birthdate May 14, 1990 was not found on the ID. Date read on the ID: May 15, 1990.']);
+  assert.equal(row.id_ocr_by, null);
+  // No text (OCR not available on the phone): not checked
+  res = await call('/records', { method: 'POST', body });
+  assert.equal((await db.one('SELECT id_ocr_status FROM record_requests WHERE ref_no = $1', [res.data.ref_no])).id_ocr_status, null);
+
+  // Staff list shows the result; staff re-check with their own OCR
+  const admin = await login();
+  const listed = (await call(`/admin/records?q=${ref}`, { cookie: admin })).data.rows.find((r) => r.ref_no === ref);
+  assert.equal(listed.id_ocr_status, 'PARTIAL');
+  assert.match(listed.id_ocr_at, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+  assert.equal((await call(`/admin/records/${row.id}/id-ocr`, { method: 'POST', cookie: admin, body: { text: '' } })).status, 400);
+  res = await call(`/admin/records/${row.id}/id-ocr`, { method: 'POST', cookie: admin, body: { text: philsys } });
+  assert.equal(res.data.id_ocr_status, 'MATCH');
+  assert.equal(res.data.id_ocr_by, 'admin');
+  const opd = (await loginAs('opd.x', 'password123')).cookie;
+  assert.equal((await call(`/admin/records/${row.id}/id-ocr`, { method: 'POST', cookie: opd, body: { text: philsys } })).status, 403);
+
+  // Track page: check a new ID before re-uploading (nothing saved), then the upload replaces the result
+  assert.equal((await call('/track/id-check', { method: 'POST', body: { ref_no: ref, mobile: '00000000000', text: philsys } })).status, 404);
+  const pre = (await call('/track/id-check', { method: 'POST', body: { ref_no: ref, mobile: '09171234567', text: 'SURNAME REYES GIVEN NAME ANA MIDDLE NAME LOPEZ DATE OF BIRTH 1985/02/03' } })).data;
+  assert.equal(pre.status, 'MISMATCH');
+  assert.equal((await db.one('SELECT id_ocr_status FROM record_requests WHERE id = $1', [row.id])).id_ocr_status, 'MATCH');
+  await call(`/admin/records/${row.id}/verify-id`, { method: 'POST', cookie: admin, body: { decision: 'REJECTED', remarks: 'ID does not match' } });
+  res = await call('/track/id-photos', { method: 'POST', body: { ref_no: ref, mobile: '09171234567', id_photo: png, selfie_photo: png, receipt_photo: png, id_ocr_text: lto } });
+  row = await db.one('SELECT * FROM record_requests WHERE id = $1', [row.id]);
+  assert.equal(row.id_ocr_status, 'MATCH');
+  assert.equal(row.id_ocr_by, null);
+
+  // The text read from the ID is deleted with the photos
+  await db.query("UPDATE record_requests SET status = 'CANCELLED' WHERE id = $1", [row.id]);
+  const { purgeIdPhotos } = require('../src/idphotos');
+  await purgeIdPhotos(db, new Date(Date.now() + 31 * 86400e3));
+  row = await db.one('SELECT * FROM record_requests WHERE id = $1', [row.id]);
+  assert.equal(row.id_ocr_text, null);
+  assert.equal(row.id_ocr_status, 'MATCH'); // the result stays for the record
+});
+
 test('fees and payment QR are managed by administrators', async () => {
   let cat = (await call('/catalog')).data;
   assert.equal(cat.recordTypes.find((t) => t.code === 'MEDICO_LEGAL').fee, 30);

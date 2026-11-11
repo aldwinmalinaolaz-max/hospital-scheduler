@@ -323,6 +323,14 @@ const SCHEMA = `
   -- Staff permission for the Referrals tab (administrators always have it)
   ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_referrals BOOLEAN NOT NULL DEFAULT FALSE;
 
+  -- Automatic ID check (OCR) for digital copies: text read from the ID photo and how it compares
+  -- with the patient's name and birthdate. Advice for staff only; the text is deleted with the photos.
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS id_ocr_status TEXT;   -- MATCH | PARTIAL | MISMATCH | UNREADABLE
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS id_ocr_notes TEXT;    -- JSON array of mismatch notes
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS id_ocr_text TEXT;
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS id_ocr_by TEXT;       -- NULL = read on the requester's phone, else staff username
+  ALTER TABLE record_requests ADD COLUMN IF NOT EXISTS id_ocr_at TIMESTAMPTZ;
+
   -- Flag Ceremony Attendance: employees check in on their phones inside a GPS geofence
   -- (staff permission column keeps its original name)
   ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_attendance BOOLEAN NOT NULL DEFAULT FALSE;

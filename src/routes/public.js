@@ -235,7 +235,11 @@ module.exports = function publicRoutes(db) {
           copyType === 'DIGITAL' ? paymentRef : null,
         ],
       );
-      if (photos) await idphotos.savePhotos(t, row.id, photos);
+      if (photos) {
+        await idphotos.savePhotos(t, row.id, photos);
+        // Text read from the ID photo on the requester's phone, checked again here against the details
+        if (b.id_ocr_text) await idphotos.saveOcr(t, row, b.id_ocr_text);
+      }
       for (const it of cleanItems) {
         await t.query('INSERT INTO record_request_items (request_id, record_type, details, copies) VALUES ($1, $2, $3, $4)', [
           row.id,
@@ -454,6 +458,15 @@ module.exports = function publicRoutes(db) {
     res.json(found.kind === 'record' ? await publicRecord(db, found.row) : publicAppointment(await clinics.withClinicName(db, found.row)));
   });
 
+  // Automatic ID check before re-uploading: compares the text read from the new ID photo (in the
+  // requester's browser) with the request's patient details. Nothing is saved.
+  router.post('/track/id-check', submitLimit, async (req, res) => {
+    const found = await findByRef(req.body?.ref_no, req.body?.mobile);
+    if (!found || found.kind !== 'record') return res.status(404).json({ error: 'No request found with that reference number and mobile number.' });
+    const c = idphotos.ocrColumns(req.body?.text, found.row);
+    res.json({ status: c.id_ocr_status, notes: c.id_ocr_notes ? JSON.parse(c.id_ocr_notes) : [] });
+  });
+
   // New ID / selfie photos after staff could not verify the first ones (reference no. + mobile must match)
   router.post('/track/id-photos', submitLimit, async (req, res) => {
     const found = await findByRef(req.body?.ref_no, req.body?.mobile);
@@ -464,6 +477,7 @@ module.exports = function publicRoutes(db) {
     if (err) throw new ValidationError(err);
     const updated = await db.tx(async (t) => {
       await idphotos.savePhotos(t, r.id, photos);
+      await idphotos.saveOcr(t, r, req.body?.id_ocr_text); // clears the old result when there is no new text
       return t.one(
         `UPDATE record_requests SET id_status = 'PENDING', id_remarks = NULL, payment_ref = COALESCE($2, payment_ref), updated_at = now()
          WHERE id = $1 RETURNING *`,

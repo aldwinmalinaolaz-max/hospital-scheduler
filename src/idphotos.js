@@ -3,6 +3,7 @@
 // automatically once the request has been finished for ID_PHOTO_RETENTION_DAYS days.
 const config = require('./config');
 const { imageType } = require('./directory');
+const idmatch = require('../public/js/idmatch');
 
 const KINDS = { ID: 'valid ID', SELFIE: 'selfie holding the valid ID', RECEIPT: 'payment receipt' };
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -39,6 +40,23 @@ async function savePhotos(t, requestId, photos) {
   }
 }
 
+// Compares OCR text from the ID photo with the request's patient details. Returns the columns to
+// store, or all-null columns when there is no text (e.g. the browser could not run OCR).
+function ocrColumns(text, r, by = null) {
+  const t = String(text || '').slice(0, 4000).trim();
+  if (!t) return { id_ocr_status: null, id_ocr_notes: null, id_ocr_text: null, id_ocr_by: null, id_ocr_at: null };
+  const res = idmatch.check(t, { last: r.patient_last, first: r.patient_first, middle: r.patient_middle, birthdate: r.birthdate });
+  return { id_ocr_status: res.status, id_ocr_notes: JSON.stringify(res.notes), id_ocr_text: t, id_ocr_by: by, id_ocr_at: new Date().toISOString() };
+}
+
+async function saveOcr(t, r, text, by = null) {
+  const c = ocrColumns(text, r, by);
+  return t.one(
+    `UPDATE record_requests SET id_ocr_status = $1, id_ocr_notes = $2, id_ocr_text = $3, id_ocr_by = $4, id_ocr_at = $5 WHERE id = $6 RETURNING *`,
+    [c.id_ocr_status, c.id_ocr_notes, c.id_ocr_text, c.id_ocr_by, c.id_ocr_at, r.id],
+  );
+}
+
 // Deletes photos of requests that were released, rejected or cancelled more than the retention period ago
 async function purgeIdPhotos(db, now = new Date()) {
   const rows = await db.query(
@@ -48,7 +66,14 @@ async function purgeIdPhotos(db, now = new Date()) {
      RETURNING p.id`,
     [now.toISOString(), String(config.records.idPhotoRetentionDays)],
   );
+  // The text read from the ID is personal data too
+  await db.query(
+    `UPDATE record_requests SET id_ocr_text = NULL
+     WHERE id_ocr_text IS NOT NULL AND status IN ('RELEASED', 'REJECTED', 'CANCELLED')
+       AND updated_at < $1::timestamptz - ($2 || ' days')::interval`,
+    [now.toISOString(), String(config.records.idPhotoRetentionDays)],
+  );
   return rows.length;
 }
 
-module.exports = { KINDS, readPhotos, savePhotos, purgeIdPhotos };
+module.exports = { KINDS, readPhotos, savePhotos, ocrColumns, saveOcr, purgeIdPhotos };

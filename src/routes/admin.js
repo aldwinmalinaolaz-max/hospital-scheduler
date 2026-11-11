@@ -15,6 +15,7 @@ const clinics = require('../clinics');
 const registerReferralRoutes = require('./adminReferrals');
 const registerFlagRoutes = require('./adminFlag');
 const payments = require('../payments');
+const idphotos = require('../idphotos');
 
 const COOKIE = 'hs_admin';
 
@@ -30,7 +31,12 @@ function whereClause(conds) {
   return { where: parts.length ? `WHERE ${parts.join(' AND ')}` : '', params };
 }
 
-const stamp = (row) => ({ ...row, created_at: u.toStamp(row.created_at), updated_at: u.toStamp(row.updated_at) });
+const stamp = (row) => ({
+  ...row,
+  created_at: u.toStamp(row.created_at),
+  updated_at: u.toStamp(row.updated_at),
+  ...(row.id_ocr_at !== undefined ? { id_ocr_at: u.toStamp(row.id_ocr_at) } : {}),
+});
 
 module.exports = function adminRoutes(db) {
   const router = express.Router();
@@ -283,6 +289,16 @@ module.exports = function adminRoutes(db) {
     res.setHeader('Content-Type', p.mime);
     res.setHeader('Cache-Control', 'private, no-store');
     res.end(Buffer.from(p.image));
+  });
+
+  // Staff re-read the stored ID photo with OCR in their browser; the server compares the text
+  router.post('/records/:id/id-ocr', requireAccess('records'), async (req, res) => {
+    const r = await db.one('SELECT * FROM record_requests WHERE id = $1', [Number(req.params.id)]);
+    if (!r) return res.status(404).json({ error: 'Not found.' });
+    if (r.copy_type !== 'DIGITAL') throw new ValidationError('This request is for a hardcopy; there is no ID photo.');
+    const text = String(req.body?.text || '').trim();
+    if (!text) throw new ValidationError('No text was read from the ID photo.');
+    res.json(stamp(await idphotos.saveOcr(db, r, text, req.user.username)));
   });
 
   // Approve or reject the requester's valid ID + selfie

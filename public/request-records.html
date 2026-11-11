@@ -108,6 +108,7 @@
             <span class="small muted">Government-issued ID, front side. All four corners visible, text readable, no glare.</span>
             <label class="btn secondary sm upload-btn"><input type="file" accept="image/*" id="idPhotoInput" hidden>Take or choose photo</label>
             <img id="idPhotoPreview" alt="Valid ID preview" class="hidden">
+            <div id="idOcr" aria-live="polite"></div>
           </div>
           <div class="id-upload">
             <span class="req" style="font-weight:600">Selfie holding the same ID</span>
@@ -153,5 +154,7 @@
 <script src="/js/common.js"></script>
 <script src="/js/chat.js" defer></script>
 <script src="/js/wizard.js"></script>
+<script src="/js/idmatch.js"></script>
+<script src="/js/idocr.js"></script>
 <script src="/js/records.js"></script>
 </body></html>

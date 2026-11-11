@@ -131,7 +131,7 @@
         <td>${esc(r.requester_name)}<div class="sub">${esc(r.requester_relation)}</div><div class="sub">${esc(r.mobile)}</div></td>
         <td class="nowrap">${esc(fmtDate(r.pickup_date, { month: 'short', day: 'numeric', weekday: 'short' }))}</td>
         <td>${badge(r.status)}${r.remarks ? `<div class="sub">${esc(r.remarks)}</div>` : ''}
-          ${r.copy_type === 'DIGITAL' ? `<div class="sub"><span class="badge INFO">Digital</span> ${idBadge(r)}</div>` : ''}
+          ${r.copy_type === 'DIGITAL' ? `<div class="sub"><span class="badge INFO">Digital</span> ${idBadge(r)} ${ocrBadge(r)}</div>` : ''}
           ${r.assigned_to ? `<div class="sub">Assigned: <b>${esc(staffName(r.assigned_to))}</b></div>` : ''}${updatedBy(r)}</td>
         <td class="no-print nowrap">${digitalActions(r)}${quickRec(r)}<button class="btn sm secondary" data-edit-rec="${r.id}">Edit</button>
           ${/^self/i.test(r.requester_relation) ? '' : `<a class="btn sm secondary" href="/api/admin/records/${r.id}/authorization-letter" download title="Authorization letter filled in with this request's details">Letter</a>`}</td>
@@ -142,6 +142,29 @@
   const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const ID_LABEL = { PENDING: 'ID & payment to check', VERIFIED: 'ID & payment verified', REJECTED: 'ID/payment not verified' };
   const ID_BADGE = { PENDING: 'PENDING', VERIFIED: 'COMPLETED', REJECTED: 'FAILED' };
+  // Automatic ID check (OCR): advice for the staff who verify the ID
+  const OCR_BADGE = { MATCH: 'COMPLETED', PARTIAL: 'PENDING', UNREADABLE: 'PENDING', MISMATCH: 'FAILED' };
+  const ocrNotes = (r) => {
+    try {
+      return JSON.parse(r.id_ocr_notes || '[]');
+    } catch {
+      return [];
+    }
+  };
+  const ocrBadge = (r) =>
+    r.id_ocr_status
+      ? `<span class="badge ${OCR_BADGE[r.id_ocr_status]}" title="${esc(ocrNotes(r).join(' '))}">ID check: ${esc(IdMatch.LABELS[r.id_ocr_status])}</span>`
+      : '';
+  function ocrResultHtml(r) {
+    if (!r.id_ocr_status) return '<p class="muted small" style="margin:0">Not checked yet.</p>';
+    const notes = ocrNotes(r);
+    const who = r.id_ocr_by ? `read by ${esc(r.id_ocr_by)}` : "read on the requester's phone";
+    return `<div class="alert ${r.id_ocr_status === 'MATCH' ? 'ok' : r.id_ocr_status === 'MISMATCH' ? 'error' : 'warn'} small" style="margin:0">
+      <b>${esc(IdMatch.LABELS[r.id_ocr_status])}</b> <span class="muted">(${who}${r.id_ocr_at ? `, ${esc(r.id_ocr_at)}` : ''})</span>
+      ${r.id_ocr_status === 'MATCH' ? '<div>Name and birthdate on the ID match the request.</div>' : `<ul class="list-tight">${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>`}
+      ${r.id_ocr_text ? `<details><summary>Text read from the ID</summary><pre class="ocr-text">${esc(r.id_ocr_text)}</pre></details>` : ''}
+    </div>`;
+  }
   const idBadge = (r) => `<span class="badge ${ID_BADGE[r.id_status] || ''}">${esc(ID_LABEL[r.id_status] || '')}</span>`;
   let recordsStaff = [];
   const staffName = (u) => recordsStaff.find((s) => s.username === u)?.full_name || u;
@@ -209,6 +232,11 @@
          <dt>Email</dt><dd>${esc(r.email)}</dd>
          <dt>Amount due</dt><dd><b>${peso(r.amount_due)}</b>${r.payment_ref ? ` · Ref no. ${esc(r.payment_ref)}` : ''}</dd>
        </dl>
+       <div class="ocr-box">
+         <div class="sched-bar" style="margin-bottom:6px"><b class="small">Automatic ID check (OCR)</b><button class="btn sm secondary" type="button" id="ocrRunBtn">Re-check ID</button></div>
+         <div id="ocrResult">${ocrResultHtml(r)}</div>
+         <p class="muted small" style="margin:6px 0 0">OCR can misread photos; always compare the ID yourself.</p>
+       </div>
        <div class="grid grid-3 id-review">
          <figure><a href="${photo('id')}" target="_blank" rel="noopener"><img src="${photo('id')}" alt="Valid ID"></a><figcaption>Valid ID (click to enlarge)</figcaption></figure>
          <figure><a href="${photo('selfie')}" target="_blank" rel="noopener"><img src="${photo('selfie')}" alt="Selfie holding ID"></a><figcaption>Selfie holding the ID</figcaption></figure>
@@ -228,6 +256,27 @@
       },
       { wide: true, saveLabel: 'Save decision' },
     );
+    // Staff read the stored ID photo themselves (the requester's own check could have been tampered with)
+    const runOcr = async () => {
+      const btn = $('#ocrRunBtn');
+      if (!btn) return;
+      btn.disabled = true;
+      const box = $('#ocrResult');
+      try {
+        const blob = await (await fetch(photo('id'), { credentials: 'same-origin' })).blob();
+        const text = await IdOcr.read(blob, (m) => document.body.contains(box) && (box.innerHTML = `<p class="muted small" style="margin:0">${esc(IdOcr.progressText(m).replace('your ID', 'the ID'))}</p>`));
+        const updated = await api(`/admin/records/${r.id}/id-ocr`, { method: 'POST', body: { text: text || ' ' } });
+        Object.assign(r, updated);
+        if (document.body.contains(box)) box.innerHTML = ocrResultHtml(r);
+        loaders.records(); // the list behind the dialog shows the new result
+      } catch (err) {
+        if (document.body.contains(box)) box.innerHTML = `<p class="muted small" style="margin:0">The ID could not be read automatically (${esc(err.message)}). Please compare it yourself.</p>`;
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    $('#ocrRunBtn').addEventListener('click', runOcr);
+    if (!r.id_ocr_by) runOcr();
   });
 
   // Send by email: staff send from the hospital's email account (attaching the scanned documents),
