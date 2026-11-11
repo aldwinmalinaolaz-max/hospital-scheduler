@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flag Ceremony · ZRMC ONE Hospital System</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="icon" type="image/png" href="/img/favicon.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href="/"><img class="brand-logo" src="/img/logo.png" alt="" width="60" height="60"><span class="brand-text"><span data-system>ZRMC ONE Hospital System</span><small data-hospital>Zamboanga Regional Medical Center</small></span></a>
+</div></header>
+<div class="layout">
+<nav class="sidenav" aria-label="Main menu">
+  <a href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><span>Home</span></a>
+  <a href="/request-records"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg><span>Request Records</span></a>
+  <a href="/book-opd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4"/></svg><span>Book OPD Appointment</span></a>
+  <a href="/track"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Track / Cancel</span></a>
+  <a href="/directory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z"/><path d="M8 2v16M16 6v16"/></svg><span>Hospital Directory</span></a>
+  <hr>
+  <a href="/facility" title="For Rural Health Units, Barangay Health Centers and hospitals referring patients to ZRMC"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6M12 7v4M10 9h4"/></svg><span>Referral Portal<small class="nav-sub">For health facilities</small></span></a>
+  <div class="nav-group">Staff</div>
+  <a href="/flag-ceremony" class="active" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 22V3"/><path d="M5 4h13l-2.5 4.5L18 13H5"/></svg><span>Flag Ceremony<small class="nav-sub">GPS check-in</small></span></a>
+  <a href="/admin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Staff Panel</span></a>
+</nav>
+<div class="content">
+<main class="flag-page">
+  <section class="hero">
+    <h1>Flag Ceremony Attendance</h1>
+    <p class="muted">For ZRMC employees. Check in on your own phone at the ceremony venue &mdash; your phone's location (GPS) confirms you are there.</p>
+  </section>
+
+  <div class="alert info hidden" id="flagLoading">Loading&hellip;</div>
+  <div class="alert error hidden" id="notReady" role="alert">Flag ceremony check-in has not been set up yet. Please check again later or ask HR.</div>
+
+  <section class="card login-box hidden" id="signIn">
+    <h2>Sign in</h2>
+    <p class="muted small">Use your employee no. and the 6-digit PIN given by HR. Your phone will remember you, so you only sign in once.</p>
+    <form id="signInForm" class="grid" autocomplete="off" novalidate>
+      <label class="field">Employee no.<input name="employee_no" autocomplete="username" required></label>
+      <label class="field">PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="current-password" required></label>
+      <div class="alert error hidden" id="signInError" role="alert"></div>
+      <button class="btn" type="submit">Sign in</button>
+    </form>
+    <p class="muted small" style="margin-bottom:0">Forgot your PIN or locked out? HR can reset it.</p>
+  </section>
+
+  <div id="signedIn" class="hidden">
+    <div class="card flag-who">
+      <div><b id="empName"></b><div class="muted small" id="empMeta"></div></div>
+      <div class="flag-who-actions"><a href="#" id="pinLink">Change PIN</a> &middot; <a href="#" id="signOut">Sign out</a></div>
+    </div>
+    <div id="todayBox"></div>
+    <section class="card hidden" id="pinCard">
+      <h2>Change my PIN</h2>
+      <form id="pinForm" class="grid" autocomplete="off" novalidate>
+        <label class="field">Current PIN<input name="pin" type="password" inputmode="numeric" maxlength="6" required></label>
+        <label class="field">New PIN (6 digits)<input name="new_pin" type="password" inputmode="numeric" maxlength="6" required></label>
+        <label class="field">Repeat new PIN<input name="new_pin2" type="password" inputmode="numeric" maxlength="6" required></label>
+        <div class="alert error hidden" id="pinError" role="alert"></div>
+        <div class="actions"><button class="btn secondary" type="button" id="pinCancel">Cancel</button><button class="btn" type="submit">Change PIN</button></div>
+      </form>
+    </section>
+    <section class="card">
+      <h2>My recent flag ceremonies</h2>
+      <div id="historyBox"></div>
+    </section>
+  </div>
+  <input type="file" id="selfieInput" accept="image/*" capture="user" hidden>
+</main>
+<footer><span data-system>ZRMC ONE Hospital System</span> &middot; <span data-hospital>Zamboanga Regional Medical Center</span> &middot; Flag Ceremony Attendance</footer>
+</div>
+</div>
+<script src="/js/common.js"></script>
+<script src="/js/flag.js"></script>
+</body></html>

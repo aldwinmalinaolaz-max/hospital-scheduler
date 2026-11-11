@@ -53,18 +53,16 @@ module.exports = {
     maxDaysAhead: int(env.OPD_MAX_DAYS_AHEAD, 30),
   },
 
-  // Employee attendance (Staff → Attendance Monitoring)
-  attendance: {
-    // Official hours used for new employees on a regular schedule (each employee can have their own)
-    shiftStart: env.ATTENDANCE_SHIFT_START || '08:00',
-    shiftEnd: env.ATTENDANCE_SHIFT_END || '17:00',
-    // Minutes after the start of the shift before a time-in counts as late
-    graceMinutes: int(env.ATTENDANCE_GRACE_MINUTES, 0),
+  // Flag Ceremony Attendance (Staff → Flag Ceremony). The venue, geofence and weekly schedule
+  // are set in the Staff Panel; these are the security settings.
+  flag: {
     // Wrong PINs allowed before an employee number is locked, and for how long
-    maxPinAttempts: int(env.ATTENDANCE_MAX_PIN_ATTEMPTS, 5),
-    lockMinutes: int(env.ATTENDANCE_LOCK_MINUTES, 15),
-    // Kiosk photos taken at time-in/out are deleted after this many days
-    photoRetentionDays: int(env.ATTENDANCE_PHOTO_RETENTION_DAYS, 90),
+    maxPinAttempts: int(env.FLAG_MAX_PIN_ATTEMPTS, 5),
+    lockMinutes: int(env.FLAG_LOCK_MINUTES, 15),
+    // How long an employee stays signed in on their phone
+    rememberDays: int(env.FLAG_REMEMBER_DAYS, 180),
+    // Selfies taken at check-in (when required) are deleted after this many days
+    photoRetentionDays: int(env.FLAG_PHOTO_RETENTION_DAYS, 90),
   },
 
   sms: {

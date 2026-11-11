@@ -19,8 +19,8 @@ function sign(value, secret) {
 }
 
 // `version` is the user's session_version; bumping it in the database signs the user out everywhere.
-function createToken(username, version, secret) {
-  const payload = Buffer.from(JSON.stringify({ u: username, v: version, exp: Date.now() + SESSION_HOURS * 3600e3 })).toString('base64url');
+function createToken(username, version, secret, hours = SESSION_HOURS) {
+  const payload = Buffer.from(JSON.stringify({ u: username, v: version, exp: Date.now() + hours * 3600e3 })).toString('base64url');
   return `${payload}.${sign(payload, secret)}`;
 }
 

@@ -880,186 +880,266 @@ test('referrals from RHUs, health centers and hospitals', async () => {
   assert.equal((await fcall('/me', { cookie: fc })).status, 401);
 });
 
-test('attendance: kiosks, employees, time in/out, PIN lockout, corrections and DTR', async () => {
+test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses and summary', async () => {
   const admin = await login();
-  const att = require('../src/attendance');
   const PHOTO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const VENUE = { lat: 6.9076, lng: 122.079 };
+  const today = u.todayStr();
 
-  // Staff with only Attendance access
+  // A browser-like cookie jar per phone
+  const phone = () => {
+    const jar = new Map();
+    return async (path, { method = 'GET', body } = {}) => {
+      const res = await fetch(base + path, {
+        method,
+        headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), Cookie: [...jar].map(([k, v]) => `${k}=${v}`).join('; ') },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      for (const c of res.headers.getSetCookie()) {
+        const [kv, ...attrs] = c.split(';');
+        const [k, v] = kv.split('=');
+        if (attrs.some((a) => /max-age=0$/i.test(a.trim()))) jar.delete(k);
+        else jar.set(k, v);
+      }
+      return { status: res.status, data: await res.json() };
+    };
+  };
+
+  // Staff with only Flag Ceremony access, and someone without it
   const created = await call('/admin/users', {
     method: 'POST', cookie: admin,
     body: { username: 'hr.clerk', full_name: 'hr clerk', password: 'password123', role: 'STAFF', can_records: false, can_opd: false, can_attendance: true },
   });
   assert.equal(created.status, 201);
-  assert.equal(created.data.can_attendance, true);
   const hr = (await call('/admin/login', { method: 'POST', body: { username: 'hr.clerk', password: 'password123' } })).headers.get('set-cookie').split(';')[0];
   assert.deepEqual((await call('/admin/me', { cookie: hr })).data.access, { records: false, opd: false, referrals: false, attendance: true });
   assert.equal((await call('/admin/records', { cookie: hr })).status, 403);
-  // ...and someone without it
   await call('/admin/users', { method: 'POST', cookie: admin, body: { username: 'opd.only', full_name: 'opd', password: 'password123', role: 'STAFF', can_records: false } });
   const opd = (await call('/admin/login', { method: 'POST', body: { username: 'opd.only', password: 'password123' } })).headers.get('set-cookie').split(';')[0];
-  assert.equal((await call('/admin/attendance/employees', { cookie: opd })).status, 403);
+  assert.equal((await call('/admin/flag/employees', { cookie: opd })).status, 403);
+  assert.equal((await call('/admin/flag/options', { cookie: opd })).status, 403);
 
-  // Employees: one regular 08:00-17:00, one on a night shift 22:00-06:00, plus an import
-  const e1 = await call('/admin/attendance/employees', {
-    method: 'POST', cookie: hr,
-    body: { employee_no: '2023-0001', last_name: 'dela cruz', first_name: 'juan', middle_name: 'santos', position: 'nurse ii', department: 'emergency room', pin: '1234' },
-  });
+  // Not set up yet: no geofence, no ceremonies
+  assert.equal((await call('/flag/me')).data.ready, false);
+  const opts = (await call('/admin/flag/options', { cookie: hr })).data;
+  assert.equal(opts.ready, false);
+  assert.equal(opts.settings.schedule[0].weekday, 1);
+  assert.equal((await call(`/admin/flag/ceremonies?month=${today.slice(0, 7)}`, { cookie: hr })).data.rows.length, 0);
+
+  // Settings
+  const settings = { venue: 'zrmc flagpole', lat: VENUE.lat, lng: VENUE.lng, radius_m: 150, max_accuracy_m: 100, grace_minutes: 0, require_selfie: false, schedule: opts.settings.schedule };
+  const put = (b) => call('/admin/flag/settings', { method: 'PUT', cookie: hr, body: { ...settings, ...b } });
+  assert.equal((await put({ radius_m: 5 })).status, 400);
+  assert.equal((await put({ lat: 95 })).status, 400);
+  assert.equal((await put({ lng: '' })).status, 400);
+  assert.equal((await put({ schedule: [{ weekday: 1, title: 'x', opens: '08:00', starts: '07:00', closes: '09:00' }] })).status, 400);
+  const saved = await put({});
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.ready, true);
+  assert.equal(saved.data.settings.venue, 'ZRMC FLAGPOLE');
+  assert.equal(saved.data.settings.active_from, today);
+
+  // Weekly ceremonies appear from today on, on Mondays
+  const month = (await call(`/admin/flag/ceremonies?month=${today.slice(0, 7)}`, { cookie: hr })).data;
+  assert.ok(month.rows.every((c) => c.date >= today && u.dayOfWeek(c.date) === 1 && c.title === 'FLAG RAISING CEREMONY' && c.starts === '08:00'));
+
+  // Employees
+  const addEmp = (body) => call('/admin/flag/employees', { method: 'POST', cookie: hr, body });
+  assert.equal((await addEmp({ employee_no: '2023-0001', last_name: 'dela cruz', first_name: 'juan', pin: '1234' })).status, 400); // 6 digits
+  const e1 = await addEmp({ employee_no: '2023-0001', last_name: 'dela cruz', first_name: 'juan', middle_name: 'santos', department: 'emergency room', pin: '123456' });
   assert.equal(e1.status, 201);
-  assert.equal(e1.data.pin, '1234');
-  assert.equal(e1.data.shift_start, '08:00');
-  assert.equal(e1.data.name, 'DELA CRUZ, JUAN S.');
-  const e2 = await call('/admin/attendance/employees', {
+  assert.equal(e1.data.pin, '123456');
+  assert.equal(e1.data.flag_required, true);
+  assert.equal((await addEmp({ employee_no: '2023-0001', last_name: 'x', first_name: 'y' })).status, 400);
+  const imp = await call('/admin/flag/employees/import', {
     method: 'POST', cookie: hr,
-    body: { employee_no: '2023-0002', last_name: 'reyes', first_name: 'ana', shift_start: '22:00', shift_end: '06:00', pin: '5678' },
-  });
-  assert.equal(e2.status, 201);
-  assert.equal((await call('/admin/attendance/employees', { method: 'POST', cookie: hr, body: { employee_no: '2023-0001', last_name: 'x', first_name: 'y' } })).status, 400);
-  const imp = await call('/admin/attendance/employees/import', {
-    method: 'POST', cookie: hr,
-    body: { csv: 'Employee No,Last,First,Middle,Position,Department\n2023-0003,SANTOS,MARIA,,MIDWIFE,OB WARD\n"2023-0004","LIM, JR.","PEDRO","",CLERK,HHIMS\n', shifting: true },
+    body: { csv: 'Employee No,Last,First,Middle,Position,Department\n2023-0002,Reyes,Ana,,Nurse II,Pediatrics\n"2023-0003","Santos","Maria Clara","","Clerk","HHIMS"\n' },
   });
   assert.equal(imp.status, 201);
   assert.equal(imp.data.rows.length, 2);
-  assert.match(imp.data.rows[0].pin, /^\d{4}$/);
-  assert.equal(imp.data.rows[1].last_name, 'LIM, JR.');
-  assert.equal(imp.data.rows[1].shift_start, null);
-  // A bad line imports nothing
-  const badImp = await call('/admin/attendance/employees/import', { method: 'POST', cookie: hr, body: { csv: '2023-0005,A,B\n2023-0001,C,D' } });
-  assert.equal(badImp.status, 400);
-  assert.match(badImp.data.error, /Line 2/);
-  assert.equal((await db.one("SELECT COUNT(*)::int AS n FROM employees WHERE employee_no = '2023-0005'")).n, 0);
+  assert.match(imp.data.rows[0].pin, /^\d{6}$/);
+  assert.equal(imp.data.rows[1].name, 'SANTOS, MARIA CLARA');
+  assert.equal((await call('/admin/flag/employees/import', { method: 'POST', cookie: hr, body: { csv: '2023-0009,A,B\n2023-0001,C,D' } })).status, 400);
+  assert.equal((await db.one("SELECT COUNT(*)::int AS n FROM employees WHERE employee_no = '2023-0009'")).n, 0);
+  const [ana, maria] = imp.data.rows;
 
-  // Punching needs a registered kiosk
-  const notKiosk = await call('/attendance/punch', { method: 'POST', body: { employee_no: '2023-0001', pin: '1234', kind: 'IN' } });
-  assert.equal(notKiosk.status, 401);
-  assert.equal(notKiosk.data.setup, true);
-  assert.equal((await call('/attendance/kiosk')).data.kiosk, null);
-  assert.equal((await call('/attendance/kiosk', { method: 'POST', body: { username: 'opd.only', password: 'password123', name: 'x' } })).status, 403);
-  assert.equal((await call('/attendance/kiosk', { method: 'POST', body: { username: 'hr.clerk', password: 'wrong', name: 'x' } })).status, 401);
-  const setup = await call('/attendance/kiosk', { method: 'POST', body: { username: 'hr.clerk', password: 'password123', name: 'main lobby', require_photo: true } });
-  assert.equal(setup.status, 201);
-  const kc = setup.headers.get('set-cookie').split(';')[0];
-  assert.match(setup.headers.get('set-cookie'), /HttpOnly/);
-  assert.equal((await call('/attendance/kiosk', { cookie: kc })).data.kiosk.name, 'MAIN LOBBY');
-  const punch = (body) => call('/attendance/punch', { method: 'POST', cookie: kc, body: { photo: PHOTO, ...body } });
+  // Sign-in, wrong PINs and lockout
+  const p1 = phone();
+  assert.equal((await p1('/flag/me')).data.employee, null);
+  assert.equal((await p1('/flag/login', { method: 'POST', body: { employee_no: '2023-0001', pin: '000000' } })).status, 401);
+  assert.equal((await p1('/flag/login', { method: 'POST', body: { employee_no: 'nobody', pin: '123456' } })).status, 401);
+  const p2 = phone();
+  for (let i = 0; i < 5; i++) assert.equal((await p2('/flag/login', { method: 'POST', body: { employee_no: ana.employee_no, pin: '999999' } })).status, ana.pin === '999999' ? 200 : 401);
+  assert.equal((await p2('/flag/login', { method: 'POST', body: { employee_no: ana.employee_no, pin: ana.pin } })).status, 423);
+  assert.equal((await call('/admin/flag/employees?q=reyes', { cookie: hr })).data.rows[0].locked, true);
+  const reset = await call(`/admin/flag/employees/${ana.id}/pin`, { method: 'POST', cookie: hr, body: {} });
+  assert.match(reset.data.pin, /^\d{6}$/);
+  assert.equal((await p2('/flag/login', { method: 'POST', body: { employee_no: ana.employee_no, pin: reset.data.pin } })).status, 200);
+  assert.equal((await p1('/flag/login', { method: 'POST', body: { employee_no: '2023-0001', pin: '123456' } })).status, 200);
+  const me1 = (await p1('/flag/me')).data;
+  assert.equal(me1.employee.name, 'DELA CRUZ, JUAN S.');
+  assert.deepEqual(me1.center, VENUE);
 
-  // Photo required on this kiosk
-  assert.equal((await punch({ employee_no: '2023-0001', pin: '1234', kind: 'IN', photo: undefined })).status, 400);
-  const in1 = await punch({ employee_no: '2023-0001', pin: '1234', kind: 'IN' });
-  assert.equal(in1.status, 201);
-  assert.equal(in1.data.name, 'JUAN DELA CRUZ');
-  assert.equal(in1.data.duplicate, false);
-  // Double tap is recorded once
-  const again = await punch({ employee_no: '2023-0001', pin: '1234', kind: 'IN' });
+  // A special ceremony open now (check-in 00:00–23:59, starts 23:58: on time)
+  const addCer = (body) => call('/admin/flag/ceremonies', { method: 'POST', cookie: hr, body });
+  assert.equal((await addCer({ date: u.addDays(today, -1), title: 'x', opens: '07:00', starts: '08:00', closes: '09:00' })).status, 400);
+  assert.equal((await addCer({ date: today, title: 'x', opens: '09:00', starts: '08:00', closes: '10:00' })).status, 400);
+  const open = (await addCer({ date: today, title: 'special flag raising', opens: '00:00', starts: '23:58', closes: '23:59' })).data;
+  assert.equal(open.phase, 'OPEN');
+  assert.equal(open.title, 'SPECIAL FLAG RAISING');
+  const todayList = (await p1('/flag/me')).data.today_ceremonies;
+  assert.ok(todayList.some((c) => c.id === open.id && c.phase === 'OPEN' && !c.mine));
+
+  const checkin = (p, id, loc, extra = {}) => p('/flag/checkin', { method: 'POST', body: { ceremony_id: id, ...loc, ...extra } });
+  const here = { lat: VENUE.lat + 0.0003, lng: VENUE.lng, accuracy: 15 }; // about 33 m away
+  assert.equal((await phone()('/flag/checkin', { method: 'POST', body: { ceremony_id: open.id, ...here } })).status, 401); // not signed in
+  const far = await checkin(p1, open.id, { lat: VENUE.lat + 0.01, lng: VENUE.lng, accuracy: 10 });
+  assert.equal(far.status, 422);
+  assert.match(far.data.error, /1,112 m from the ceremony venue/);
+  const fuzzy = await checkin(p1, open.id, { ...here, accuracy: 500 });
+  assert.equal(fuzzy.status, 422);
+  assert.match(fuzzy.data.error, /not precise enough/);
+  assert.equal((await checkin(p1, open.id, {})).status, 422);
+  const ok = await checkin(p1, open.id, here);
+  assert.equal(ok.status, 201);
+  assert.equal(ok.data.mine.status, 'ON_TIME');
+  const again = await checkin(p1, open.id, here);
   assert.equal(again.status, 200);
-  assert.equal(again.data.duplicate, true);
-  assert.equal((await db.one('SELECT COUNT(*)::int AS n FROM attendance_logs WHERE employee_id = $1', [e1.data.id])).n, 1);
-  assert.equal((await db.one('SELECT COUNT(*)::int AS n FROM attendance_photos')).n, 1);
-  // Time-out without a time-in gets a warning
-  const orphan = await punch({ employee_no: '2023-0002', pin: '5678', kind: 'OUT' });
-  assert.equal(orphan.status, 201);
-  assert.match(orphan.data.warnings[0], /No time-in/);
+  assert.equal(again.data.already, true);
+  const row = await db.one('SELECT * FROM flag_checkins WHERE ceremony_id = $1 AND employee_id = $2', [open.id, e1.data.id]);
+  assert.equal(row.source, 'GPS');
+  assert.equal(row.distance_m, 33);
+  assert.equal(row.accuracy_m, 15);
 
-  // Wrong PINs lock the employee no. (5 attempts by default); HR's PIN reset unlocks it
-  for (let i = 0; i < 5; i++) assert.equal((await punch({ employee_no: '2023-0002', pin: '0000', kind: 'IN' })).status, 401);
-  const locked = await punch({ employee_no: '2023-0002', pin: '5678', kind: 'IN' });
-  assert.equal(locked.status, 423);
-  assert.equal((await call('/admin/attendance/employees?q=reyes', { cookie: hr })).data.rows[0].locked, true);
-  const reset = await call(`/admin/attendance/employees/${e2.data.id}/pin`, { method: 'POST', cookie: hr, body: {} });
-  assert.match(reset.data.pin, /^\d{4}$/);
-  assert.equal((await punch({ employee_no: '2023-0002', pin: reset.data.pin, kind: 'IN' })).status, 201);
-  // Unknown employee and inactive employee
-  assert.equal((await punch({ employee_no: 'NOPE', pin: '1234', kind: 'IN' })).status, 401);
-  await call(`/admin/attendance/employees/${imp.data.rows[0].id}`, { method: 'PATCH', cookie: hr, body: { active: false } });
-  assert.equal((await punch({ employee_no: '2023-0003', pin: imp.data.rows[0].pin, kind: 'IN' })).status, 403);
+  // The same phone cannot check in a second employee for the same ceremony
+  await p1('/flag/logout', { method: 'POST' });
+  assert.equal((await p1('/flag/me')).data.employee, null);
+  assert.equal((await p1('/flag/login', { method: 'POST', body: { employee_no: maria.employee_no, pin: maria.pin } })).status, 200);
+  const buddy = await checkin(p1, open.id, here);
+  assert.equal(buddy.status, 409);
+  assert.match(buddy.data.error, /already used to check in employee no\. 2023-0001/);
+  // Ana on her own phone is fine
+  assert.equal((await checkin(p2, open.id, here)).status, 201);
 
-  // Employee changes their own PIN at the kiosk
-  assert.equal((await call('/attendance/pin', { method: 'POST', cookie: kc, body: { employee_no: '2023-0001', pin: '1234', new_pin: '12' } })).status, 400);
-  assert.equal((await call('/attendance/pin', { method: 'POST', cookie: kc, body: { employee_no: '2023-0001', pin: '1234', new_pin: '4321' } })).status, 200);
+  // Late: a ceremony that started at midnight
+  const lateCer = (await addCer({ date: today, title: 'late test', opens: '00:00', starts: '00:00', closes: '23:59' })).data;
+  assert.equal((await checkin(p1, lateCer.id, here)).data.mine.status, 'LATE');
 
-  // Today board
-  const today = (await call('/admin/attendance/today', { cookie: hr })).data;
-  const juan = today.rows.find((r) => r.employee_no === '2023-0001');
-  assert.equal(juan.status, 'IN');
-  assert.ok(juan.first_in);
-  assert.ok(!today.rows.some((r) => r.employee_no === '2023-0003')); // inactive
+  // Selfie required
+  assert.equal((await put({ require_selfie: true })).status, 200);
+  const selfieCer = (await addCer({ date: today, title: 'selfie test', opens: '00:00', starts: '23:58', closes: '23:59' })).data;
+  assert.equal((await checkin(p2, selfieCer.id, here)).status, 400);
+  assert.equal((await checkin(p2, selfieCer.id, here, { photo: 'data:image/png;base64,AAAA' })).status, 400);
+  const withSelfie = await checkin(p2, selfieCer.id, here, { photo: PHOTO });
+  assert.equal(withSelfie.status, 201);
+  assert.equal((await put({ require_selfie: false })).status, 200);
 
-  // Logs, photo, manual entry with reason, void with reason
-  const logs = (await call('/admin/attendance/logs', { cookie: hr })).data.rows;
-  const juanIn = logs.find((l) => l.employee_no === '2023-0001');
-  assert.equal(juanIn.kiosk, 'MAIN LOBBY');
-  assert.equal(juanIn.has_photo, true);
-  const photo = await fetch(`${base}/admin/attendance/logs/${juanIn.id}/photo`, { headers: { Cookie: hr } });
-  assert.equal(photo.headers.get('content-type'), 'image/png');
-  assert.equal((await fetch(`${base}/admin/attendance/logs/${juanIn.id}/photo`, { headers: { Cookie: opd } })).status, 403);
-  assert.equal((await call('/admin/attendance/logs', { method: 'POST', cookie: hr, body: { employee_id: e1.data.id, kind: 'IN', date: '2026-10-05', time: '08:00' } })).status, 400);
-  const future = u.addDays(u.todayStr(), 2);
-  assert.equal((await call('/admin/attendance/logs', { method: 'POST', cookie: hr, body: { employee_id: e1.data.id, kind: 'IN', date: future, time: '08:00', reason: 'x' } })).status, 400);
-  const man = await call('/admin/attendance/logs', { method: 'POST', cookie: hr, body: { employee_id: e1.data.id, kind: 'OUT', date: '2026-10-05', time: '17:30', reason: 'kiosk down' } });
-  assert.equal(man.status, 201);
-  assert.equal(man.data.source, 'MANUAL');
-  assert.equal(man.data.created_by, 'hr.clerk');
-  assert.equal((await call(`/admin/attendance/logs/${man.data.id}/void`, { method: 'POST', cookie: hr, body: {} })).status, 400);
-  const voided = await call(`/admin/attendance/logs/${man.data.id}/void`, { method: 'POST', cookie: hr, body: { reason: 'wrong date' } });
-  assert.equal(voided.data.voided, true);
-  assert.equal(voided.data.void_reason, 'WRONG DATE');
+  // Not open yet, cancelled
+  const tomorrow = (await addCer({ date: u.addDays(today, 1), title: 'tomorrow', opens: '07:00', starts: '08:00', closes: '09:00' })).data;
+  assert.equal(tomorrow.phase, 'UPCOMING');
+  const early = await checkin(p2, tomorrow.id, here);
+  assert.equal(early.status, 409);
+  assert.match(early.data.error, /Check-in opens at 7:00 AM on/);
+  assert.equal((await call(`/admin/flag/ceremonies/${tomorrow.id}`, { method: 'PATCH', cookie: hr, body: { cancelled: true } })).status, 400); // reason needed
+  assert.equal((await call(`/admin/flag/ceremonies/${tomorrow.id}`, { method: 'PATCH', cookie: hr, body: { cancelled: true, cancel_reason: 'holiday' } })).data.phase, 'CANCELLED');
+  assert.match((await checkin(p2, tomorrow.id, here)).data.error, /cancelled: HOLIDAY/);
+  assert.equal((await call(`/admin/flag/ceremonies/${tomorrow.id}`, { method: 'PATCH', cookie: hr, body: { cancelled: false } })).data.phase, 'UPCOMING');
+  // Only excuses before a ceremony
+  assert.equal((await call(`/admin/flag/ceremonies/${tomorrow.id}/mark`, { method: 'POST', cookie: hr, body: { employee_id: ana.id, status: 'ON_TIME', remarks: 'x' } })).status, 400);
+  assert.equal((await call(`/admin/flag/ceremonies/${tomorrow.id}/mark`, { method: 'POST', cookie: hr, body: { employee_id: ana.id, status: 'EXCUSED', remarks: 'approved leave' } })).status, 200);
+  const nextForAna = (await p2('/flag/me')).data.next.find((c) => c.id === tomorrow.id);
+  assert.equal(nextForAna.mine.status, 'EXCUSED');
 
-  // DTR for October 2026 built from back-dated entries
-  const ins = async (empId, kind, date, time, source = 'MANUAL') =>
-    db.query("INSERT INTO attendance_logs (employee_id, kind, logged_at, source, reason) VALUES ($1, $2, $3, $4, 'TEST')", [
-      empId, kind, u.localDateTime(date, time).toISOString(), source,
-    ]);
-  // Juan: Oct 1 late 8:12, out 17:00; Oct 2 on time with lunch out/in, left 16:30 (30 min undertime); Oct 3 no time-out
-  await ins(e1.data.id, 'IN', '2026-10-01', '08:12', 'KIOSK');
-  await ins(e1.data.id, 'OUT', '2026-10-01', '17:00', 'KIOSK');
-  await ins(e1.data.id, 'IN', '2026-10-02', '07:55', 'KIOSK');
-  await ins(e1.data.id, 'OUT', '2026-10-02', '12:01', 'KIOSK');
-  await ins(e1.data.id, 'IN', '2026-10-02', '12:58', 'KIOSK');
-  await ins(e1.data.id, 'OUT', '2026-10-02', '16:30', 'KIOSK');
-  await ins(e1.data.id, 'IN', '2026-10-05', '07:50', 'KIOSK');
-  // Ana: night shift 22:00 Oct 1 to 06:05 Oct 2 counts for Oct 1
-  await ins(e2.data.id, 'IN', '2026-10-01', '21:50', 'KIOSK');
-  await ins(e2.data.id, 'OUT', '2026-10-02', '06:05', 'KIOSK');
-  // Ana: last day of September night shift ending Oct 1 belongs to September
-  await ins(e2.data.id, 'IN', '2026-09-30', '22:20', 'KIOSK');
-  await ins(e2.data.id, 'OUT', '2026-10-01', '06:00', 'KIOSK');
-
-  const dtr = (await call(`/admin/attendance/dtr?month=2026-10&employee_id=${e1.data.id}`, { cookie: hr })).data;
-  const d = (n) => dtr.rows[0].days[n - 1];
-  assert.equal(dtr.rows[0].days.length, 31);
-  assert.deepEqual([d(1).am_in, d(1).pm_out, d(1).late, d(1).undertime], ['08:12', '17:00', 12, 0]);
-  assert.deepEqual([d(2).am_in, d(2).am_out, d(2).pm_in, d(2).pm_out, d(2).late, d(2).undertime], ['07:55', '12:01', '12:58', '16:30', 0, 30]);
-  assert.equal(d(3).remarks, 'SATURDAY');
-  assert.match(d(5).remarks, /No time-out/);
-  assert.equal(d(5).am_in, '07:50');
-  assert.deepEqual(
-    [dtr.rows[0].totals.days_present, dtr.rows[0].totals.late_count, dtr.rows[0].totals.late, dtr.rows[0].totals.undertime, dtr.rows[0].totals.missing],
-    [3, 1, 12, 30, 1],
+  // A ceremony that has closed (last week): absent, excused, marked present by staff
+  const past = u.addDays(today, -7);
+  const closed = await db.one(
+    "INSERT INTO flag_ceremonies (ceremony_date, slot, title, opens_at, starts_at, closes_at, source) VALUES ($1, 'M-test', 'PAST CEREMONY', '07:00', '08:00', '09:00', 'MANUAL') RETURNING id",
+    [past],
   );
-  const ana = (await call(`/admin/attendance/dtr?month=2026-10&employee_id=${e2.data.id}`, { cookie: hr })).data.rows[0];
-  assert.deepEqual([ana.days[0].pm_in, ana.days[0].pm_out, ana.days[0].late, ana.days[0].undertime], ['21:50', '06:05+1', 0, 0]);
-  assert.equal(ana.days[0].worked, 8 * 60 + 15);
-  assert.equal(ana.days[1].am_in, ''); // the 06:05 time-out is not a new day
-  const sep = (await call(`/admin/attendance/dtr?month=2026-09&employee_id=${e2.data.id}`, { cookie: hr })).data.rows[0];
-  assert.deepEqual([sep.days[29].pm_in, sep.days[29].pm_out, sep.days[29].late], ['22:20', '06:00+1', 20]);
+  await db.query("UPDATE employees SET created_at = now() - interval '30 days'");
+  assert.match((await checkin(p1, closed.id, here)).data.error, /Check-in closed at 9:00 AM/);
+  const mark = (body) => call(`/admin/flag/ceremonies/${closed.id}/mark`, { method: 'POST', cookie: hr, body });
+  assert.equal((await mark({ employee_id: ana.id, status: 'EXCUSED' })).status, 400); // reason needed
+  assert.equal((await mark({ employee_id: ana.id, status: 'EXCUSED', remarks: 'on duty at er' })).status, 200);
+  assert.equal((await mark({ employee_id: maria.id, status: 'ON_TIME', remarks: 'gps not working, seen by hr' })).status, 200);
+  let roster = (await call(`/admin/flag/ceremonies/${closed.id}`, { cookie: hr })).data;
+  const st = (id) => roster.rows.find((r) => r.id === id);
+  assert.equal(st(e1.data.id).status, 'ABSENT');
+  assert.equal(st(ana.id).status, 'EXCUSED');
+  assert.equal(st(ana.id).remarks, 'ON DUTY AT ER');
+  assert.equal(st(maria.id).status, 'ON_TIME');
+  assert.equal(st(maria.id).source, 'MANUAL');
+  assert.equal(st(maria.id).time, '08:00');
+  assert.equal(st(maria.id).marked_by, 'hr.clerk');
+  // Staff entries can be cleared; phone check-ins cannot
+  assert.equal((await mark({ employee_id: maria.id, status: 'CLEAR' })).status, 200);
+  roster = (await call(`/admin/flag/ceremonies/${closed.id}`, { cookie: hr })).data;
+  assert.equal(st(maria.id).status, 'ABSENT');
+  assert.equal((await call(`/admin/flag/ceremonies/${open.id}/mark`, { method: 'POST', cookie: hr, body: { employee_id: e1.data.id, status: 'CLEAR' } })).status, 400);
 
-  // Monthly summary CSV
-  const csv = await fetch(`${base}/admin/attendance/summary.csv?month=2026-10`, { headers: { Cookie: hr } });
-  assert.match(csv.headers.get('content-disposition'), /ZRMC-attendance-2026-10\.csv/);
-  const lines = (await csv.text()).replace(/^﻿/, '').trim().split('\r\n');
-  assert.match(lines[0], /^Employee No\.,Last Name/);
-  assert.match(lines.find((l) => l.startsWith('2023-0001')), /,08:00-17:00,3,1,12,30,1,/);
-  assert.match(lines.find((l) => l.startsWith('2023-0004')), /"LIM, JR\."/);
+  // Today's roster shows phone check-ins with distance and the selfie
+  const todayRoster = (await call(`/admin/flag/ceremonies/${selfieCer.id}`, { cookie: hr })).data;
+  const anaToday = todayRoster.rows.find((r) => r.id === ana.id);
+  assert.equal(anaToday.source, 'GPS');
+  assert.equal(anaToday.distance_m, 33);
+  assert.equal(anaToday.has_photo, true);
+  assert.equal(todayRoster.rows.find((r) => r.id === maria.id).status, 'NOT_YET');
+  const photo = await fetch(`${base}/admin/flag/checkins/${anaToday.checkin_id}/photo`, { headers: { Cookie: hr } });
+  assert.equal(photo.status, 200);
+  assert.equal(photo.headers.get('content-type'), 'image/png');
+  assert.equal((await fetch(`${base}/admin/flag/checkins/${anaToday.checkin_id}/photo`, { headers: { Cookie: opd } })).status, 403);
 
-  // Removing a kiosk stops it working
-  const kiosks = (await call('/admin/attendance/kiosks', { cookie: hr })).data.rows;
-  assert.equal(kiosks[0].created_by, 'hr.clerk');
-  await call(`/admin/attendance/kiosks/${kiosks[0].id}`, { method: 'PATCH', cookie: hr, body: { active: false } });
-  assert.equal((await punch({ employee_no: '2023-0001', pin: '4321', kind: 'OUT' })).status, 401);
+  // Month list counts
+  const list = (await call(`/admin/flag/ceremonies?month=${past.slice(0, 7)}`, { cookie: hr })).data;
+  const pastRow = list.rows.find((c) => c.id === closed.id);
+  assert.equal(pastRow.excused, 1);
+  assert.equal(pastRow.absent, 2);
 
-  // Old kiosk photos are purged
-  assert.equal(await att.purgeAttendancePhotos(db, new Date(Date.now() + 91 * 86400e3)), 3);
+  // CSV
+  const csv = await fetch(`${base}/admin/flag/ceremonies/${closed.id}/export.csv`, { headers: { Cookie: hr } });
+  const csvBytes = Buffer.from(await csv.arrayBuffer());
+  assert.deepEqual([...csvBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]); // BOM so Excel reads UTF-8
+  const csvText = csvBytes.toString('utf8');
+  assert.match(csvText, /Date,Ceremony,Employee No\./);
+  assert.match(csvText, /2023-0002,REYES,ANA,,NURSE II,PEDIATRICS,Excused,,STAFF \(hr\.clerk\),,ON DUTY AT ER/);
+
+  // Summary over the closed ceremony only (today's are still open)
+  const sum = (await call(`/admin/flag/summary?from=${past}&to=${today}`, { cookie: hr })).data;
+  assert.equal(sum.ceremonies >= 1, true);
+  const juanSum = sum.rows.find((r) => r.employee.id === e1.data.id);
+  const anaSum = sum.rows.find((r) => r.employee.id === ana.id);
+  const closedHeld = sum.ceremonies;
+  assert.equal(juanSum.held, closedHeld);
+  assert.equal(anaSum.excused, 1);
+  const sumCsv = await (await fetch(`${base}/admin/flag/summary.csv?from=${past}&to=${today}`, { headers: { Cookie: hr } })).text();
+  assert.match(sumCsv, /Attendance %/);
+
+  // Moving the start time re-grades phone check-ins
+  await call(`/admin/flag/ceremonies/${lateCer.id}`, { method: 'PATCH', cookie: hr, body: { title: 'late test', opens: '00:00', starts: '23:58', closes: '23:59' } });
+  assert.equal((await db.one('SELECT status FROM flag_checkins WHERE ceremony_id = $1', [lateCer.id])).status, 'ON_TIME');
+
+  // Employee changes their PIN: wrong current PIN, bad new PIN, then OK (this phone stays signed in)
+  assert.equal((await p2('/flag/pin', { method: 'POST', body: { pin: '000000', new_pin: '654321' } })).status, 401);
+  assert.equal((await p2('/flag/pin', { method: 'POST', body: { pin: reset.data.pin, new_pin: '12' } })).status, 400);
+  assert.equal((await p2('/flag/pin', { method: 'POST', body: { pin: reset.data.pin, new_pin: '654321' } })).status, 200);
+  assert.equal((await p2('/flag/me')).data.employee.employee_no, '2023-0002');
+  assert.equal((await phone()('/flag/login', { method: 'POST', body: { employee_no: '2023-0002', pin: '654321' } })).status, 200);
+
+  // Deactivating signs the employee out of their phone
+  assert.equal((await call(`/admin/flag/employees/${ana.id}`, { method: 'PATCH', cookie: hr, body: { active: false } })).data.active, false);
+  assert.equal((await p2('/flag/me')).data.employee, null);
+  assert.equal((await p2('/flag/login', { method: 'POST', body: { employee_no: '2023-0002', pin: '654321' } })).status, 403);
+
+  // Changing the weekly schedule rebuilds upcoming weekly ceremonies that nobody has checked in to
+  await put({ schedule: [{ weekday: 1, title: 'flag raising', opens: '06:30', starts: '07:30', closes: '08:30' }] });
+  const nextMonth = u.addDays(today, 35).slice(0, 7);
+  const rebuilt = (await call(`/admin/flag/ceremonies?month=${nextMonth}`, { cookie: hr })).data.rows.filter((c) => c.source === 'AUTO');
+  assert.ok(rebuilt.length >= 4);
+  assert.ok(rebuilt.every((c) => c.starts === '07:30' && c.title === 'FLAG RAISING'));
+
+  // Selfies are purged after the retention period
+  const { purgeFlagPhotos } = require('../src/flag');
+  assert.equal(await purgeFlagPhotos(db, new Date(Date.now() + 91 * 86400e3)), 1);
 });
 
 test('mobile normalisation', () => {

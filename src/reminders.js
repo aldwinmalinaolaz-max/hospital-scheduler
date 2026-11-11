@@ -7,7 +7,7 @@ const config = require('./config');
 const msg = require('./messages');
 const { sendSms } = require('./sms');
 const { purgeIdPhotos } = require('./idphotos');
-const { purgeAttendancePhotos } = require('./attendance');
+const { purgeFlagPhotos } = require('./flag');
 const u = require('./util');
 
 const PICKUP_REMINDER_TIME = '07:00';
@@ -76,7 +76,7 @@ function startReminderScheduler(db) {
     try {
       await runReminders(db);
       await purgeIdPhotos(db);
-      await purgeAttendancePhotos(db);
+      await purgeFlagPhotos(db);
     } catch (err) {
       console.error('Reminder job failed:', err);
     } finally {

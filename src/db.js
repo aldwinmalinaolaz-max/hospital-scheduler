@@ -323,7 +323,8 @@ const SCHEMA = `
   -- Staff permission for the Referrals tab (administrators always have it)
   ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_referrals BOOLEAN NOT NULL DEFAULT FALSE;
 
-  -- Attendance Monitoring: hospital employees time in/out at registered kiosk devices
+  -- Flag Ceremony Attendance: employees check in on their phones inside a GPS geofence
+  -- (staff permission column keeps its original name)
   ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_attendance BOOLEAN NOT NULL DEFAULT FALSE;
   CREATE TABLE IF NOT EXISTS employees (
     id SERIAL PRIMARY KEY,
@@ -333,8 +334,6 @@ const SCHEMA = `
     middle_name TEXT,
     position TEXT,
     department TEXT,
-    shift_start TEXT,                     -- NULL with shift_end NULL = shifting / no fixed schedule
-    shift_end TEXT,
     pin_hash TEXT NOT NULL,
     failed_pins INTEGER NOT NULL DEFAULT 0,
     locked_until TIMESTAMPTZ,
@@ -343,32 +342,49 @@ const SCHEMA = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
-  CREATE TABLE IF NOT EXISTS attendance_kiosks (
+  -- FALSE for employees who are not expected at flag ceremonies (e.g. fixed night duty)
+  ALTER TABLE employees ADD COLUMN IF NOT EXISTS flag_required BOOLEAN NOT NULL DEFAULT TRUE;
+  -- Bumped when the PIN is reset or the employee is deactivated: signs them out of every phone
+  ALTER TABLE employees ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0;
+  CREATE TABLE IF NOT EXISTS flag_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    data TEXT NOT NULL,                   -- JSON, see DEFAULT_SETTINGS in flag.js
+    updated_by TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE TABLE IF NOT EXISTS flag_ceremonies (
     id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL,
-    token_hash TEXT NOT NULL UNIQUE,
-    require_photo BOOLEAN NOT NULL DEFAULT TRUE,
-    active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_by TEXT,
+    ceremony_date TEXT NOT NULL,          -- YYYY-MM-DD, hospital time
+    slot TEXT NOT NULL,                   -- W<weekday>-<start> for weekly ceremonies, M-<random> for special ones
+    title TEXT NOT NULL,
+    opens_at TEXT NOT NULL,               -- HH:MM check-in opens
+    starts_at TEXT NOT NULL,              -- HH:MM ceremony starts; later check-ins are late
+    closes_at TEXT NOT NULL,              -- HH:MM check-in closes
+    source TEXT NOT NULL DEFAULT 'AUTO',  -- AUTO (weekly schedule) | MANUAL (added by staff)
+    cancelled BOOLEAN NOT NULL DEFAULT FALSE,
+    cancel_reason TEXT,
+    updated_by TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_seen_at TIMESTAMPTZ
+    UNIQUE (ceremony_date, slot)
   );
-  CREATE TABLE IF NOT EXISTS attendance_logs (
+  CREATE TABLE IF NOT EXISTS flag_checkins (
     id SERIAL PRIMARY KEY,
+    ceremony_id INTEGER NOT NULL REFERENCES flag_ceremonies(id) ON DELETE CASCADE,
     employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK (kind IN ('IN', 'OUT')),
-    logged_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    source TEXT NOT NULL DEFAULT 'KIOSK', -- KIOSK | MANUAL
-    kiosk_id INTEGER REFERENCES attendance_kiosks(id) ON DELETE SET NULL,
-    reason TEXT,                          -- why a manual entry was added
+    status TEXT NOT NULL CHECK (status IN ('ON_TIME', 'LATE', 'EXCUSED')),
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    source TEXT NOT NULL DEFAULT 'GPS',   -- GPS (employee's phone) | MANUAL (set by staff)
+    lat DOUBLE PRECISION, lng DOUBLE PRECISION, accuracy_m INTEGER, distance_m INTEGER,
+    device_hash TEXT,                     -- one phone can check in only one employee per ceremony
+    user_agent TEXT,
+    remarks TEXT,                         -- reason for a manual entry or an excuse
     created_by TEXT,
-    voided_at TIMESTAMPTZ, voided_by TEXT, void_reason TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    UNIQUE (ceremony_id, employee_id)
   );
-  CREATE INDEX IF NOT EXISTS idx_attendance_logs_emp ON attendance_logs(employee_id, logged_at);
-  CREATE INDEX IF NOT EXISTS idx_attendance_logs_time ON attendance_logs(logged_at);
-  CREATE TABLE IF NOT EXISTS attendance_photos (
-    log_id INTEGER PRIMARY KEY REFERENCES attendance_logs(id) ON DELETE CASCADE,
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_flag_checkins_device ON flag_checkins(ceremony_id, device_hash) WHERE device_hash IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_flag_checkins_emp ON flag_checkins(employee_id);
+  CREATE TABLE IF NOT EXISTS flag_checkin_photos (
+    checkin_id INTEGER PRIMARY KEY REFERENCES flag_checkins(id) ON DELETE CASCADE,
     image BYTEA NOT NULL,
     mime TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -403,9 +419,10 @@ const SCHEMA = `
   ALTER TABLE site_images ENABLE ROW LEVEL SECURITY;
   ALTER TABLE opd_schedules ENABLE ROW LEVEL SECURITY;
   ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
-  ALTER TABLE attendance_kiosks ENABLE ROW LEVEL SECURITY;
-  ALTER TABLE attendance_logs ENABLE ROW LEVEL SECURITY;
-  ALTER TABLE attendance_photos ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE flag_settings ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE flag_ceremonies ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE flag_checkins ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE flag_checkin_photos ENABLE ROW LEVEL SECURITY;
 `;
 
 function wrap(run, execRaw) {

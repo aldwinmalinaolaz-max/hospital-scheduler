@@ -13,7 +13,7 @@ const faq = require('../faq');
 const directory = require('../directory');
 const clinics = require('../clinics');
 const registerReferralRoutes = require('./adminReferrals');
-const registerAttendanceRoutes = require('./adminAttendance');
+const registerFlagRoutes = require('./adminFlag');
 const payments = require('../payments');
 
 const COOKIE = 'hs_admin';
@@ -78,7 +78,7 @@ module.exports = function adminRoutes(db) {
     referrals: user.role === 'ADMIN' || user.can_referrals,
     attendance: user.role === 'ADMIN' || user.can_attendance,
   });
-  const SECTION_NAMES = { records: 'Records Requests', opd: 'OPD Appointments', referrals: 'Referrals', attendance: 'Attendance Monitoring' };
+  const SECTION_NAMES = { records: 'Records Requests', opd: 'OPD Appointments', referrals: 'Referrals', attendance: 'Flag Ceremony Attendance' };
   const requireAccess = (section) => (req, res, next) =>
     access(req.user)[section] ? next() : res.status(403).json({ error: `You don't have access to ${SECTION_NAMES[section]}.` });
 
@@ -120,7 +120,7 @@ module.exports = function adminRoutes(db) {
   function checkAccess(role, canRecords, canOpd, canReferrals = false, canAttendance = false) {
     if (role === 'ADMIN') return { canRecords: true, canOpd: true, canReferrals: true, canAttendance: true };
     if (!canRecords && !canOpd && !canReferrals && !canAttendance) {
-      throw new ValidationError('Give the user access to at least one section: Records Requests, OPD Appointments, Referrals or Attendance Monitoring.');
+      throw new ValidationError('Give the user access to at least one section: Records Requests, OPD Appointments, Referrals or Flag Ceremony Attendance.');
     }
     return { canRecords: !!canRecords, canOpd: !!canOpd, canReferrals: !!canReferrals, canAttendance: !!canAttendance };
   }
@@ -890,7 +890,7 @@ module.exports = function adminRoutes(db) {
 
   // Referrals from RHUs, barangay health centers and other hospitals (routes/adminReferrals.js)
   registerReferralRoutes(router, { db, requireAccess, ValidationError, whereClause });
-  registerAttendanceRoutes(router, { db, requireAccess, ValidationError, whereClause });
+  registerFlagRoutes(router, { db, requireAccess, ValidationError, whereClause });
 
   return router;
 };
