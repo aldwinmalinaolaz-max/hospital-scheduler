@@ -255,7 +255,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       ['Date', 'Ceremony', 'Employee No.', 'Last Name', 'First Name', 'Middle Name', 'Position', 'Division', 'Unit', 'Status', 'Time', 'Recorded By', 'Distance (m)', 'Remarks'],
       ...rows.map((r) => [
         c.date, c.title, r.employee_no, r.last_name, r.first_name, r.middle_name || '', r.position || '', r.division || '', r.unit || '',
-        label[r.status] || r.status, r.status === 'EXCUSED' ? '' : r.time || '', r.source === 'MANUAL' ? `STAFF (${r.marked_by})` : r.source === 'GPS' ? 'PHONE GPS' : '',
+        label[r.status] || r.status, r.status === 'EXCUSED' ? '' : r.time || '', r.source === 'MANUAL' ? `STAFF (${r.marked_by})` : r.source === 'QR' ? `QR SCAN (${r.marked_by})` : r.source === 'GPS' ? 'PHONE GPS' : '',
         r.distance_m ?? '', r.remarks || '',
       ]),
     ]);
@@ -298,6 +298,41 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     res.json({ ok: true });
   });
 
+  // QR scan at the venue, for employees without a phone: staff scan the QR on the employee's ID
+  // (or type the employee no.) and the employee is recorded present
+  router.post('/flag/ceremonies/:id/scan', can, async (req, res) => {
+    const c = await db.one('SELECT * FROM flag_ceremonies WHERE id = $1', [idParam(req.params.id)]);
+    if (!c) throw fail(404, 'Ceremony not found.');
+    if (c.cancelled) throw fail(409, 'This ceremony was cancelled or moved.');
+    const ph = flag.phase(c);
+    if (ph === 'UPCOMING') throw fail(409, `Check-in opens at ${u.formatTime12(c.opens_at)}.`);
+    if (ph === 'CLOSED') throw fail(409, `Check-in closed at ${u.formatTime12(c.closes_at)}. Use Mark on the attendance list instead.`);
+    const codes = flag.qrCandidates(req.body?.code);
+    if (!codes.length) throw new ValidationError('Scan a QR code or type the employee no.');
+    const found = await db.query('SELECT * FROM employees WHERE employee_no = ANY($1::text[])', [codes]);
+    // Prefer the whole code; otherwise the number must be unambiguous
+    const emp = found.find((e) => e.employee_no === codes[0]) || (found.length === 1 ? found[0] : null);
+    if (!emp) {
+      throw fail(404, found.length ? 'This QR code matches more than one employee. Type the employee no. instead.' : 'No employee with this ID / employee no. Check the number or add the employee under Employees.');
+    }
+    if (!emp.active) throw fail(403, `${flag.fullName(emp)} is marked inactive. Please check with HR.`);
+    const existing = await db.one('SELECT * FROM flag_checkins WHERE ceremony_id = $1 AND employee_id = $2', [c.id, emp.id]);
+    if (existing) {
+      return res.json({
+        result: 'ALREADY', employee: presentEmployee(emp), status: existing.status, source: existing.source,
+        time: flag.hhmm(new Date(existing.checked_at)), marked_by: existing.created_by,
+      });
+    }
+    const k = await db.one(
+      `INSERT INTO flag_checkins (ceremony_id, employee_id, status, checked_at, source, created_by, user_agent)
+       VALUES ($1, $2, 'ON_TIME', now(), 'QR', $3, $4)
+       ON CONFLICT (ceremony_id, employee_id) DO NOTHING RETURNING *`,
+      [c.id, emp.id, req.user.username, String(req.headers['user-agent'] || '').slice(0, 300)],
+    );
+    if (!k) return res.json({ result: 'ALREADY', employee: presentEmployee(emp), status: 'ON_TIME' }); // scanned twice at once
+    res.status(201).json({ result: 'RECORDED', employee: presentEmployee(emp), status: k.status, source: 'QR', time: flag.hhmm(new Date(k.checked_at)) });
+  });
+
   router.get('/flag/checkins/:id/photo', can, async (req, res) => {
     const p = await db.one('SELECT image, mime FROM flag_checkin_photos WHERE checkin_id = $1', [idParam(req.params.id)]);
     if (!p) return res.status(404).json({ error: 'No selfie (selfies are deleted after the retention period).' });
@@ -319,6 +354,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const ids = held.map((c) => c.id);
     const conds = [['(e.active AND e.flag_required OR EXISTS (SELECT 1 FROM flag_checkins k WHERE k.employee_id = e.id AND k.ceremony_id = ANY(?::int[])))', ids]];
     if (q.division) conds.push(['e.department = ?', String(q.division)]);
+    if (q.unit) conds.push(['e.unit = ?', String(q.unit)]);
     const { where, params } = whereClause(conds);
     const emps = await db.query(`SELECT e.* FROM employees e ${where} ORDER BY e.department NULLS LAST, e.unit NULLS LAST, e.last_name, e.first_name`, params);
     const checks = ids.length && emps.length

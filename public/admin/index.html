@@ -141,6 +141,7 @@
       <div class="alert warn hidden no-print" id="flagNotReady">Check-in is <b>off</b> until the venue location (geofence) is set. Go to <a href="#" data-flag-goto="settings">Venue &amp; schedule</a> and pin the flagpole on the map, or use <b>Use my current location</b> while standing there.</div>
       <div class="subtabs no-print" id="flagTabs" role="tablist">
         <button type="button" data-flag="ceremonies" class="on">Ceremonies</button>
+        <button type="button" data-flag="scan">Scan QR</button>
         <button type="button" data-flag="summary">Summary</button>
         <button type="button" data-flag="employees">Employees</button>
         <button type="button" data-flag="settings">Venue &amp; schedule</button>
@@ -171,6 +172,7 @@
           <form class="filters no-print" id="flagDetailFilters">
             <input type="search" name="q" placeholder="Search name or employee no.">
             <select name="division" data-flag-dept><option value="">All divisions</option></select>
+            <select name="unit" data-flag-unit><option value="">All units</option></select>
             <select name="status"><option value="">Everyone</option><option value="ON_TIME">Present</option><option value="EXCUSED">Excused</option><option value="MISSING">Absent / not yet</option></select>
           </form>
           <div class="table-wrap"><table>
@@ -180,11 +182,36 @@
         </div>
       </div>
 
+      <div data-flagview="scan" class="hidden">
+        <div class="scan-wrap">
+          <p class="muted small" style="margin-top:0">For employees without a phone: scan the QR code on their ID (or type their employee no.) at the venue. Check the name shown against the person in front of you.</p>
+          <label class="field">Ceremony<select id="scanCeremony"></select></label>
+          <div class="alert info hidden" id="scanNone"></div>
+          <div class="scan-cam" id="scanCam">
+            <video id="scanVideo" playsinline muted></video>
+            <div class="scan-frame" aria-hidden="true"></div>
+            <div class="scan-cam-note" id="scanCamNote">Camera is off</div>
+          </div>
+          <div class="scan-buttons">
+            <button class="btn" type="button" id="scanStart">📷 Start camera</button>
+            <button class="btn secondary hidden" type="button" id="scanStop">Stop camera</button>
+          </div>
+          <form id="scanManual" class="scan-manual" autocomplete="off">
+            <input name="code" placeholder="Or type the employee no." aria-label="Employee no.">
+            <button class="btn secondary" type="submit">Record</button>
+          </form>
+          <div id="scanResult" aria-live="assertive"></div>
+          <h3 class="small" style="margin:16px 0 6px">Recorded on this device (<span id="scanCount">0</span>)</h3>
+          <ul class="scan-log" id="scanLog"></ul>
+        </div>
+      </div>
+
       <div data-flagview="summary" class="hidden">
         <form class="filters no-print" id="flagSumForm">
           <label class="field">From<input type="date" name="from" required></label>
           <label class="field">To<input type="date" name="to" required></label>
           <label class="field">Division<select name="division" data-flag-dept><option value="">All divisions</option></select></label>
+          <label class="field">Unit<select name="unit" data-flag-unit><option value="">All units</option></select></label>
           <button class="btn" type="submit">View</button>
           <button class="btn secondary" type="button" id="flagSumCsv">Download (CSV)</button>
           <button class="btn secondary" type="button" onclick="window.print()">Print</button>
@@ -203,6 +230,7 @@
           <select name="active"><option value="1">Active</option><option value="0">Inactive</option><option value="">All</option></select>
           <button class="btn" type="button" id="flagAddEmpBtn">+ Add employee</button>
           <button class="btn secondary" type="button" id="flagImportBtn">Import list</button>
+          <button class="btn secondary" type="button" id="flagQrCardsBtn" title="Print QR cards for the employees listed">Print QR cards</button>
         </form>
         <div class="table-wrap"><table>
           <thead><tr><th>Employee no.</th><th>Name</th><th>Position</th><th>Division</th><th>Unit</th><th>Flag ceremony</th><th>Status</th><th class="no-print"></th></tr></thead>

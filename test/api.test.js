@@ -1313,6 +1313,65 @@ test('flag ceremony: move a date for a holiday, remarks for bad weather', async 
   assert.equal((await flagApi(`/ceremonies/${moved.data.id}`, { remarks: '' }, 'PATCH')).data.remarks, null);
 });
 
+test('flag ceremony: QR scan at the venue and unit filter in the summary', async () => {
+  const admin = await login();
+  const today = u.todayStr();
+  const flagApi = (path, body, method = 'POST', cookie = admin) => call(`/admin/flag${path}`, { method, cookie, body });
+  const a = (await flagApi('/employees', { employee_no: 'QR-1001', last_name: 'bautista', first_name: 'rosa', division: 'nursing', unit: 'icu' })).data;
+  const b = (await flagApi('/employees', { employee_no: 'QR-1002', last_name: 'ramos', first_name: 'leo', division: 'administrative', unit: 'hr' })).data;
+  const c = (await flagApi('/employees', { employee_no: 'QR-1003', last_name: 'tan', first_name: 'mia', division: 'nursing', unit: 'icu' })).data;
+  await flagApi(`/employees/${c.id}`, { active: false }, 'PATCH');
+
+  const open = (await flagApi('/ceremonies', { date: today, title: 'qr test ceremony', opens: '00:00', starts: '00:00', closes: '23:59' })).data;
+  const scanAt = (id, code, cookie) => flagApi(`/ceremonies/${id}/scan`, { code }, 'POST', cookie);
+
+  // The printed card's code, a plain employee no., and a longer text holding the number all work
+  let r = await scanAt(open.id, 'ZRMC-EMP:QR-1001');
+  assert.equal(r.status, 201);
+  assert.equal(r.data.result, 'RECORDED');
+  assert.equal(r.data.employee.name, 'BAUTISTA, ROSA');
+  assert.equal(r.data.employee.unit, 'ICU');
+  r = await scanAt(open.id, 'zrmc-emp:qr-1001');
+  assert.equal(r.data.result, 'ALREADY');
+  assert.equal(r.data.source, 'QR');
+  r = await scanAt(open.id, 'ZAMBOANGA REGIONAL MEDICAL CENTER\nRAMOS, LEO\nID NO. QR-1002');
+  assert.equal(r.data.result, 'RECORDED');
+  assert.equal(r.data.employee.employee_no, 'QR-1002');
+  // Errors
+  assert.equal((await scanAt(open.id, 'NOBODY-9')).status, 404);
+  assert.equal((await scanAt(open.id, '')).status, 400);
+  assert.match((await scanAt(open.id, 'QR-1003')).data.error, /inactive/);
+  assert.equal((await scanAt(open.id, 'QR-1001 QR-1002')).status, 404); // two employees in one code: ambiguous
+  const tomorrow = (await flagApi('/ceremonies', { date: u.addDays(today, 1), title: 'qr tomorrow', opens: '07:00', starts: '08:00', closes: '09:00' })).data;
+  assert.match((await scanAt(tomorrow.id, 'QR-1001')).data.error, /opens at 7:00 AM/);
+  const past = await db.one(
+    "INSERT INTO flag_ceremonies (ceremony_date, slot, title, opens_at, starts_at, closes_at, source) VALUES ($1, 'M-qrpast', 'QR PAST', '07:00', '08:00', '09:00', 'MANUAL') RETURNING id",
+    [u.addDays(today, -1)],
+  );
+  assert.match((await scanAt(past.id, 'QR-1001')).data.error, /closed at 9:00 AM/);
+  // Only staff with Flag Ceremony access can scan
+  const opd = (await loginAs('opd.only', 'password123')).cookie;
+  assert.equal((await scanAt(open.id, 'QR-1001', opd)).status, 403);
+
+  // The attendance list shows who scanned; a wrong scan can be removed
+  let roster = (await call(`/admin/flag/ceremonies/${open.id}`, { cookie: admin })).data.rows;
+  const rosa = roster.find((x) => x.id === a.id);
+  assert.deepEqual([rosa.status, rosa.source, rosa.marked_by], ['ON_TIME', 'QR', 'admin']);
+  assert.equal((await flagApi(`/ceremonies/${open.id}/mark`, { employee_id: b.id, status: 'CLEAR' })).status, 200);
+  roster = (await call(`/admin/flag/ceremonies/${open.id}`, { cookie: admin })).data.rows;
+  assert.equal(roster.find((x) => x.id === b.id).status, 'NOT_YET');
+  const csv = await (await fetch(`${base}/admin/flag/ceremonies/${open.id}/export.csv`, { headers: { Cookie: admin } })).text();
+  assert.match(csv, /QR-1001,BAUTISTA,ROSA,,,NURSING,ICU,Present,\d\d:\d\d,QR SCAN \(admin\)/);
+
+  // Summary filtered by unit
+  await db.query("UPDATE employees SET created_at = now() - interval '5 days' WHERE employee_no LIKE 'QR-%'");
+  const sum = (await call(`/admin/flag/summary?from=${u.addDays(today, -2)}&to=${today}&unit=ICU`, { cookie: admin })).data;
+  assert.ok(sum.rows.length >= 1);
+  assert.ok(sum.rows.every((x) => x.employee.unit === 'ICU'));
+  assert.ok(sum.rows.some((x) => x.employee.employee_no === 'QR-1001'));
+  assert.ok((await call('/admin/flag/options', { cookie: admin })).data.units.includes('ICU'));
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');

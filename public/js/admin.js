@@ -1456,6 +1456,10 @@ ${cat.hospitalName}`;
       const v = sel.value;
       sel.innerHTML = '<option value="">All divisions</option>' + flagOpts.divisions.map((d) => `<option${d === v ? ' selected' : ''}>${esc(d)}</option>`).join('');
     });
+    $$('[data-flag-unit]').forEach((sel) => {
+      const v = sel.value;
+      sel.innerHTML = '<option value="">All units</option>' + flagOpts.units.map((d) => `<option${d === v ? ' selected' : ''}>${esc(d)}</option>`).join('');
+    });
   }
   function showFlagSub(name) {
     flagSub = name;
@@ -1620,6 +1624,7 @@ ${cat.hospitalName}`;
       (r) =>
         (!q || r.name.includes(q) || r.employee_no.includes(q)) &&
         (!f.division || r.division === f.division) &&
+        (!f.unit || r.unit === f.unit) &&
         (!f.status || (f.status === 'MISSING' ? ['ABSENT', 'NOT_YET'].includes(r.status) : r.status === f.status)),
     );
     $('#flagDetailRows').innerHTML =
@@ -1631,7 +1636,7 @@ ${cat.hospitalName}`;
         <td class="small">${esc(r.unit || '')}</td>
         <td>${flagPill(r.status)}</td>
         <td class="nowrap">${r.time && r.status !== 'EXCUSED' ? fmtTime(r.time) : ''}</td>
-        <td class="small">${r.source === 'GPS' ? `Phone GPS<div class="sub">${r.distance_m} m from venue (±${r.accuracy_m} m)</div>` : r.source === 'MANUAL' ? `By ${esc(r.marked_by)}` : ''}${r.source === 'GPS' && r.marked_by ? `<div class="sub">changed by ${esc(r.marked_by)}</div>` : ''}</td>
+        <td class="small">${r.source === 'GPS' ? `Phone GPS<div class="sub">${r.distance_m} m from venue (±${r.accuracy_m} m)</div>` : r.source === 'MANUAL' ? `By ${esc(r.marked_by)}` : r.source === 'QR' ? `QR scan<div class="sub">by ${esc(r.marked_by)}</div>` : ''}${r.source === 'GPS' && r.marked_by ? `<div class="sub">changed by ${esc(r.marked_by)}</div>` : ''}</td>
         <td class="no-print">${r.has_photo ? `<img class="att-thumb" loading="lazy" src="/api/admin/flag/checkins/${r.checkin_id}/photo" alt="Selfie" data-flag-photo>` : ''}</td>
         <td class="small">${esc(r.remarks || '')}</td>
         <td class="no-print">${detail.ceremony.phase === 'CANCELLED' ? '' : `<button class="btn sm secondary" data-flag-mark="${r.id}">${r.checkin_id ? 'Change' : closed || detail.ceremony.phase === 'OPEN' ? 'Mark' : 'Excuse'}</button>`}</td>
@@ -1648,7 +1653,7 @@ ${cat.hospitalName}`;
     if (!b) return;
     const r = detail.rows.find((x) => x.id === Number(b.dataset.flagMark));
     const c = detail.ceremony;
-    const choices = (c.phase === 'UPCOMING' ? ['EXCUSED'] : ['ON_TIME', 'EXCUSED']).concat(r.checkin_id && r.source === 'MANUAL' ? ['CLEAR'] : []);
+    const choices = (c.phase === 'UPCOMING' ? ['EXCUSED'] : ['ON_TIME', 'EXCUSED']).concat(r.checkin_id && ['MANUAL', 'QR'].includes(r.source) ? ['CLEAR'] : []);
     const label = { ...FLAG_LABEL, ON_TIME: 'Present', CLEAR: r.status === 'EXCUSED' ? 'Remove excuse' : 'Remove (back to absent)' };
     openDialog(
       `<h2>${esc(r.name)}</h2>
@@ -1800,6 +1805,225 @@ ${cat.hospitalName}`;
       { wide: true, saveLabel: 'Import' },
     ),
   );
+
+
+  // ---------- QR scan at the venue (employees without a phone) ----------
+  const loadScript = (src, test) =>
+    new Promise((resolve, reject) => {
+      if (test()) return resolve();
+      const el = document.createElement('script');
+      el.src = src;
+      el.onload = resolve;
+      el.onerror = () => reject(new Error('A part of the page could not be loaded. Check the connection and try again.'));
+      document.head.appendChild(el);
+    });
+  const scan = { stream: null, timer: null, detector: null, canvas: null, last: { code: '', at: 0 }, busy: false, count: 0 };
+
+  flagLoaders.scan = guard(async () => {
+    await loadFlagOptions();
+    const { rows } = await api(`/admin/flag/ceremonies?month=${flagOpts.today.slice(0, 7)}`);
+    const todays = rows.filter((c) => c.date === flagOpts.today && !c.cancelled);
+    const open = todays.filter((c) => c.phase === 'OPEN');
+    const sel = $('#scanCeremony');
+    const keep = sel.value;
+    sel.innerHTML = open.map((c) => `<option value="${c.id}"${String(c.id) === keep ? ' selected' : ''}>${esc(c.title)} · check-in until ${fmtTime(c.closes)}</option>`).join('');
+    sel.disabled = !open.length;
+    const next = todays.find((c) => c.phase === 'UPCOMING');
+    const none = $('#scanNone');
+    none.classList.toggle('hidden', !!open.length);
+    none.innerHTML = open.length
+      ? ''
+      : next
+        ? `Check-in for <b>${esc(next.title)}</b> opens at <b>${fmtTime(next.opens)}</b>. Come back to this tab then.`
+        : 'No ceremony is open for check-in right now.';
+    $('#scanStart').disabled = !open.length;
+    $('#scanManual button').disabled = !open.length;
+    if (!open.length) stopScanner();
+  });
+
+  function stopScanner() {
+    clearTimeout(scan.timer);
+    scan.timer = null;
+    scan.stream?.getTracks().forEach((t) => t.stop());
+    scan.stream = null;
+    $('#scanVideo').srcObject = null;
+    $('#scanCam').classList.remove('on');
+    $('#scanCamNote').textContent = 'Camera is off';
+    $('#scanStart').classList.remove('hidden');
+    $('#scanStop').classList.add('hidden');
+  }
+
+  async function startScanner() {
+    const note = $('#scanCamNote');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      note.textContent = 'This browser cannot use the camera. Type the employee no. below instead.';
+      return;
+    }
+    note.textContent = 'Starting the camera…';
+    try {
+      scan.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }, audio: false });
+    } catch (err) {
+      note.textContent = err.name === 'NotAllowedError' ? 'Camera permission was blocked. Allow the camera for this site, or type the employee no. below.' : 'The camera could not be started. Type the employee no. below instead.';
+      return;
+    }
+    const video = $('#scanVideo');
+    video.srcObject = scan.stream;
+    await video.play().catch(() => {});
+    // The browser's own QR reader where available (Android Chrome), else jsQR (works everywhere)
+    scan.detector = null;
+    if ('BarcodeDetector' in window) {
+      try {
+        if ((await window.BarcodeDetector.getSupportedFormats()).includes('qr_code')) scan.detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      } catch {
+        scan.detector = null;
+      }
+    }
+    if (!scan.detector) await loadScript('/vendor/qr/jsQR.js', () => window.jsQR);
+    $('#scanCam').classList.add('on');
+    note.textContent = 'Point the camera at the QR code on the ID';
+    $('#scanStart').classList.add('hidden');
+    $('#scanStop').classList.remove('hidden');
+    scanFrame();
+  }
+
+  async function readFrame() {
+    const video = $('#scanVideo');
+    if (!video.videoWidth) return null;
+    if (scan.detector) {
+      const codes = await scan.detector.detect(video);
+      return codes[0]?.rawValue || null;
+    }
+    const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
+    const w = Math.round(video.videoWidth * scale);
+    const h = Math.round(video.videoHeight * scale);
+    scan.canvas = scan.canvas || document.createElement('canvas');
+    scan.canvas.width = w;
+    scan.canvas.height = h;
+    const ctx = scan.canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(video, 0, 0, w, h);
+    const code = window.jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+    return code?.data || null;
+  }
+
+  async function scanFrame() {
+    if (!scan.stream) return;
+    try {
+      const code = await readFrame();
+      // The same QR held in front of the camera is read once (until 4 s after it was last seen)
+      const now = Date.now();
+      if (code && !(code === scan.last.code && now - scan.last.at < 4000)) {
+        scan.last = { code, at: now };
+        await recordScan(code);
+      } else if (code) scan.last.at = now;
+    } catch {
+      // a frame that could not be read; try the next one
+    }
+    if (scan.stream) scan.timer = setTimeout(scanFrame, 180);
+  }
+
+  // Short sound and vibration so the marshal knows without looking
+  function feedback(ok) {
+    try {
+      navigator.vibrate?.(ok ? 80 : [60, 60, 60]);
+      const ac = (feedback.ac = feedback.ac || new (window.AudioContext || window.webkitAudioContext)());
+      const o = ac.createOscillator();
+      const g = ac.createGain();
+      o.frequency.value = ok ? 880 : 220;
+      g.gain.value = 0.08;
+      o.connect(g).connect(ac.destination);
+      o.start();
+      o.stop(ac.currentTime + (ok ? 0.12 : 0.35));
+    } catch {
+      // sound is optional
+    }
+  }
+
+  const SOURCE_LABEL = { GPS: 'phone GPS', QR: 'QR scan', MANUAL: 'HR' };
+  async function recordScan(code) {
+    if (scan.busy) return;
+    const id = $('#scanCeremony').value;
+    if (!id) return;
+    scan.busy = true;
+    const box = $('#scanResult');
+    try {
+      const r = await api(`/admin/flag/ceremonies/${id}/scan`, { method: 'POST', body: { code } });
+      const e = r.employee;
+      const who = `<div class="scan-name">${esc(e.name)}</div><div class="small">${esc(e.employee_no)}${e.position ? ` · ${esc(e.position)}` : ''}${e.division ? ` · ${esc(e.division)}` : ''}${e.unit ? ` / ${esc(e.unit)}` : ''}</div>`;
+      if (r.result === 'RECORDED') {
+        box.innerHTML = `<div class="scan-result ok"><div class="scan-big">✓ PRESENT · ${fmtTime(r.time)}</div>${who}</div>`;
+        scan.count += 1;
+        $('#scanCount').textContent = scan.count;
+        $('#scanLog').insertAdjacentHTML('afterbegin', `<li><b>${fmtTime(r.time)}</b> ${esc(e.name)} <span class="muted">${esc(e.employee_no)}</span></li>`);
+        feedback(true);
+      } else {
+        const what = r.status === 'EXCUSED' ? 'is excused for this ceremony' : `was already recorded present${r.time ? ` at ${fmtTime(r.time)}` : ''}${r.source ? ` (${SOURCE_LABEL[r.source] || r.source})` : ''}`;
+        box.innerHTML = `<div class="scan-result info"><div class="scan-big">Already recorded</div>${who}<div class="small">${esc(what)}.</div></div>`;
+        feedback(true);
+      }
+    } catch (err) {
+      if (err.status === 401) return start();
+      box.innerHTML = `<div class="scan-result bad"><div class="scan-big">✗ Not recorded</div><div>${esc(err.message)}</div></div>`;
+      feedback(false);
+      if (err.status === 409) flagLoaders.scan(); // check-in closed: refresh the ceremony list
+    } finally {
+      scan.busy = false;
+    }
+  }
+
+  $('#scanStart').addEventListener('click', startScanner);
+  $('#scanStop').addEventListener('click', stopScanner);
+  $('#scanManual').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = e.target.code;
+    if (!input.value.trim()) return input.focus();
+    await recordScan(input.value.trim());
+    input.value = '';
+    input.focus();
+  });
+  // The camera is switched off whenever the scan screen is left or hidden
+  $$('#flagTabs button, #tabs button').forEach((b) => b.addEventListener('click', () => b.dataset.flag !== 'scan' && stopScanner()));
+  document.addEventListener('visibilitychange', () => document.hidden && stopScanner());
+
+  // ---------- Printable QR cards for employee IDs ----------
+  $('#flagQrCardsBtn').addEventListener('click', guard(async () => {
+    const rows = (empF._rows || []).filter((e) => e.active);
+    if (!rows.length) return alert('No active employees in the list. Change the filters first.');
+    if (rows.length > 500 && !confirm(`Print QR cards for ${rows.length} employees?`)) return;
+    await loadScript('/vendor/qr/qrcode.js', () => window.qrcode);
+    const svg = (text) => {
+      const q = window.qrcode(0, 'M');
+      q.addData(text);
+      q.make();
+      return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+    };
+    const cards = rows
+      .map(
+        (e) => `<div class="card">
+          <div class="qr">${svg(`ZRMC-EMP:${e.employee_no}`)}</div>
+          <div class="info"><div class="org">${esc(cat.hospitalName)}</div><div class="what">FLAG CEREMONY ATTENDANCE</div>
+            <div class="name">${esc(e.name)}</div><div class="no">${esc(e.employee_no)}</div>
+            <div class="div">${esc([e.division, e.unit].filter(Boolean).join(' / '))}</div></div>
+        </div>`,
+      )
+      .join('');
+    const w = window.open('', '_blank');
+    if (!w) return alert('Allow pop-ups for this site to print the QR cards.');
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Employee QR cards</title><style>
+      body { font-family: Arial, sans-serif; margin: 0; padding: 12px; color: #111; }
+      .bar { margin-bottom: 12px; font-size: 14px; } .bar button { font-size: 14px; padding: 6px 14px; }
+      .grid { display: flex; flex-wrap: wrap; gap: 6mm; }
+      .card { width: 85.6mm; height: 54mm; box-sizing: border-box; border: 1px dashed #999; border-radius: 3mm; padding: 3mm; display: flex; gap: 3mm; align-items: center; break-inside: avoid; }
+      .qr { width: 40mm; height: 40mm; flex: none; } .qr svg { width: 100%; height: 100%; }
+      .info { min-width: 0; } .org { font-size: 7pt; color: #0f4d26; font-weight: bold; text-transform: uppercase; }
+      .what { font-size: 6.5pt; color: #666; margin-bottom: 2mm; letter-spacing: .03em; }
+      .name { font-size: 10pt; font-weight: bold; line-height: 1.15; } .no { font-family: monospace; font-size: 11pt; margin-top: 1mm; }
+      .div { font-size: 7pt; color: #444; margin-top: 1mm; }
+      @media print { .bar { display: none; } body { padding: 0; } @page { margin: 10mm; } }
+    </style></head><body><div class="bar"><b>${rows.length} QR card${rows.length === 1 ? '' : 's'}</b> — cut along the dashed lines and attach to the back of each employee's ID. <button onclick="print()">Print</button></div>
+    <div class="grid">${cards}</div></body></html>`);
+    w.document.close();
+    w.focus();
+  }));
 
   // Venue, geofence and weekly schedule
   const setF = $('#flagSettingsForm');

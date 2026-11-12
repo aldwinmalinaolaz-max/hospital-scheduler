@@ -62,6 +62,7 @@
           <p><b>${esc(c.title)}</b><br>${esc(when(c))}</p>${notes(c)}
           ${m.status === 'EXCUSED' ? `<p class="muted">${esc(m.remarks || '')}</p>` : `<p class="big">${fmtTime(m.time)}</p>${pill(m.status, m.label)}`}
           ${m.source === 'MANUAL' && m.status !== 'EXCUSED' ? '<p class="muted small">Recorded by HR.</p>' : ''}
+          ${m.source === 'QR' ? '<p class="muted small">Recorded by QR scan at the venue.</p>' : ''}
         </section>`;
       }
       if (c.phase === 'UPCOMING') {

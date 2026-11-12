@@ -229,6 +229,16 @@ function cleanEmployee(b, { partial = false, current = null } = {}) {
   return [out, null];
 }
 
+// Employee QR codes: the printed cards hold "ZRMC-EMP:<employee no.>"; a QR on an existing ID
+// may hold just the employee no. or a longer text that contains it. Returns possible numbers.
+const QR_PREFIX = 'ZRMC-EMP:';
+function qrCandidates(code) {
+  const t = String(code || '').trim().toUpperCase().slice(0, 500);
+  if (!t) return [];
+  if (t.startsWith(QR_PREFIX)) return [t.slice(QR_PREFIX.length).trim()];
+  return [...new Set([t, ...(t.match(/[A-Z0-9][A-Z0-9-]{1,29}/g) || [])])].slice(0, 30);
+}
+
 const checkPin = (pin) => (/^\d{6}$/.test(String(pin || '')) ? null : 'The PIN must be exactly 6 digits.');
 const randomPin = () => String(crypto.randomInt(0, 1e6)).padStart(6, '0');
 const fullName = (e) => `${e.last_name}, ${e.first_name}${e.middle_name ? ` ${e.middle_name[0]}.` : ''}`;
@@ -312,6 +322,8 @@ module.exports = {
   distanceM,
   checkLocation,
   cleanEmployee,
+  QR_PREFIX,
+  qrCandidates,
   checkPin,
   randomPin,
   fullName,

@@ -669,3 +669,25 @@ label.check { display: flex; gap: 8px; align-items: flex-start; } label.check in
 /* Keep the reason readable on crossed-out (cancelled / moved) rows */
 tr.voided td .sub { display: inline-block; text-decoration: none; }
 #flagSchedRows select[data-k=weekday] { min-width: 130px; }
+
+/* ---------- Flag ceremony QR scan (staff at the venue) ---------- */
+.scan-wrap { max-width: 520px; }
+.scan-cam { position: relative; aspect-ratio: 4 / 3; background: #111; border-radius: 12px; overflow: hidden; margin: 10px 0; }
+.scan-cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scan-frame { position: absolute; top: 18%; bottom: 18%; left: 22%; right: 22%; border: 3px solid rgba(255, 255, 255, 0.85); border-radius: 12px; box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.25); display: none; }
+.scan-cam.on .scan-frame { display: block; }
+.scan-cam-note { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 12px; color: #fff; background: rgba(0, 0, 0, 0.55); font-size: 0.85rem; text-align: center; }
+.scan-cam:not(.on) .scan-cam-note { top: 0; display: grid; place-items: center; background: none; }
+.scan-buttons { display: flex; gap: 8px; }
+.scan-buttons .btn { flex: 1; }
+.scan-manual { display: flex; gap: 8px; margin-top: 10px; }
+.scan-manual input { flex: 1; min-width: 0; font-size: 1.05rem; }
+.scan-result { margin-top: 12px; padding: 14px 16px; border-radius: 12px; border: 2px solid; }
+.scan-result.ok { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.scan-result.info { background: var(--info-soft); border-color: var(--info); color: var(--info); }
+.scan-result.bad { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+.scan-big { font-size: 1.35rem; font-weight: 700; }
+.scan-name { font-size: 1.15rem; font-weight: 700; color: var(--text); margin-top: 4px; }
+.scan-result .small { color: var(--text); }
+.scan-log { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; font-size: 0.9rem; }
+.scan-log li { padding: 5px 0; border-bottom: 1px solid var(--border); }
