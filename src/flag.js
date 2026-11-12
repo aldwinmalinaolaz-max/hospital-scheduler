@@ -10,6 +10,20 @@ const EMPLOYEE_COOKIE = 'hs_emp';
 const DEVICE_COOKIE = 'hs_dev';
 const MAX_PHOTO_BYTES = 600 * 1024;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+// Hospital divisions (the Division dropdown for employees)
+const DIVISIONS = ['ADMINISTRATIVE', 'FINANCE', 'MEDICAL', 'NURSING', 'OMCC'];
+// Matches typed or imported names to a division, e.g. NURSING SERVICE → NURSING,
+// OFFICE OF THE MEDICAL CENTER CHIEF → OMCC. Returns null if none fits.
+function matchDivision(v) {
+  const s = String(v || '').trim().toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  if (/^(OMCC|OFFICE OF THE MEDICAL CENTER CHIEF|MEDICAL CENTER CHIEF)\b/.test(s)) return 'OMCC';
+  if (/^ADMIN/.test(s)) return 'ADMINISTRATIVE';
+  if (/^FINANC/.test(s)) return 'FINANCE';
+  if (/^NURS/.test(s)) return 'NURSING';
+  if (/^MEDICAL\b/.test(s)) return 'MEDICAL';
+  return null;
+}
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 // Check-in results. ABSENT is never stored: it is an employee with no row for a ceremony that has closed.
@@ -189,7 +203,7 @@ function checkLocation(settings, b) {
 // ---------- Employees ----------
 
 // Validates employee fields from the staff panel or a pasted list; returns [values, error]
-function cleanEmployee(b, { partial = false } = {}) {
+function cleanEmployee(b, { partial = false, current = null } = {}) {
   const out = {};
   const has = (k) => !partial || b[k] !== undefined;
   if (has('employee_no')) {
@@ -204,7 +218,12 @@ function cleanEmployee(b, { partial = false } = {}) {
   if (has('middle_name')) out.middle_name = clean(b.middle_name, 60) || null;
   if (has('position')) out.position = clean(b.position, 80) || null;
   // Division is stored in the department column
-  if (has('division') || (partial && b.department !== undefined)) out.department = clean(b.division ?? b.department, 80) || null;
+  if (has('division') || (partial && b.department !== undefined)) {
+    const raw = clean(b.division ?? b.department, 80);
+    // A division saved before the dropdown existed may be kept as it is
+    out.department = raw ? matchDivision(raw) || (raw === current ? raw : undefined) : null;
+    if (out.department === undefined) return [null, `Division must be one of: ${DIVISIONS.join(', ')}.`];
+  }
   if (has('unit')) out.unit = clean(b.unit, 80) || null;
   if (b.flag_required !== undefined) out.flag_required = !(b.flag_required === false || b.flag_required === 'false' || b.flag_required === '0');
   return [out, null];
@@ -274,6 +293,8 @@ module.exports = {
   EMPLOYEE_COOKIE,
   DEVICE_COOKIE,
   STATUSES,
+  DIVISIONS,
+  matchDivision,
   WEEKDAYS,
   IMPORT_COLUMNS,
   DEFAULT_SETTINGS,

@@ -1627,7 +1627,8 @@ ${cat.hospitalName}`;
         .map(
           (r) => `<tr>
         <td>${esc(r.name)}<div class="sub mono">${esc(r.employee_no)}${r.position ? ` · ${esc(r.position)}` : ''}</div></td>
-        <td class="small">${esc(r.division || '')}${r.unit ? `<div class="sub">${esc(r.unit)}</div>` : ''}</td>
+        <td class="small">${esc(r.division || '')}</td>
+        <td class="small">${esc(r.unit || '')}</td>
         <td>${flagPill(r.status)}</td>
         <td class="nowrap">${r.time && r.status !== 'EXCUSED' ? fmtTime(r.time) : ''}</td>
         <td class="small">${r.source === 'GPS' ? `Phone GPS<div class="sub">${r.distance_m} m from venue (±${r.accuracy_m} m)</div>` : r.source === 'MANUAL' ? `By ${esc(r.marked_by)}` : ''}${r.source === 'GPS' && r.marked_by ? `<div class="sub">changed by ${esc(r.marked_by)}</div>` : ''}</td>
@@ -1636,7 +1637,7 @@ ${cat.hospitalName}`;
         <td class="no-print">${detail.ceremony.phase === 'CANCELLED' ? '' : `<button class="btn sm secondary" data-flag-mark="${r.id}">${r.checkin_id ? 'Change' : closed || detail.ceremony.phase === 'OPEN' ? 'Mark' : 'Excuse'}</button>`}</td>
       </tr>`,
         )
-        .join('') || '<tr><td colspan="8" class="empty">No employees match.</td></tr>';
+        .join('') || '<tr><td colspan="9" class="empty">No employees match.</td></tr>';
   }
   detF.addEventListener('input', renderDetail);
   $('#flagBack').addEventListener('click', () => flagLoaders.ceremonies());
@@ -1677,13 +1678,14 @@ ${cat.hospitalName}`;
         .map(
           (r) => `<tr>
         <td>${esc(r.employee.name)}<div class="sub mono">${esc(r.employee.employee_no)}</div></td>
-        <td class="small">${esc(r.employee.division || '')}${r.employee.unit ? `<div class="sub">${esc(r.employee.unit)}</div>` : ''}</td>
+        <td class="small">${esc(r.employee.division || '')}</td>
+        <td class="small">${esc(r.employee.unit || '')}</td>
         <td>${r.held}</td><td>${r.on_time}</td><td>${r.excused || '—'}</td>
         <td>${r.absent ? `<b style="color:var(--danger)">${r.absent}</b>` : '—'}</td>
         <td>${r.rate === null ? '—' : `${r.rate}%`}</td>
       </tr>`,
         )
-        .join('') || '<tr><td colspan="8" class="empty">No employees.</td></tr>';
+        .join('') || '<tr><td colspan="9" class="empty">No employees.</td></tr>';
   });
   sumF.addEventListener('submit', (e) => (e.preventDefault(), flagLoaders.summary()));
   $('#flagSumCsv').addEventListener('click', () => (window.location.href = `/api/admin/flag/summary.csv?${sumQuery()}`));
@@ -1735,7 +1737,9 @@ ${cat.hospitalName}`;
          <label class="field"><span class="req">First name</span><input name="first_name" value="${esc(e.first_name || '')}" required></label>
          <label class="field">Middle name<input name="middle_name" value="${esc(e.middle_name || '')}"></label>
          <label class="field">Position<input name="position" value="${esc(e.position || '')}"></label>
-         <label class="field">Division<input name="division" list="flagDivList" value="${esc(e.division || '')}" placeholder="E.G. NURSING SERVICE">${suggest('flagDivList', flagOpts?.divisions)}</label>
+         <label class="field">Division<select name="division"><option value="">— Select division —</option>${[...new Set([...(flagOpts?.division_choices || []), ...(e.division ? [e.division] : [])])]
+           .map((d) => `<option${d === e.division ? ' selected' : ''}>${esc(d)}</option>`)
+           .join('')}</select></label>
          <label class="field">Unit<input name="unit" list="flagUnitList" value="${esc(e.unit || '')}" placeholder="E.G. EMERGENCY ROOM">${suggest('flagUnitList', flagOpts?.units)}</label>
          <label class="check span-2"><input type="checkbox" name="flag_required" ${e.flag_required ? 'checked' : ''}> Required to attend flag ceremonies (untick e.g. for fixed night duty; they are then not counted absent)</label>
          ${isNew ? '<label class="field span-2">PIN (6 digits)<input name="pin" inputmode="numeric" maxlength="6" placeholder="Leave blank for a random PIN"></label>' : `<label class="check span-2"><input type="checkbox" name="active" ${e.active ? 'checked' : ''}> Active (can sign in and check in)</label>`}
@@ -1773,8 +1777,8 @@ ${cat.hospitalName}`;
     openDialog(
       `<h2>Import employees</h2>
        <p class="muted small">Paste from Excel or a CSV file, one employee per line, in this column order:<br>
-       <b>Employee no., Last name, First name, Middle name, Position, Division, Unit</b>. A header row is skipped. Each employee gets a random 6-digit PIN, listed after the import for printing.</p>
-       <textarea name="csv" rows="10" data-nocaps placeholder="2023-0001, DELA CRUZ, JUAN, SANTOS, NURSE II, NURSING SERVICE, EMERGENCY ROOM" required></textarea>`,
+       <b>Employee no., Last name, First name, Middle name, Position, Division, Unit</b>. Division must be ${esc((flagOpts?.division_choices || []).join(', '))} (e.g. "Nursing Service" is read as NURSING). A header row is skipped. Each employee gets a random 6-digit PIN, listed after the import for printing.</p>
+       <textarea name="csv" rows="10" data-nocaps placeholder="2023-0001, DELA CRUZ, JUAN, SANTOS, NURSE II, NURSING, EMERGENCY ROOM" required></textarea>`,
       async (d) => {
         const { rows } = await api('/admin/flag/employees/import', { method: 'POST', body: { csv: d.csv } });
         await loadFlagOptions(true);

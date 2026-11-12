@@ -1031,7 +1031,10 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.equal(e1.status, 201);
   assert.equal(e1.data.pin, '123456');
   assert.equal(e1.data.flag_required, true);
-  assert.equal(e1.data.division, 'NURSING SERVICE');
+  assert.equal(e1.data.division, 'NURSING'); // "nursing service" is read as the NURSING division
+  assert.match((await addEmp({ employee_no: '2023-0099', last_name: 'x', first_name: 'y', division: 'radiology' })).data.error, /Division must be one of: ADMINISTRATIVE, FINANCE, MEDICAL, NURSING, OMCC/);
+  assert.equal((await addEmp({ employee_no: '2023-0098', last_name: 'x', first_name: 'y', division: 'office of the medical center chief' })).data.division, 'OMCC');
+  await db.query("DELETE FROM employees WHERE employee_no = '2023-0098'");
   assert.equal(e1.data.unit, 'EMERGENCY ROOM');
   assert.equal((await addEmp({ employee_no: '2023-0001', last_name: 'x', first_name: 'y' })).status, 400);
   const imp = await call('/admin/flag/employees/import', {
@@ -1042,15 +1045,22 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.equal(imp.data.rows.length, 2);
   assert.match(imp.data.rows[0].pin, /^\d{6}$/);
   assert.equal(imp.data.rows[1].name, 'SANTOS, MARIA CLARA');
-  assert.deepEqual([imp.data.rows[1].division, imp.data.rows[1].unit], ['MEDICAL SERVICE', 'HHIMS']);
+  assert.deepEqual([imp.data.rows[1].division, imp.data.rows[1].unit], ['MEDICAL', 'HHIMS']);
   const optsAfter = (await call('/admin/flag/options', { cookie: hr })).data;
-  assert.deepEqual(optsAfter.divisions, ['MEDICAL SERVICE', 'NURSING SERVICE']);
+  assert.deepEqual(optsAfter.division_choices, ['ADMINISTRATIVE', 'FINANCE', 'MEDICAL', 'NURSING', 'OMCC']);
+  assert.deepEqual(optsAfter.divisions, optsAfter.division_choices);
   assert.deepEqual(optsAfter.units, ['EMERGENCY ROOM', 'HHIMS', 'PEDIATRICS']);
-  assert.equal((await call('/admin/flag/employees?division=NURSING%20SERVICE', { cookie: hr })).data.rows.length, 2);
+  assert.equal((await call('/admin/flag/employees?division=NURSING', { cookie: hr })).data.rows.length, 2);
   assert.equal((await call('/admin/flag/employees?q=pediatrics', { cookie: hr })).data.rows[0].employee_no, '2023-0002');
   assert.equal((await call('/admin/flag/employees/import', { method: 'POST', cookie: hr, body: { csv: '2023-0009,A,B\n2023-0001,C,D' } })).status, 400);
   assert.equal((await db.one("SELECT COUNT(*)::int AS n FROM employees WHERE employee_no = '2023-0009'")).n, 0);
   const [ana, maria] = imp.data.rows;
+  // A division saved before the dropdown existed stays when other details are edited, but can't be typed in anew
+  await db.query("UPDATE employees SET department = 'ANCILLARY' WHERE id = $1", [maria.id]);
+  assert.equal((await call(`/admin/flag/employees/${maria.id}`, { method: 'PATCH', cookie: hr, body: { position: 'clerk ii', division: 'ANCILLARY' } })).data.division, 'ANCILLARY');
+  assert.ok((await call('/admin/flag/options', { cookie: hr })).data.divisions.includes('ANCILLARY')); // still filterable
+  assert.equal((await call(`/admin/flag/employees/${ana.id}`, { method: 'PATCH', cookie: hr, body: { division: 'ANCILLARY' } })).status, 400);
+  await call(`/admin/flag/employees/${maria.id}`, { method: 'PATCH', cookie: hr, body: { division: 'medical' } });
 
   // Sign-in, wrong PINs and lockout
   const p1 = phone();
@@ -1192,7 +1202,7 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.deepEqual([...csvBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]); // BOM so Excel reads UTF-8
   const csvText = csvBytes.toString('utf8');
   assert.match(csvText, /Date,Ceremony,Employee No\./);
-  assert.match(csvText, /2023-0002,REYES,ANA,,NURSE II,NURSING SERVICE,PEDIATRICS,Excused,,STAFF \(hr\.clerk\),,ON DUTY AT ER/);
+  assert.match(csvText, /2023-0002,REYES,ANA,,NURSE II,NURSING,PEDIATRICS,Excused,,STAFF \(hr\.clerk\),,ON DUTY AT ER/);
 
   // Summary over the closed ceremony only (today's are still open)
   const sum = (await call(`/admin/flag/summary?from=${past}&to=${today}`, { cookie: hr })).data;

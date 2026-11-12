@@ -46,7 +46,9 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       db.one('SELECT updated_by, updated_at FROM flag_settings WHERE id = 1'),
     ]);
     res.json({
-      divisions: deps.map((d) => d.department),
+      // The fixed divisions, plus any older values still in use (for filtering)
+      divisions: [...flag.DIVISIONS, ...deps.map((d) => d.department).filter((d) => !flag.DIVISIONS.includes(d))],
+      division_choices: flag.DIVISIONS,
       units: units.map((d) => d.unit),
       today: u.todayStr(), // hospital date (the browser's clock or time zone may differ)
       settings,
@@ -405,7 +407,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const id = idParam(req.params.id);
     const before = await db.one('SELECT * FROM employees WHERE id = $1', [id]);
     if (!before) throw fail(404, 'Employee not found.');
-    const [v, err] = flag.cleanEmployee(req.body || {}, { partial: true });
+    const [v, err] = flag.cleanEmployee(req.body || {}, { partial: true, current: before.department });
     if (err) throw new ValidationError(err);
     if (v.employee_no && v.employee_no !== before.employee_no && (await db.one('SELECT 1 FROM employees WHERE employee_no = $1', [v.employee_no]))) {
       throw new ValidationError(`Employee no. ${v.employee_no} already exists.`);
