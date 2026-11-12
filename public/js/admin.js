@@ -1486,13 +1486,19 @@ ${cat.hospitalName}`;
           const n = (v) => (v === null ? '' : v);
           return `<tr class="${c.cancelled ? 'voided' : ''}">
         <td class="nowrap"><b>${esc(fmtDate(c.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</b>${c.phase === 'OPEN' ? '<div class="sub"><span class="flag-pill ok">Check-in open</span></div>' : ''}</td>
-        <td>${esc(c.title)}${c.source === 'MANUAL' ? '<div class="sub">special / edited</div>' : ''}${c.cancelled ? `<div class="sub" style="color:var(--danger)">CANCELLED: ${esc(c.cancel_reason || '')}</div>` : ''}</td>
+        <td>${esc(c.title)}${c.moved_from_date ? `<div class="sub">Moved from ${esc(fmtDate(c.moved_from_date, { weekday: 'short', month: 'short', day: 'numeric' }))}</div>` : c.source === 'MANUAL' ? '<div class="sub">special / edited</div>' : ''}
+          ${c.moved_to_date ? `<div class="sub" style="color:var(--warn)">MOVED TO ${esc(fmtDate(c.moved_to_date, { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase())}: ${esc(c.cancel_reason || '')}</div>` : c.cancelled ? `<div class="sub" style="color:var(--danger)">CANCELLED: ${esc(c.cancel_reason || '')}</div>` : ''}
+          ${c.remarks ? `<div class="flag-remarks">📝 ${esc(c.remarks)}</div>` : ''}</td>
         <td class="small nowrap">${flagTimes(c)}</td>
         <td>${c.cancelled ? '' : c.on_time}</td><td>${c.cancelled ? '' : c.late}</td><td>${c.cancelled ? '' : c.excused}</td>
         <td>${c.cancelled ? '' : c.absent !== null ? `<b style="color:${c.absent ? 'var(--danger)' : 'inherit'}">${c.absent}</b>` : `<span class="muted small">${n(c.not_yet)} not yet</span>`}</td>
         <td class="no-print nowrap">
           ${c.cancelled ? '' : `<button class="btn sm" data-flag-open="${c.id}">Attendance</button>`}
-          ${c.phase === 'CLOSED' ? '' : c.cancelled ? `<button class="btn sm secondary" data-flag-restore="${c.id}">Restore</button>` : `<button class="btn sm secondary" data-flag-edit="${c.id}">Edit</button> <button class="btn sm danger" data-flag-cancel="${c.id}">Cancel</button>`}
+          ${c.moved_to_date ? '' : c.cancelled ? (c.phase === 'CLOSED' ? '' : `<button class="btn sm secondary" data-flag-restore="${c.id}">Restore</button>`) : ''}
+          ${!c.cancelled && c.phase !== 'CLOSED' ? `<button class="btn sm secondary" data-flag-edit="${c.id}">Edit</button>` : ''}
+          ${!c.cancelled && c.phase === 'UPCOMING' ? `<button class="btn sm secondary" data-flag-move="${c.id}">Move date</button>` : ''}
+          ${!c.cancelled ? `<button class="btn sm secondary" data-flag-remarks="${c.id}">Remarks</button>` : ''}
+          ${!c.cancelled && c.phase !== 'CLOSED' ? `<button class="btn sm danger" data-flag-cancel="${c.id}">Cancel</button>` : ''}
         </td>
       </tr>`;
         })
@@ -1513,6 +1519,7 @@ ${cat.hospitalName}`;
          <label class="field"><span class="req">Check-in opens</span><input type="time" name="opens" value="${esc(c.opens)}" required></label>
          <label class="field"><span class="req">Starts (late after)</span><input type="time" name="starts" value="${esc(c.starts)}" required></label>
          <label class="field"><span class="req">Check-in closes</span><input type="time" name="closes" value="${esc(c.closes)}" required></label>
+         <label class="field span-2">Remarks <span class="hint">Shown to employees, e.g. HELD AT THE MAIN LOBBY DUE TO RAIN</span><input name="remarks" maxlength="300" value="${esc(c.remarks || '')}"></label>
        </div>`,
       async (d) => {
         await api(isNew ? '/admin/flag/ceremonies' : `/admin/flag/ceremonies/${c.id}`, { method: isNew ? 'POST' : 'PATCH', body: d });
@@ -1541,6 +1548,41 @@ ${cat.hospitalName}`;
         { saveLabel: 'Cancel ceremony' },
       );
     }
+    if (d.flagMove) {
+      const c = flagRowsData.find((x) => x.id === Number(d.flagMove));
+      return openDialog(
+        `<h2>Move ceremony to another date</h2>
+         <p>${esc(c.title)} · <b>${esc(fmtDate(c.date))}</b></p>
+         <p class="muted small">For a holiday or another event on that day. ${esc(fmtDate(c.date, { weekday: 'short', month: 'short', day: 'numeric' }))} is kept in the list as "moved" (not counted), and excuses already recorded go with the ceremony.</p>
+         <div class="grid grid-2">
+           <label class="field"><span class="req">New date</span><input type="date" name="date" min="${flagOpts.today}" required></label>
+           <span></span>
+           <label class="field span-2"><span class="req">Reason</span><input name="reason" required placeholder="E.G. HOLIDAY: BONIFACIO DAY"></label>
+           <label class="field"><span class="req">Check-in opens</span><input type="time" name="opens" value="${esc(c.opens)}" required></label>
+           <label class="field"><span class="req">Starts (late after)</span><input type="time" name="starts" value="${esc(c.starts)}" required></label>
+           <label class="field"><span class="req">Check-in closes</span><input type="time" name="closes" value="${esc(c.closes)}" required></label>
+         </div>`,
+        async (f) => {
+          await api(`/admin/flag/ceremonies/${c.id}/move`, { method: 'POST', body: f });
+          monthF.month.value = f.date.slice(0, 7);
+          flagLoaders.ceremonies();
+        },
+        { saveLabel: 'Move ceremony' },
+      );
+    }
+    if (d.flagRemarks) {
+      const c = flagRowsData.find((x) => x.id === Number(d.flagRemarks));
+      return openDialog(
+        `<h2>Remarks</h2><p>${esc(c.title)} · ${esc(fmtDate(c.date))}</p>
+         <label class="field">Remarks <span class="hint">e.g. bad weather. Shown to employees on the check-in page and on this list. Leave blank to remove.</span>
+           <textarea name="remarks" maxlength="300" rows="3" placeholder="E.G. HELD AT THE MAIN LOBBY DUE TO RAIN; SHORTENED DUE TO BAD WEATHER">${esc(c.remarks || '')}</textarea></label>
+         ${c.phase === 'UPCOMING' || c.phase === 'OPEN' ? '<p class="muted small">If the ceremony will not push through at all, use <b>Cancel</b> instead so nobody is marked absent.</p>' : ''}`,
+        async (f) => {
+          await api(`/admin/flag/ceremonies/${c.id}`, { method: 'PATCH', body: { remarks: f.remarks } });
+          flagLoaders.ceremonies();
+        },
+      );
+    }
     if (d.flagRestore) {
       await api(`/admin/flag/ceremonies/${d.flagRestore}`, { method: 'PATCH', body: { cancelled: false } });
       flagLoaders.ceremonies();
@@ -1558,7 +1600,9 @@ ${cat.hospitalName}`;
     $('#flagCsv').href = `/api/admin/flag/ceremonies/${c.id}/export.csv`;
     $('#flagDetailHead').innerHTML = `<h2 style="margin:0">${esc(c.title)}</h2>
       <p class="muted" style="margin:2px 0 12px">${esc(fmtDate(c.date, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }))} · ${esc(detail.venue)} ·
-      Check-in ${fmtTime(c.opens)} – ${fmtTime(c.closes)}, starts ${fmtTime(c.starts)}${c.phase === 'OPEN' ? ' · <b>check-in open now</b>' : ''}</p>`;
+      Check-in ${fmtTime(c.opens)} – ${fmtTime(c.closes)}, starts ${fmtTime(c.starts)}${c.phase === 'OPEN' ? ' · <b>check-in open now</b>' : ''}
+      ${c.moved_from_date ? `<br>Moved from ${esc(fmtDate(c.moved_from_date))}` : ''}</p>
+      ${c.remarks ? `<p class="flag-remarks" style="margin:-6px 0 12px">📝 Remarks: ${esc(c.remarks)}</p>` : ''}`;
     const count = (s) => detail.rows.filter((r) => r.status === s).length;
     const stat = (n, l) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`;
     $('#flagStats').innerHTML = [

@@ -106,19 +106,19 @@ module.exports = function flagRoutes(db) {
     await flag.ensureCeremonies(db, settings, today, u.addDays(today, 14));
     const [upcoming, history] = await Promise.all([
       db.query(
-        `SELECT c.*, k.status, k.checked_at, k.source AS k_source, k.distance_m, k.remarks FROM flag_ceremonies c
+        `SELECT c.*, k.status, k.checked_at, k.source AS k_source, k.distance_m, k.remarks AS k_remarks FROM flag_ceremonies c
          LEFT JOIN flag_checkins k ON k.ceremony_id = c.id AND k.employee_id = $1
          WHERE c.ceremony_date >= $2 ORDER BY c.ceremony_date, c.starts_at LIMIT 10`,
         [emp.id, today],
       ),
       db.query(
-        `SELECT c.*, k.status, k.checked_at, k.source AS k_source, k.distance_m, k.remarks FROM flag_ceremonies c
+        `SELECT c.*, k.status, k.checked_at, k.source AS k_source, k.distance_m, k.remarks AS k_remarks FROM flag_ceremonies c
          LEFT JOIN flag_checkins k ON k.ceremony_id = c.id AND k.employee_id = $1
          WHERE c.ceremony_date < $2 AND c.ceremony_date >= $3 AND NOT c.cancelled ORDER BY c.ceremony_date DESC, c.starts_at DESC LIMIT 12`,
         [emp.id, today, u.toDateStr(new Date(emp.created_at))],
       ),
     ]);
-    const withMine = (c) => ({ ...flag.presentCeremony(c), mine: c.status ? myCheckin({ ...c, source: c.k_source }) : null });
+    const withMine = (c) => ({ ...flag.presentCeremony(c), mine: c.status ? myCheckin({ ...c, source: c.k_source, remarks: c.k_remarks }) : null });
     const todays = upcoming.filter((c) => c.ceremony_date === today && flag.phase(c) !== 'CLOSED').map(withMine);
     // Today's ceremonies that already closed go to the history
     const closedToday = upcoming.filter((c) => c.ceremony_date === today && flag.phase(c) === 'CLOSED' && !c.cancelled);
@@ -155,7 +155,11 @@ module.exports = function flagRoutes(db) {
     if (!flag.geofenceReady(settings)) throw fail(409, 'Flag ceremony check-in has not been set up yet. Please inform HR.');
     const c = /^\d+$/.test(String(b.ceremony_id)) && (await db.one('SELECT * FROM flag_ceremonies WHERE id = $1', [Number(b.ceremony_id)]));
     if (!c) throw fail(404, 'Ceremony not found.');
-    if (c.cancelled) throw fail(409, `This ceremony was cancelled${c.cancel_reason ? `: ${c.cancel_reason}` : ''}.`);
+    if (c.cancelled) {
+      throw fail(409, c.moved_to_date
+        ? `This ceremony was moved to ${u.formatDateLong(c.moved_to_date)}${c.cancel_reason ? ` (${c.cancel_reason})` : ''}.`
+        : `This ceremony was cancelled${c.cancel_reason ? `: ${c.cancel_reason}` : ''}.`);
+    }
 
     // Already recorded (double tap, or staff marked them): show what is on file
     const existing = await db.one('SELECT * FROM flag_checkins WHERE ceremony_id = $1 AND employee_id = $2', [c.id, emp.id]);

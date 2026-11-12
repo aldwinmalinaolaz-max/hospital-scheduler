@@ -375,6 +375,11 @@ const SCHEMA = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (ceremony_date, slot)
   );
+  -- Notes for a ceremony (e.g. held indoors due to rain), and dates moved for holidays: the
+  -- original stays cancelled with moved_to_date so the weekly schedule does not recreate it
+  ALTER TABLE flag_ceremonies ADD COLUMN IF NOT EXISTS remarks TEXT;
+  ALTER TABLE flag_ceremonies ADD COLUMN IF NOT EXISTS moved_to_date TEXT;
+  ALTER TABLE flag_ceremonies ADD COLUMN IF NOT EXISTS moved_from_date TEXT;
   CREATE TABLE IF NOT EXISTS flag_checkins (
     id SERIAL PRIMARY KEY,
     ceremony_id INTEGER NOT NULL REFERENCES flag_ceremonies(id) ON DELETE CASCADE,

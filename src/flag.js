@@ -150,6 +150,9 @@ function presentCeremony(c, now = new Date()) {
     source: c.source,
     cancelled: c.cancelled,
     cancel_reason: c.cancel_reason,
+    remarks: c.remarks || null,
+    moved_to_date: c.moved_to_date || null,
+    moved_from_date: c.moved_from_date || null,
     phase: c.cancelled ? 'CANCELLED' : phase(c, now),
   };
 }

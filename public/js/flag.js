@@ -17,6 +17,9 @@
   const show = (id, on) => $(id).classList.toggle('hidden', !on);
   const pill = (s, label) => `<span class="flag-pill ${STATUS_CLASS[s] || ''}">${esc(label)}</span>`;
   const when = (c) => `${fmtDate(c.date, { weekday: 'long', month: 'long', day: 'numeric' })}`;
+  // Staff notes (e.g. bad weather) and date changes (e.g. holiday)
+  const notes = (c) =>
+    `${c.moved_from_date ? `<p class="small flag-moved">📅 Moved from ${esc(fmtDate(c.moved_from_date, { weekday: 'long', month: 'long', day: 'numeric' }))}</p>` : ''}${c.remarks ? `<div class="alert warn small flag-note">📝 ${esc(c.remarks)}</div>` : ''}`;
   const times = (c) => `Check-in ${fmtTime(c.opens)} – ${fmtTime(c.closes)} · Ceremony starts ${fmtTime(c.starts)}`;
 
   async function load() {
@@ -47,26 +50,28 @@
     const cards = me.today_ceremonies.map((c) => {
       if (c.phase === 'CANCELLED') {
         return `<section class="card flag-today"><h2>${esc(c.title)}</h2><p class="muted">${esc(when(c))}</p>
-          <div class="alert info">Cancelled today${c.cancel_reason ? `: ${esc(c.cancel_reason)}` : ''}.</div></section>`;
+          <div class="alert info">${c.moved_to_date
+            ? `Moved to <b>${esc(fmtDate(c.moved_to_date, { weekday: 'long', month: 'long', day: 'numeric' }))}</b>${c.cancel_reason ? ` (${esc(c.cancel_reason)})` : ''}.`
+            : `Cancelled today${c.cancel_reason ? `: ${esc(c.cancel_reason)}` : ''}.`}</div></section>`;
       }
       if (c.mine) {
         const m = c.mine;
         return `<section class="card flag-today flag-done ${STATUS_CLASS[m.status]}">
           <div class="flag-check" aria-hidden="true">✓</div>
           <h2>${m.status === 'EXCUSED' ? 'Excused' : 'You are checked in'}</h2>
-          <p><b>${esc(c.title)}</b><br>${esc(when(c))}</p>
+          <p><b>${esc(c.title)}</b><br>${esc(when(c))}</p>${notes(c)}
           ${m.status === 'EXCUSED' ? `<p class="muted">${esc(m.remarks || '')}</p>` : `<p class="big">${fmtTime(m.time)}</p>${pill(m.status, m.label)}`}
           ${m.source === 'MANUAL' && m.status !== 'EXCUSED' ? '<p class="muted small">Recorded by HR.</p>' : ''}
         </section>`;
       }
       if (c.phase === 'UPCOMING') {
-        return `<section class="card flag-today"><h2>${esc(c.title)}</h2><p class="muted">Today · ${esc(times(c))}</p>
+        return `<section class="card flag-today"><h2>${esc(c.title)}</h2><p class="muted">Today · ${esc(times(c))}</p>${notes(c)}
           <div class="alert info">Check-in opens at <b>${fmtTime(c.opens)}</b>. Come back to this page at the venue.</div></section>`;
       }
       // OPEN and not yet checked in
       return `<section class="card flag-today" data-open="${c.id}">
         <h2>${esc(c.title)}</h2>
-        <p class="muted">Today · ${esc(times(c))}</p>
+        <p class="muted">Today · ${esc(times(c))}</p>${notes(c)}
         <div class="flag-gps" id="gpsBox" aria-live="polite"><span class="muted">Finding your location…</span></div>
         ${me.require_selfie ? `<div class="flag-selfie"><img id="selfiePreview" class="hidden" alt="Your selfie"><button class="btn secondary" type="button" id="selfieBtn">📷 Take a selfie at the venue</button></div>` : ''}
         <div class="alert error hidden" id="checkError" role="alert"></div>
@@ -77,7 +82,7 @@
     if (!cards.length) {
       const next = me.next[0];
       cards.push(`<section class="card flag-today"><h2>No flag ceremony today</h2>
-        ${next ? `<p>Next: <b>${esc(next.title)}</b><br>${esc(when(next))}<br><span class="muted">${esc(times(next))}</span></p>` : '<p class="muted">No upcoming ceremony is scheduled yet.</p>'}
+        ${next ? `<p>Next: <b>${esc(next.title)}</b><br>${esc(when(next))}<br><span class="muted">${esc(times(next))}</span></p>${notes(next)}` : '<p class="muted">No upcoming ceremony is scheduled yet.</p>'}
       </section>`);
     } else if (me.next[0] && me.today_ceremonies.every((c) => c.mine || c.phase === 'CANCELLED')) {
       const next = me.next[0];

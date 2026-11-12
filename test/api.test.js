@@ -1223,6 +1223,72 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.equal(await purgeFlagPhotos(db, new Date(Date.now() + 91 * 86400e3)), 1);
 });
 
+test('flag ceremony: move a date for a holiday, remarks for bad weather', async () => {
+  const admin = await login();
+  const today = u.todayStr();
+  const flagApi = (path, body, method = 'POST') => call(`/admin/flag${path}`, { method, cookie: admin, body });
+  // Runs after the main flag ceremony test: the venue is set up already
+  assert.equal((await call('/admin/flag/options', { cookie: admin })).data.ready, true);
+  const emp = (await flagApi('/employees', { employee_no: 'MV-0001', last_name: 'cruz', first_name: 'pedro', pin: '246810' })).data;
+
+  // A ceremony next week, with an excuse already recorded
+  const d1 = u.addDays(today, 7);
+  const d2 = u.addDays(today, 8);
+  const cer = (await flagApi('/ceremonies', { date: d1, title: 'holiday test ceremony', opens: '07:00', starts: '08:00', closes: '09:00' })).data;
+  assert.equal((await flagApi(`/ceremonies/${cer.id}/mark`, { employee_id: emp.id, status: 'EXCUSED', remarks: 'approved leave' })).status, 200);
+
+  // Validation
+  assert.match((await flagApi(`/ceremonies/${cer.id}/move`, { date: d2 })).data.error, /reason/);
+  assert.match((await flagApi(`/ceremonies/${cer.id}/move`, { date: d1, reason: 'x' })).data.error, /different date/);
+  assert.match((await flagApi(`/ceremonies/${cer.id}/move`, { date: u.addDays(today, -1), reason: 'x' })).data.error, /passed/);
+  assert.equal((await flagApi('/ceremonies/999999/move', { date: d2, reason: 'x' })).status, 404);
+
+  // Move it: new date carries the excuse; the old date stays, marked as moved
+  const moved = await flagApi(`/ceremonies/${cer.id}/move`, { date: d2, reason: 'holiday: bonifacio day', starts: '08:30', closes: '09:30' });
+  assert.equal(moved.status, 201, JSON.stringify(moved.data));
+  assert.equal(moved.data.date, d2);
+  assert.equal(moved.data.moved_from_date, d1);
+  assert.equal(moved.data.starts, '08:30');
+  assert.equal(moved.data.opens, '07:00');
+  const list = async (date) => (await call(`/admin/flag/ceremonies?month=${date.slice(0, 7)}`, { cookie: admin })).data.rows;
+  const old = (await list(d1)).find((c) => c.id === cer.id);
+  assert.equal(old.cancelled, true);
+  assert.equal(old.moved_to_date, d2);
+  assert.equal(old.cancel_reason, 'HOLIDAY: BONIFACIO DAY');
+  const roster = (await call(`/admin/flag/ceremonies/${moved.data.id}`, { cookie: admin })).data;
+  assert.equal(roster.rows.find((r) => r.id === emp.id).status, 'EXCUSED');
+  // The moved-from date cannot be restored or moved again, and a second copy on the same date is refused
+  assert.match((await flagApi(`/ceremonies/${cer.id}`, { cancelled: false }, 'PATCH')).data.error, /moved to/);
+  assert.match((await flagApi(`/ceremonies/${cer.id}/move`, { date: u.addDays(today, 9), reason: 'x' })).data.error, /already moved/);
+  const other = (await flagApi('/ceremonies', { date: u.addDays(today, 10), title: 'holiday test ceremony', opens: '07:00', starts: '08:00', closes: '09:00' })).data;
+  assert.match((await flagApi(`/ceremonies/${other.id}/move`, { date: d2, reason: 'x' })).data.error, /already a HOLIDAY TEST CEREMONY/);
+
+  // Employees see the move
+  const ph = await call('/flag/login', { method: 'POST', body: { employee_no: 'MV-0001', pin: '246810' } });
+  const cookie = ph.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+  const tryOld = await call('/flag/checkin', { method: 'POST', cookie, body: { ceremony_id: cer.id, lat: 6.9076, lng: 122.079, accuracy: 10 } });
+  assert.match(tryOld.data.error, /moved to .*\(HOLIDAY: BONIFACIO DAY\)/);
+  const me = (await call('/flag/me', { cookie })).data;
+  assert.ok(me.next.some((c) => c.id === moved.data.id && c.moved_from_date === d1));
+
+  // Remarks: on their own (any time) or with the times; blank removes them
+  let r = await flagApi(`/ceremonies/${moved.data.id}`, { remarks: 'held at the main lobby due to rain' }, 'PATCH');
+  assert.equal(r.data.remarks, 'HELD AT THE MAIN LOBBY DUE TO RAIN');
+  assert.equal(r.data.starts, '08:30'); // times untouched
+  r = await flagApi(`/ceremonies/${moved.data.id}`, { title: 'holiday test ceremony', opens: '07:00', starts: '08:00', closes: '09:00', remarks: 'delayed due to rain' }, 'PATCH');
+  assert.equal(r.data.remarks, 'DELAYED DUE TO RAIN');
+  assert.equal(r.data.starts, '08:00');
+  assert.equal((await call('/flag/me', { cookie })).data.next.find((c) => c.id === moved.data.id).remarks, 'DELAYED DUE TO RAIN');
+  // A ceremony that already happened can still get remarks
+  const past = await db.one(
+    "INSERT INTO flag_ceremonies (ceremony_date, slot, title, opens_at, starts_at, closes_at, source) VALUES ($1, 'M-wx', 'PAST WX', '07:00', '08:00', '09:00', 'MANUAL') RETURNING id",
+    [u.addDays(today, -3)],
+  );
+  assert.equal((await flagApi(`/ceremonies/${past.id}`, { remarks: 'shortened due to bad weather' }, 'PATCH')).data.remarks, 'SHORTENED DUE TO BAD WEATHER');
+  assert.match((await flagApi(`/ceremonies/${past.id}/move`, { date: d2, reason: 'x' })).data.error, /not started yet/);
+  assert.equal((await flagApi(`/ceremonies/${moved.data.id}`, { remarks: '' }, 'PATCH')).data.remarks, null);
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');

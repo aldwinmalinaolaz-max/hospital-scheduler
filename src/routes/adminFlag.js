@@ -145,7 +145,14 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const c = await db.one('SELECT * FROM flag_ceremonies WHERE id = $1', [idParam(req.params.id)]);
     if (!c) throw fail(404, 'Ceremony not found.');
     let updated;
-    if (b.cancelled !== undefined) {
+    const remarks = b.remarks === undefined ? undefined : String(b.remarks || '').trim().toUpperCase().slice(0, 300) || null;
+    if (b.cancelled === false && c.moved_to_date) {
+      throw new ValidationError(`This ceremony was moved to ${u.formatDateLong(c.moved_to_date)}. Cancel or move that one instead.`);
+    }
+    if (b.cancelled === undefined && b.opens === undefined && remarks !== undefined) {
+      // Remarks only (e.g. bad weather), allowed before, during or after the ceremony
+      updated = await db.one('UPDATE flag_ceremonies SET remarks = $1, updated_by = $2 WHERE id = $3 RETURNING *', [remarks, req.user.username, c.id]);
+    } else if (b.cancelled !== undefined) {
       const reason = String(b.cancel_reason || '').trim().toUpperCase().slice(0, 200);
       if (b.cancelled && !reason) throw new ValidationError('Please give the reason, e.g. HOLIDAY, BAD WEATHER.');
       updated = await db.one('UPDATE flag_ceremonies SET cancelled = $1, cancel_reason = $2, updated_by = $3 WHERE id = $4 RETURNING *', [
@@ -155,8 +162,9 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       const x = cleanCeremony({ ...b, date: c.ceremony_date });
       // Edited weekly ceremonies are kept when the weekly schedule changes later
       updated = await db.one(
-        `UPDATE flag_ceremonies SET title = $1, opens_at = $2, starts_at = $3, closes_at = $4, source = 'MANUAL', updated_by = $5 WHERE id = $6 RETURNING *`,
-        [x.title, x.opens, x.starts, x.closes, req.user.username, c.id],
+        `UPDATE flag_ceremonies SET title = $1, opens_at = $2, starts_at = $3, closes_at = $4, source = 'MANUAL', updated_by = $5,
+           remarks = CASE WHEN $7 THEN $8 ELSE remarks END WHERE id = $6 RETURNING *`,
+        [x.title, x.opens, x.starts, x.closes, req.user.username, c.id, remarks !== undefined, remarks ?? null],
       );
       // On-time / late is recomputed for phone check-ins when the start time moves
       const settings = await flag.getSettings(db);
@@ -168,6 +176,44 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       );
     }
     res.json(flag.presentCeremony(updated));
+  });
+
+  // Move a ceremony to another date (e.g. the Monday is a holiday). The original date stays,
+  // cancelled and marked as moved, so the weekly schedule does not create it again; excuses
+  // already recorded move with it.
+  router.post('/flag/ceremonies/:id/move', can, async (req, res) => {
+    const b = req.body || {};
+    const c = await db.one('SELECT * FROM flag_ceremonies WHERE id = $1', [idParam(req.params.id)]);
+    if (!c) throw fail(404, 'Ceremony not found.');
+    if (c.cancelled) throw new ValidationError('This ceremony is cancelled or was already moved.');
+    if (flag.phase(c) !== 'UPCOMING') throw new ValidationError('Only ceremonies that have not started yet can be moved.');
+    if (!u.parseDate(b.date)) throw new ValidationError('Choose the new date.');
+    if (b.date === c.ceremony_date) throw new ValidationError('Choose a different date.');
+    const reason = String(b.reason || '').trim().toUpperCase().slice(0, 200);
+    if (!reason) throw new ValidationError('Please give the reason, e.g. HOLIDAY: BONIFACIO DAY.');
+    const x = cleanCeremony({ date: b.date, title: c.title, opens: b.opens || c.opens_at, starts: b.starts || c.starts_at, closes: b.closes || c.closes_at });
+    if (flag.phase({ ceremony_date: x.date, opens_at: x.opens, closes_at: x.closes }) === 'CLOSED') {
+      throw new ValidationError('That date and time have already passed.');
+    }
+    await flag.ensureCeremonies(db, await flag.getSettings(db), x.date, x.date);
+    if (await db.one('SELECT 1 FROM flag_ceremonies WHERE ceremony_date = $1 AND title = $2 AND NOT cancelled', [x.date, c.title])) {
+      throw new ValidationError(`There is already a ${c.title} on ${u.formatDateLong(x.date)}.`);
+    }
+    const checkins = await db.query('SELECT status, source FROM flag_checkins WHERE ceremony_id = $1', [c.id]);
+    if (checkins.some((k) => k.status !== 'EXCUSED')) throw new ValidationError('Employees have already checked in to this ceremony; it cannot be moved.');
+    const moved = await db.tx(async (t) => {
+      const n = await t.one(
+        `INSERT INTO flag_ceremonies (ceremony_date, slot, title, opens_at, starts_at, closes_at, source, remarks, moved_from_date, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6, 'MANUAL', $7, $8, $9) RETURNING *`,
+        [x.date, `M-${flag.newToken().slice(0, 10)}`, c.title, x.opens, x.starts, x.closes, c.remarks, c.ceremony_date, req.user.username],
+      );
+      await t.query('UPDATE flag_ceremonies SET cancelled = TRUE, cancel_reason = $1, moved_to_date = $2, updated_by = $3 WHERE id = $4', [
+        reason, x.date, req.user.username, c.id,
+      ]);
+      await t.query('UPDATE flag_checkins SET ceremony_id = $1 WHERE ceremony_id = $2', [n.id, c.id]);
+      return n;
+    });
+    res.status(201).json(flag.presentCeremony(moved));
   });
 
   // Everyone expected at the ceremony, with their check-in, excuse or absence

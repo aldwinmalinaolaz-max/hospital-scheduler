@@ -663,3 +663,8 @@ label.check { display: flex; gap: 8px; align-items: flex-start; } label.check in
 #idOcr .alert { margin: 8px 0 0; }
 #idOcr p { margin: 6px 0 0; }
 #flagSchedRows select[data-k=title] { min-width: 270px; }
+.flag-remarks { font-size: 0.82rem; color: var(--warn); margin-top: 2px; }
+.flag-note { text-align: left; margin: 8px 0; }
+.flag-moved { margin: 4px 0; color: var(--info); }
+/* Keep the reason readable on crossed-out (cancelled / moved) rows */
+tr.voided td .sub { display: inline-block; text-decoration: none; }
