@@ -668,3 +668,4 @@ label.check { display: flex; gap: 8px; align-items: flex-start; } label.check in
 .flag-moved { margin: 4px 0; color: var(--info); }
 /* Keep the reason readable on crossed-out (cancelled / moved) rows */
 tr.voided td .sub { display: inline-block; text-decoration: none; }
+#flagSchedRows select[data-k=weekday] { min-width: 130px; }

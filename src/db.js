@@ -567,6 +567,13 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    // Flag ceremonies have no "late": everyone who checks in while check-in is open is present
+    id: '2026-11-12-flag-no-late',
+    async run(t) {
+      await t.query("UPDATE flag_checkins SET status = 'ON_TIME' WHERE status = 'LATE'");
+    },
+  },
 ];
 
 async function runMigrations(t) {
@@ -580,4 +587,4 @@ async function runMigrations(t) {
 // Serialise bookings that compete for the same capacity (date/slot) across instances.
 const lock = (t, key) => t.query('SELECT pg_advisory_xact_lock(hashtext($1))', [key]);
 
-module.exports = { open, lock, SCHEMA };
+module.exports = { open, lock, SCHEMA, runMigrations };

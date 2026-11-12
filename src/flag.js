@@ -13,7 +13,8 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 // Check-in results. ABSENT is never stored: it is an employee with no row for a ceremony that has closed.
-const STATUSES = { ON_TIME: 'Present', LATE: 'Late', EXCUSED: 'Excused', ABSENT: 'Absent' };
+// There is no "late": anyone who checks in while check-in is open is present.
+const STATUSES = { ON_TIME: 'Present', EXCUSED: 'Excused', ABSENT: 'Absent' };
 
 const DEFAULT_SETTINGS = {
   venue: 'ZRMC FLAGPOLE / MAIN GROUNDS',
@@ -21,7 +22,6 @@ const DEFAULT_SETTINGS = {
   lng: null,
   radius_m: 150,
   max_accuracy_m: 100, // GPS readings less precise than this are refused
-  grace_minutes: 0, // minutes after the start before a check-in counts as late
   require_selfie: false,
   active_from: null, // weekly ceremonies are generated from this date on (set when the geofence is first saved)
   schedule: [{ weekday: 1, title: 'FLAG RAISING CEREMONY', opens: '07:00', starts: '08:00', closes: '09:00' }],
@@ -72,8 +72,7 @@ function cleanSettings(b, before) {
   if (!(s.radius_m >= 20 && s.radius_m <= 2000)) return [null, 'The geofence radius must be 20 to 2,000 meters.'];
   s.max_accuracy_m = Math.round(num(b.max_accuracy_m));
   if (!(s.max_accuracy_m >= 10 && s.max_accuracy_m <= 1000)) return [null, 'The required GPS accuracy must be 10 to 1,000 meters.'];
-  s.grace_minutes = Math.round(num(b.grace_minutes) || 0);
-  if (!(s.grace_minutes >= 0 && s.grace_minutes <= 60)) return [null, 'The grace period must be 0 to 60 minutes.'];
+  delete s.grace_minutes; // no longer used (there is no late)
   s.require_selfie = b.require_selfie === true || b.require_selfie === 'on';
   if (!Array.isArray(b.schedule)) return [null, 'Invalid weekly schedule.'];
   if (b.schedule.length > 7) return [null, 'At most 7 weekly ceremonies.'];
@@ -157,11 +156,6 @@ function presentCeremony(c, now = new Date()) {
   };
 }
 
-// On-time or late, from the time of check-in
-function arrivalStatus(c, at, settings) {
-  const late = u.localDateTime(c.ceremony_date, c.starts_at).getTime() + settings.grace_minutes * 60e3;
-  return at.getTime() > late ? 'LATE' : 'ON_TIME';
-}
 
 // ---------- Geofence ----------
 
@@ -294,7 +288,6 @@ module.exports = {
   hhmm,
   phase,
   presentCeremony,
-  arrivalStatus,
   distanceM,
   checkLocation,
   cleanEmployee,

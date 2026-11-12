@@ -1441,8 +1441,8 @@ ${cat.hospitalName}`;
   // ---------- Flag Ceremony Attendance ----------
   let flagOpts = null;
   let flagSub = 'ceremonies';
-  const FLAG_LABEL = { ON_TIME: 'Present', LATE: 'Late', EXCUSED: 'Excused', ABSENT: 'Absent', NOT_YET: 'Not yet', CANCELLED: 'Cancelled' };
-  const flagPill = (s) => `<span class="flag-pill ${{ ON_TIME: 'ok', LATE: 'warn', EXCUSED: 'info', ABSENT: 'bad' }[s] || ''}">${esc(FLAG_LABEL[s] || s)}</span>`;
+  const FLAG_LABEL = { ON_TIME: 'Present', EXCUSED: 'Excused', ABSENT: 'Absent', NOT_YET: 'Not yet', CANCELLED: 'Cancelled' };
+  const flagPill = (s) => `<span class="flag-pill ${{ ON_TIME: 'ok', EXCUSED: 'info', ABSENT: 'bad' }[s] || ''}">${esc(FLAG_LABEL[s] || s)}</span>`;
   const flagTimes = (c) => `${fmtTime(c.opens)} – ${fmtTime(c.closes)}<div class="sub">starts ${fmtTime(c.starts)}</div>`;
 
   async function loadFlagOptions(force) {
@@ -1490,7 +1490,7 @@ ${cat.hospitalName}`;
           ${c.moved_to_date ? `<div class="sub" style="color:var(--warn)">MOVED TO ${esc(fmtDate(c.moved_to_date, { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase())}: ${esc(c.cancel_reason || '')}</div>` : c.cancelled ? `<div class="sub" style="color:var(--danger)">CANCELLED: ${esc(c.cancel_reason || '')}</div>` : ''}
           ${c.remarks ? `<div class="flag-remarks">📝 ${esc(c.remarks)}</div>` : ''}</td>
         <td class="small nowrap">${flagTimes(c)}</td>
-        <td>${c.cancelled ? '' : c.on_time}</td><td>${c.cancelled ? '' : c.late}</td><td>${c.cancelled ? '' : c.excused}</td>
+        <td>${c.cancelled ? '' : c.on_time}</td><td>${c.cancelled ? '' : c.excused}</td>
         <td>${c.cancelled ? '' : c.absent !== null ? `<b style="color:${c.absent ? 'var(--danger)' : 'inherit'}">${c.absent}</b>` : `<span class="muted small">${n(c.not_yet)} not yet</span>`}</td>
         <td class="no-print nowrap">
           ${c.cancelled ? '' : `<button class="btn sm" data-flag-open="${c.id}">Attendance</button>`}
@@ -1512,12 +1512,12 @@ ${cat.hospitalName}`;
     c = c || { title: 'FLAG LOWERING CEREMONY', opens: '16:30', starts: '17:00', closes: '17:30', date: flagOpts.today };
     openDialog(
       `<h2>${isNew ? 'Special ceremony' : 'Edit ceremony'}</h2>
-       ${isNew ? '<p class="muted small">For a one-time ceremony, e.g. flag lowering, a holiday program or a rescheduled flag raising.</p>' : `<p class="muted small">${esc(fmtDate(c.date))}. Phone check-ins are re-graded on time / late if you change the start time.</p>`}
+       ${isNew ? '<p class="muted small">For a one-time ceremony, e.g. flag lowering, a holiday program or a rescheduled flag raising.</p>' : `<p class="muted small">${esc(fmtDate(c.date))}..</p>`}
        <div class="grid grid-2">
          ${isNew ? `<label class="field"><span class="req">Date</span><input type="date" name="date" min="${flagOpts.today}" value="${esc(c.date)}" required></label><span></span>` : ''}
          <label class="field span-2"><span class="req">Ceremony</span><input name="title" value="${esc(c.title)}" required></label>
          <label class="field"><span class="req">Check-in opens</span><input type="time" name="opens" value="${esc(c.opens)}" required></label>
-         <label class="field"><span class="req">Starts (late after)</span><input type="time" name="starts" value="${esc(c.starts)}" required></label>
+         <label class="field"><span class="req">Starts</span><input type="time" name="starts" value="${esc(c.starts)}" required></label>
          <label class="field"><span class="req">Check-in closes</span><input type="time" name="closes" value="${esc(c.closes)}" required></label>
          <label class="field span-2">Remarks <span class="hint">Shown to employees, e.g. HELD AT THE MAIN LOBBY DUE TO RAIN</span><input name="remarks" maxlength="300" value="${esc(c.remarks || '')}"></label>
        </div>`,
@@ -1559,7 +1559,7 @@ ${cat.hospitalName}`;
            <span></span>
            <label class="field span-2"><span class="req">Reason</span><input name="reason" required placeholder="E.G. HOLIDAY: BONIFACIO DAY"></label>
            <label class="field"><span class="req">Check-in opens</span><input type="time" name="opens" value="${esc(c.opens)}" required></label>
-           <label class="field"><span class="req">Starts (late after)</span><input type="time" name="starts" value="${esc(c.starts)}" required></label>
+           <label class="field"><span class="req">Starts</span><input type="time" name="starts" value="${esc(c.starts)}" required></label>
            <label class="field"><span class="req">Check-in closes</span><input type="time" name="closes" value="${esc(c.closes)}" required></label>
          </div>`,
         async (f) => {
@@ -1606,8 +1606,7 @@ ${cat.hospitalName}`;
     const count = (s) => detail.rows.filter((r) => r.status === s).length;
     const stat = (n, l) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`;
     $('#flagStats').innerHTML = [
-      stat(count('ON_TIME'), 'Present (on time)'),
-      stat(count('LATE'), 'Late'),
+      stat(count('ON_TIME'), 'Present'),
       stat(count('EXCUSED'), 'Excused'),
       stat(count('ABSENT') + count('NOT_YET'), c.phase === 'CLOSED' ? 'Absent' : 'Not yet checked in'),
     ].join('');
@@ -1648,8 +1647,8 @@ ${cat.hospitalName}`;
     if (!b) return;
     const r = detail.rows.find((x) => x.id === Number(b.dataset.flagMark));
     const c = detail.ceremony;
-    const choices = (c.phase === 'UPCOMING' ? ['EXCUSED'] : ['ON_TIME', 'LATE', 'EXCUSED']).concat(r.checkin_id && r.source === 'MANUAL' ? ['CLEAR'] : []);
-    const label = { ...FLAG_LABEL, ON_TIME: 'Present (on time)', CLEAR: r.status === 'EXCUSED' ? 'Remove excuse' : 'Remove (back to absent)' };
+    const choices = (c.phase === 'UPCOMING' ? ['EXCUSED'] : ['ON_TIME', 'EXCUSED']).concat(r.checkin_id && r.source === 'MANUAL' ? ['CLEAR'] : []);
+    const label = { ...FLAG_LABEL, ON_TIME: 'Present', CLEAR: r.status === 'EXCUSED' ? 'Remove excuse' : 'Remove (back to absent)' };
     openDialog(
       `<h2>${esc(r.name)}</h2>
        <p class="muted small">${esc(c.title)} · ${esc(fmtDate(c.date))}. Now: ${flagPill(r.status)}${r.source === 'GPS' ? ' (checked in by phone)' : ''}</p>
@@ -1672,14 +1671,14 @@ ${cat.hospitalName}`;
     const data = await api(`/admin/flag/summary?${sumQuery()}`);
     $('#flagSumNote').textContent =
       `${data.ceremonies} ceremon${data.ceremonies === 1 ? 'y' : 'ies'} held from ${fmtDate(data.from)} to ${fmtDate(data.to)} (cancelled ones and ceremonies still open are not counted). ` +
-      'Attendance % = present and late ÷ ceremonies not excused. Ceremonies before an employee was added are not counted for them.';
+      'Attendance % = present ÷ ceremonies not excused. Ceremonies before an employee was added are not counted for them.';
     $('#flagSumRows').innerHTML =
       data.rows
         .map(
           (r) => `<tr>
         <td>${esc(r.employee.name)}<div class="sub mono">${esc(r.employee.employee_no)}</div></td>
         <td class="small">${esc(r.employee.division || '')}${r.employee.unit ? `<div class="sub">${esc(r.employee.unit)}</div>` : ''}</td>
-        <td>${r.held}</td><td>${r.on_time}</td><td>${r.late || '—'}</td><td>${r.excused || '—'}</td>
+        <td>${r.held}</td><td>${r.on_time}</td><td>${r.excused || '—'}</td>
         <td>${r.absent ? `<b style="color:var(--danger)">${r.absent}</b>` : '—'}</td>
         <td>${r.rate === null ? '—' : `${r.rate}%`}</td>
       </tr>`,
@@ -1912,7 +1911,7 @@ ${cat.hospitalName}`;
   flagLoaders.settings = guard(async () => {
     await loadFlagOptions(true);
     const s = flagOpts.settings;
-    for (const k of ['venue', 'radius_m', 'max_accuracy_m', 'grace_minutes']) setF[k].value = s[k];
+    for (const k of ['venue', 'radius_m', 'max_accuracy_m']) setF[k].value = s[k];
     setF.lat.value = s.lat ?? '';
     setF.lng.value = s.lng ?? '';
     setF.require_selfie.checked = !!s.require_selfie;

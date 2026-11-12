@@ -154,7 +154,7 @@
           </form>
           <p class="muted small no-print" id="flagExpected"></p>
           <div class="table-wrap"><table>
-            <thead><tr><th>Date</th><th>Ceremony</th><th>Check-in</th><th>Present</th><th>Late</th><th>Excused</th><th>Absent</th><th class="no-print"></th></tr></thead>
+            <thead><tr><th>Date</th><th>Ceremony</th><th>Check-in</th><th>Present</th><th>Excused</th><th>Absent</th><th class="no-print"></th></tr></thead>
             <tbody id="flagRows"></tbody>
           </table></div>
         </div>
@@ -171,7 +171,7 @@
           <form class="filters no-print" id="flagDetailFilters">
             <input type="search" name="q" placeholder="Search name or employee no.">
             <select name="division" data-flag-dept><option value="">All divisions</option></select>
-            <select name="status"><option value="">Everyone</option><option value="ON_TIME">Present (on time)</option><option value="LATE">Late</option><option value="EXCUSED">Excused</option><option value="MISSING">Absent / not yet</option></select>
+            <select name="status"><option value="">Everyone</option><option value="ON_TIME">Present</option><option value="EXCUSED">Excused</option><option value="MISSING">Absent / not yet</option></select>
           </form>
           <div class="table-wrap"><table>
             <thead><tr><th>Employee</th><th>Division / unit</th><th>Status</th><th>Time</th><th>How recorded</th><th class="no-print">Selfie</th><th>Remarks</th><th class="no-print"></th></tr></thead>
@@ -191,7 +191,7 @@
         </form>
         <p class="muted small" id="flagSumNote"></p>
         <div class="table-wrap"><table>
-          <thead><tr><th>Employee</th><th>Division / unit</th><th>Ceremonies</th><th>Present</th><th>Late</th><th>Excused</th><th>Absent</th><th>Attendance</th></tr></thead>
+          <thead><tr><th>Employee</th><th>Division / unit</th><th>Ceremonies</th><th>Present</th><th>Excused</th><th>Absent</th><th>Attendance</th></tr></thead>
           <tbody id="flagSumRows"></tbody>
         </table></div>
       </div>
@@ -232,8 +232,6 @@
               </div>
               <label class="field"><span class="req">Geofence radius (meters)</span><input name="radius_m" type="number" min="20" max="2000" required></label>
               <label class="field"><span class="req">Required GPS accuracy (meters)</span><input name="max_accuracy_m" type="number" min="10" max="1000" required></label>
-              <label class="field"><span class="req">Grace period before "late" (minutes)</span><input name="grace_minutes" type="number" min="0" max="60" required></label>
-              <span></span>
               <label class="check span-2"><input type="checkbox" name="require_selfie"> Require a selfie at check-in (discourages checking in for someone else; selfies are deleted after <span id="flagRetention">90</span> days)</label>
             </div>
           </div>
@@ -241,7 +239,7 @@
             <h3>Weekly schedule</h3>
             <p class="muted small">Ceremonies are created automatically on these days. Cancel a single date (e.g. holiday) or add a special ceremony under <b>Ceremonies</b>.</p>
             <div class="table-wrap"><table>
-              <thead><tr><th>Day</th><th>Ceremony</th><th>Check-in opens</th><th>Starts (late after)</th><th>Check-in closes</th><th></th></tr></thead>
+              <thead><tr><th>Day</th><th>Ceremony</th><th>Check-in opens</th><th>Starts</th><th>Check-in closes</th><th></th></tr></thead>
               <tbody id="flagSchedRows"></tbody>
             </table></div>
             <button class="btn sm secondary" type="button" id="flagSchedAdd">+ Add weekly ceremony</button>

@@ -190,7 +190,7 @@ module.exports = function flagRoutes(db) {
       throw fail(409, `This phone was already used to check in employee no. ${other.employee_no} for this ceremony. Each employee must check in on their own phone.`);
     }
 
-    const status = flag.arrivalStatus(c, now, settings);
+    const status = 'ON_TIME'; // present: there is no late for flag ceremonies
     let row;
     try {
       row = await db.tx(async (t) => {

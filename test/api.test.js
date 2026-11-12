@@ -1008,7 +1008,7 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.equal((await call(`/admin/flag/ceremonies?month=${today.slice(0, 7)}`, { cookie: hr })).data.rows.length, 0);
 
   // Settings
-  const settings = { venue: 'zrmc flagpole', lat: VENUE.lat, lng: VENUE.lng, radius_m: 150, max_accuracy_m: 100, grace_minutes: 0, require_selfie: false, schedule: opts.settings.schedule };
+  const settings = { venue: 'zrmc flagpole', lat: VENUE.lat, lng: VENUE.lng, radius_m: 150, max_accuracy_m: 100, require_selfie: false, schedule: opts.settings.schedule };
   const put = (b) => call('/admin/flag/settings', { method: 'PUT', cookie: hr, body: { ...settings, ...b } });
   assert.equal((await put({ radius_m: 5 })).status, 400);
   assert.equal((await put({ lat: 95 })).status, 400);
@@ -1110,9 +1110,11 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   // Ana on her own phone is fine
   assert.equal((await checkin(p2, open.id, here)).status, 201);
 
-  // Late: a ceremony that started at midnight
-  const lateCer = (await addCer({ date: today, title: 'late test', opens: '00:00', starts: '00:00', closes: '23:59' })).data;
-  assert.equal((await checkin(p1, lateCer.id, here)).data.mine.status, 'LATE');
+  // No "late": checking in after the start time (check-in still open) is present
+  const lateCer = (await addCer({ date: today, title: 'after start test', opens: '00:00', starts: '00:00', closes: '23:59' })).data;
+  const afterStart = await checkin(p1, lateCer.id, here);
+  assert.equal(afterStart.data.mine.status, 'ON_TIME');
+  assert.equal(afterStart.data.mine.label, 'Present');
 
   // Selfie required
   assert.equal((await put({ require_selfie: true })).status, 200);
@@ -1203,8 +1205,12 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   const sumCsv = await (await fetch(`${base}/admin/flag/summary.csv?from=${past}&to=${today}`, { headers: { Cookie: hr } })).text();
   assert.match(sumCsv, /Attendance %/);
 
-  // Moving the start time re-grades phone check-ins
-  await call(`/admin/flag/ceremonies/${lateCer.id}`, { method: 'PATCH', cookie: hr, body: { title: 'late test', opens: '00:00', starts: '23:58', closes: '23:59' } });
+  // Staff can only mark present or excused; there is no late
+  assert.equal((await call(`/admin/flag/ceremonies/${lateCer.id}/mark`, { method: 'POST', cookie: hr, body: { employee_id: ana.id, status: 'LATE', remarks: 'x' } })).status, 400);
+  // Old "late" check-ins are turned into present by a one-time update
+  await db.query("UPDATE flag_checkins SET status = 'LATE' WHERE ceremony_id = $1", [lateCer.id]);
+  await db.query("DELETE FROM schema_migrations WHERE id = '2026-11-12-flag-no-late'");
+  await db.tx((t) => require('../src/db').runMigrations(t));
   assert.equal((await db.one('SELECT status FROM flag_checkins WHERE ceremony_id = $1', [lateCer.id])).status, 'ON_TIME');
 
   // Employee changes their PIN: wrong current PIN, bad new PIN, then OK (this phone stays signed in)

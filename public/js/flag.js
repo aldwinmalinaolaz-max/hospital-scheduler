@@ -1,7 +1,7 @@
 // Flag Ceremony check-in on the employee's own phone (/flag-ceremony)
 (async () => {
   loadCatalog().catch(() => {});
-  const STATUS_CLASS = { ON_TIME: 'ok', LATE: 'warn', EXCUSED: 'info', ABSENT: 'bad' };
+  const STATUS_CLASS = { ON_TIME: 'ok', EXCUSED: 'info', ABSENT: 'bad' };
   let me = null;
   let pos = null; // latest GPS reading
   let watchId = null;
@@ -76,7 +76,7 @@
         ${me.require_selfie ? `<div class="flag-selfie"><img id="selfiePreview" class="hidden" alt="Your selfie"><button class="btn secondary" type="button" id="selfieBtn">📷 Take a selfie at the venue</button></div>` : ''}
         <div class="alert error hidden" id="checkError" role="alert"></div>
         <button class="btn flag-btn" type="button" id="checkBtn" data-id="${c.id}">CHECK IN</button>
-        <p class="muted small" style="margin:8px 0 0">Allow this site to use your location when asked. Arriving after ${fmtTime(c.starts)} is recorded as late.</p>
+        <p class="muted small" style="margin:8px 0 0">Allow this site to use your location when asked. Check-in closes at ${fmtTime(c.closes)}.</p>
       </section>`;
     });
     if (!cards.length) {

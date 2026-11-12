@@ -8,7 +8,7 @@ const flag = require('../flag');
 const u = require('../util');
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
-const MARKS = ['ON_TIME', 'LATE', 'EXCUSED', 'CLEAR'];
+const MARKS = ['ON_TIME', 'EXCUSED', 'CLEAR'];
 
 module.exports = function registerFlagRoutes(router, { db, requireAccess, ValidationError, whereClause }) {
   const can = requireAccess('attendance');
@@ -92,7 +92,6 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       db.query(
         `SELECT c.*,
            COUNT(k.id) FILTER (WHERE k.status = 'ON_TIME')::int AS on_time,
-           COUNT(k.id) FILTER (WHERE k.status = 'LATE')::int AS late,
            COUNT(k.id) FILTER (WHERE k.status = 'EXCUSED')::int AS excused,
            COUNT(k.id) FILTER (WHERE k.status <> 'EXCUSED' AND e.active AND e.flag_required)::int AS present_expected,
            COUNT(k.id) FILTER (WHERE e.active AND e.flag_required)::int AS marked_expected
@@ -112,7 +111,6 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
           ...x,
           updated_by: c.updated_by,
           on_time: c.on_time,
-          late: c.late,
           excused: c.excused,
           // Absent is only known once check-in has closed
           absent: x.phase === 'CLOSED' ? Math.max(0, expected - c.marked_expected) : null,
@@ -168,14 +166,6 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
         `UPDATE flag_ceremonies SET title = $1, opens_at = $2, starts_at = $3, closes_at = $4, source = 'MANUAL', updated_by = $5,
            remarks = CASE WHEN $7 THEN $8 ELSE remarks END WHERE id = $6 RETURNING *`,
         [x.title, x.opens, x.starts, x.closes, req.user.username, c.id, remarks !== undefined, remarks ?? null],
-      );
-      // On-time / late is recomputed for phone check-ins when the start time moves
-      const settings = await flag.getSettings(db);
-      const late = new Date(u.localDateTime(updated.ceremony_date, updated.starts_at).getTime() + settings.grace_minutes * 60e3);
-      await db.query(
-        `UPDATE flag_checkins SET status = CASE WHEN checked_at > $2 THEN 'LATE' ELSE 'ON_TIME' END
-         WHERE ceremony_id = $1 AND source = 'GPS' AND status IN ('ON_TIME', 'LATE')`,
-        [c.id, late.toISOString()],
       );
     }
     res.json(flag.presentCeremony(updated));
@@ -272,7 +262,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     res.end(csv);
   });
 
-  // Staff mark an employee present, late or excused (e.g. on leave, on duty, GPS failed), or clear
+  // Staff mark an employee present or excused (e.g. on leave, on duty, GPS failed), or clear
   // a staff entry. Phone check-ins keep their GPS details when staff change the status.
   router.post('/flag/ceremonies/:id/mark', can, async (req, res) => {
     const b = req.body || {};
@@ -280,7 +270,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     if (!c) throw fail(404, 'Ceremony not found.');
     if (c.cancelled) throw new ValidationError('This ceremony was cancelled.');
     const status = MARKS.includes(b.status) ? b.status : null;
-    if (!status) throw new ValidationError('Choose Present, Late, Excused or Clear.');
+    if (!status) throw new ValidationError('Choose Present, Excused or Clear.');
     const ph = flag.phase(c);
     if (ph === 'UPCOMING' && status !== 'EXCUSED') throw new ValidationError('Before the ceremony, employees can only be excused (e.g. approved leave).');
     const remarks = String(b.remarks || '').trim().toUpperCase().slice(0, 300);
@@ -296,7 +286,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     if (existing) {
       await db.query('UPDATE flag_checkins SET status = $1, remarks = $2, created_by = $3 WHERE id = $4', [status, remarks, req.user.username, existing.id]);
     } else {
-      // Present/late entries by staff are timed at the ceremony start, not when staff typed them
+      // Present entries by staff are timed at the ceremony start, not when staff typed them
       const at = status === 'EXCUSED' ? new Date() : u.localDateTime(c.ceremony_date, c.starts_at);
       await db.query(
         `INSERT INTO flag_checkins (ceremony_id, employee_id, status, checked_at, source, remarks, created_by) VALUES ($1, $2, $3, $4, 'MANUAL', $5, $6)`,
@@ -342,16 +332,15 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       // Ceremonies held before the employee was added do not count against them
       const since = u.toDateStr(new Date(e.created_at));
       const expected = held.filter((c) => mine.has(c.id) || (e.active && e.flag_required && c.ceremony_date >= since));
-      const t = { held: expected.length, on_time: 0, late: 0, excused: 0, absent: 0 };
+      const t = { held: expected.length, on_time: 0, excused: 0, absent: 0 };
       for (const c of expected) {
         const s = mine.get(c.id);
         if (s === 'ON_TIME') t.on_time++;
-        else if (s === 'LATE') t.late++;
         else if (s === 'EXCUSED') t.excused++;
         else t.absent++;
       }
       const counted = t.held - t.excused;
-      t.rate = counted ? Math.round(((t.on_time + t.late) / counted) * 100) : null;
+      t.rate = counted ? Math.round((t.on_time / counted) * 100) : null;
       return { employee: presentEmployee(e), ...t };
     });
     return { from, to, ceremonies: held.length, rows };
@@ -362,10 +351,10 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
   router.get('/flag/summary.csv', can, async (req, res) => {
     const { from, to, rows } = await summary(req.query);
     const csv = flag.toCsv([
-      ['Employee No.', 'Last Name', 'First Name', 'Middle Name', 'Position', 'Division', 'Unit', 'Ceremonies', 'Present (on time)', 'Late', 'Excused', 'Absent', 'Attendance %'],
+      ['Employee No.', 'Last Name', 'First Name', 'Middle Name', 'Position', 'Division', 'Unit', 'Ceremonies', 'Present', 'Excused', 'Absent', 'Attendance %'],
       ...rows.map(({ employee: e, ...t }) => [
         e.employee_no, e.last_name, e.first_name, e.middle_name || '', e.position || '', e.division || '', e.unit || '',
-        t.held, t.on_time, t.late, t.excused, t.absent, t.rate ?? '',
+        t.held, t.on_time, t.excused, t.absent, t.rate ?? '',
       ]),
     ]);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
