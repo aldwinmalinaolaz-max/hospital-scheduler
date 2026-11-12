@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Staff Panel · ZRMC ONE Hospital System</title>
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/css/style.css">
 <link rel="icon" type="image/png" href="/img/favicon.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -137,7 +138,7 @@
           <a class="btn sm secondary" href="/flag-ceremony" target="_blank">Open employee check-in page</a>
         </div>
       </div>
-      <div class="alert warn hidden no-print" id="flagNotReady">Check-in is <b>off</b> until the venue location (geofence) is set. Go to <a href="#" data-flag-goto="settings">Settings</a>, ideally while standing at the flagpole, and use <b>Use my current location</b>.</div>
+      <div class="alert warn hidden no-print" id="flagNotReady">Check-in is <b>off</b> until the venue location (geofence) is set. Go to <a href="#" data-flag-goto="settings">Venue &amp; schedule</a> and pin the flagpole on the map, or use <b>Use my current location</b> while standing there.</div>
       <div class="subtabs no-print" id="flagTabs" role="tablist">
         <button type="button" data-flag="ceremonies" class="on">Ceremonies</button>
         <button type="button" data-flag="summary">Summary</button>
@@ -213,13 +214,22 @@
         <form id="flagSettingsForm" class="grid">
           <div class="card">
             <h3>Venue and geofence</h3>
-            <p class="muted small">Employees can check in only when their phone's GPS places them within the radius of this point. Best set while standing at the flagpole: tap <b>Use my current location</b>.</p>
+            <p class="muted small">Employees can check in only when their phone's GPS places them within the radius of this point. Pin it on the map below (click the spot or drag the pin), or stand at the flagpole and tap <b>Use my current location</b>.</p>
             <div class="grid grid-2">
               <label class="field span-2"><span class="req">Venue name</span><input name="venue" required></label>
               <label class="field">Latitude<input name="lat" inputmode="decimal" data-nocaps placeholder="e.g. 6.9082"></label>
               <label class="field">Longitude<input name="lng" inputmode="decimal" data-nocaps placeholder="e.g. 122.0756"></label>
               <div class="span-2"><button class="btn secondary" type="button" id="flagHereBtn">📍 Use my current location</button> <span class="muted small" id="flagHereNote"></span></div>
-              <div class="span-2 flag-map" id="flagMap"></div>
+              <div class="span-2">
+                <div class="map-search">
+                  <input type="search" id="flagSearch" data-nocaps placeholder="Find a place on the map, e.g. Zamboanga City Medical Center" aria-label="Find a place on the map">
+                  <button class="btn secondary" type="button" id="flagSearchBtn">Find</button>
+                </div>
+                <ul class="map-results hidden" id="flagSearchResults"></ul>
+                <div class="flag-map" id="flagMap" role="application" aria-label="Map: click or drag the pin to set the venue"></div>
+                <p class="muted small" id="flagMapNote" style="margin:4px 0 0"><b>Pin the venue manually:</b> click the map where the flagpole is, or drag the pin. The circle shows the check-in area. Zoom in for accuracy.</p>
+                <a class="small hidden" id="flagGmaps" href="#" target="_blank" rel="noopener">Check this spot in Google Maps (satellite view)</a>
+              </div>
               <label class="field"><span class="req">Geofence radius (meters)</span><input name="radius_m" type="number" min="20" max="2000" required></label>
               <label class="field"><span class="req">Required GPS accuracy (meters)</span><input name="max_accuracy_m" type="number" min="10" max="1000" required></label>
               <label class="field"><span class="req">Grace period before "late" (minutes)</span><input name="grace_minutes" type="number" min="0" max="60" required></label>
@@ -380,6 +390,7 @@
 <script src="/js/referral-print.js"></script>
 <script src="/js/idmatch.js"></script>
 <script src="/js/idocr.js"></script>
+<script src="/vendor/leaflet/leaflet.js"></script>
 <script src="/js/admin.js"></script>
 </body>
 </html>

@@ -1763,16 +1763,95 @@ ${cat.hospitalName}`;
     <td><input type="time" data-k="closes" value="${esc(x.closes)}"></td>
     <td><button class="btn sm danger" type="button" data-sched-del>Remove</button></td>
   </tr>`;
-  function drawMap() {
+  // Venue map: staff pin the venue by clicking the map or dragging the pin; the circle is the geofence
+  const DEFAULT_CENTER = [6.9214, 122.079]; // Zamboanga City, until a venue is pinned
+  let venueMap = null;
+  let venuePin = null;
+  let venueCircle = null;
+  const pinIcon = () =>
+    window.L &&
+    L.icon({ iconUrl: '/vendor/leaflet/images/marker-icon.png', iconRetinaUrl: '/vendor/leaflet/images/marker-icon-2x.png', shadowUrl: '/vendor/leaflet/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], shadowSize: [41, 41] });
+  const readLatLng = () => {
     const lat = parseFloat(setF.lat.value);
     const lng = parseFloat(setF.lng.value);
-    const box = $('#flagMap');
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return (box.innerHTML = '<p class="muted small">Set the location to see it on the map.</p>');
-    const d = 0.004;
-    const src = `https://www.openstreetmap.org/export/embed.html?bbox=${lng - d},${lat - d * 0.8},${lng + d},${lat + d * 0.8}&layer=mapnik&marker=${lat},${lng}`;
-    box.innerHTML = `<iframe title="Venue on the map" src="${esc(src)}" loading="lazy"></iframe>
-      <a class="small" href="https://www.google.com/maps?q=${lat},${lng}" target="_blank" rel="noopener">Open in Google Maps</a>`;
+    return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? [lat, lng] : null;
+  };
+  // Moves the pin (and fields) to a point chosen on the map
+  function setVenue(lat, lng, { pan = false } = {}) {
+    setF.lat.value = lat.toFixed(6);
+    setF.lng.value = lng.toFixed(6);
+    drawMap({ pan });
+    $('#flagMapNote').innerHTML = `<b>Pin moved</b> to ${lat.toFixed(6)}, ${lng.toFixed(6)}. Drag it to fine-tune, then <b>Save settings</b>.`;
   }
+  function drawMap({ pan = true } = {}) {
+    const box = $('#flagMap');
+    if (!window.L) {
+      box.innerHTML = '<p class="muted small" style="padding:12px">The map could not be loaded. You can still type the latitude and longitude.</p>';
+      return;
+    }
+    if (!venueMap) {
+      venueMap = L.map(box, { center: DEFAULT_CENTER, zoom: 15, scrollWheelZoom: true });
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
+      }).addTo(venueMap);
+      venueMap.on('click', (e) => setVenue(e.latlng.lat, e.latlng.lng));
+    }
+    const at = readLatLng();
+    const radius = Math.max(0, Number(setF.radius_m.value) || 0);
+    $('#flagGmaps').classList.toggle('hidden', !at);
+    if (!at) {
+      venuePin?.remove();
+      venueCircle?.remove();
+      venuePin = venueCircle = null;
+      if (pan) venueMap.setView(DEFAULT_CENTER, 15);
+      return;
+    }
+    if (!venuePin) {
+      venuePin = L.marker(at, { draggable: true, icon: pinIcon(), title: 'Venue (drag to move)', keyboard: true }).addTo(venueMap);
+      venuePin.on('drag', (e) => venueCircle?.setLatLng(e.target.getLatLng()));
+      venuePin.on('dragend', (e) => {
+        const p = e.target.getLatLng();
+        setVenue(p.lat, p.lng);
+      });
+      venueCircle = L.circle(at, { radius, color: '#1b7a3e', weight: 2, fillColor: '#1b7a3e', fillOpacity: 0.12, interactive: false }).addTo(venueMap);
+    } else {
+      venuePin.setLatLng(at);
+      venueCircle.setLatLng(at).setRadius(radius);
+    }
+    if (pan) venueMap.setView(at, Math.max(venueMap.getZoom(), 17));
+    $('#flagGmaps').href = `https://www.google.com/maps?q=${at[0]},${at[1]}`;
+  }
+  // The map is created while its tab is hidden; let it measure itself once shown
+  const refreshMapSize = () => venueMap && setTimeout(() => venueMap.invalidateSize(), 50);
+
+  // Place search (OpenStreetMap Nominatim), Philippines only
+  async function searchPlace() {
+    const q = $('#flagSearch').value.trim();
+    const list = $('#flagSearchResults');
+    if (!q) return;
+    list.classList.remove('hidden');
+    list.innerHTML = '<li class="muted small">Searching…</li>';
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=ph&limit=5&q=${encodeURIComponent(q)}`, { headers: { Accept: 'application/json' } });
+      const rows = await res.json();
+      list.innerHTML = rows.length
+        ? rows.map((r, i) => `<li><button type="button" class="linklike" data-place="${i}">${esc(r.display_name)}</button></li>`).join('')
+        : '<li class="muted small">No place found. Try another name, or move the map and click on the venue.</li>';
+      list.onclick = (e) => {
+        const b = e.target.closest('[data-place]');
+        if (!b) return;
+        const r = rows[Number(b.dataset.place)];
+        list.classList.add('hidden');
+        venueMap?.setView([Number(r.lat), Number(r.lon)], 18);
+        $('#flagMapNote').innerHTML = '<b>Now click the exact spot</b> of the flagpole on the map to drop the pin.';
+      };
+    } catch {
+      list.innerHTML = '<li class="muted small">Search is not available right now. Move the map and click on the venue instead.</li>';
+    }
+  }
+  $('#flagSearchBtn').addEventListener('click', searchPlace);
+  $('#flagSearch').addEventListener('keydown', (e) => e.key === 'Enter' && (e.preventDefault(), searchPlace()));
   flagLoaders.settings = guard(async () => {
     await loadFlagOptions(true);
     const s = flagOpts.settings;
@@ -1785,9 +1864,11 @@ ${cat.hospitalName}`;
     $('#flagSettingsSaved').textContent = flagOpts.settings_updated ? `Last saved by ${flagOpts.settings_updated.by} · ${flagOpts.settings_updated.at}` : 'Not saved yet.';
     showError($('#flagSettingsError'), '');
     drawMap();
+    refreshMapSize();
   });
-  setF.lat.addEventListener('change', drawMap);
-  setF.lng.addEventListener('change', drawMap);
+  setF.lat.addEventListener('change', () => drawMap());
+  setF.lng.addEventListener('change', () => drawMap());
+  setF.radius_m.addEventListener('input', () => drawMap({ pan: false }));
   $('#flagSchedAdd').addEventListener('click', () =>
     $('#flagSchedRows').insertAdjacentHTML('beforeend', schedRow({ weekday: 5, title: 'FLAG LOWERING CEREMONY', opens: '16:30', starts: '17:00', closes: '17:30' })),
   );
@@ -1798,10 +1879,8 @@ ${cat.hospitalName}`;
     note.textContent = 'Finding your location…';
     navigator.geolocation.getCurrentPosition(
       (p) => {
-        setF.lat.value = p.coords.latitude.toFixed(6);
-        setF.lng.value = p.coords.longitude.toFixed(6);
+        setVenue(p.coords.latitude, p.coords.longitude, { pan: true });
         note.textContent = `Set (GPS ±${Math.round(p.coords.accuracy)} m). ${p.coords.accuracy > 30 ? 'For a better fix, use a phone outdoors near the flagpole. ' : ''}Remember to save.`;
-        drawMap();
       },
       (err) => (note.textContent = err.code === 1 ? 'Location permission was blocked for this site.' : 'Your location could not be read. Try again outdoors.'),
       { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
