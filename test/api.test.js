@@ -1027,19 +1027,27 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   // Employees
   const addEmp = (body) => call('/admin/flag/employees', { method: 'POST', cookie: hr, body });
   assert.equal((await addEmp({ employee_no: '2023-0001', last_name: 'dela cruz', first_name: 'juan', pin: '1234' })).status, 400); // 6 digits
-  const e1 = await addEmp({ employee_no: '2023-0001', last_name: 'dela cruz', first_name: 'juan', middle_name: 'santos', department: 'emergency room', pin: '123456' });
+  const e1 = await addEmp({ employee_no: '2023-0001', last_name: 'dela cruz', first_name: 'juan', middle_name: 'santos', division: 'nursing service', unit: 'emergency room', pin: '123456' });
   assert.equal(e1.status, 201);
   assert.equal(e1.data.pin, '123456');
   assert.equal(e1.data.flag_required, true);
+  assert.equal(e1.data.division, 'NURSING SERVICE');
+  assert.equal(e1.data.unit, 'EMERGENCY ROOM');
   assert.equal((await addEmp({ employee_no: '2023-0001', last_name: 'x', first_name: 'y' })).status, 400);
   const imp = await call('/admin/flag/employees/import', {
     method: 'POST', cookie: hr,
-    body: { csv: 'Employee No,Last,First,Middle,Position,Department\n2023-0002,Reyes,Ana,,Nurse II,Pediatrics\n"2023-0003","Santos","Maria Clara","","Clerk","HHIMS"\n' },
+    body: { csv: 'Employee No,Last,First,Middle,Position,Division,Unit\n2023-0002,Reyes,Ana,,Nurse II,Nursing Service,Pediatrics\n"2023-0003","Santos","Maria Clara","","Clerk","Medical Service","HHIMS"\n' },
   });
   assert.equal(imp.status, 201);
   assert.equal(imp.data.rows.length, 2);
   assert.match(imp.data.rows[0].pin, /^\d{6}$/);
   assert.equal(imp.data.rows[1].name, 'SANTOS, MARIA CLARA');
+  assert.deepEqual([imp.data.rows[1].division, imp.data.rows[1].unit], ['MEDICAL SERVICE', 'HHIMS']);
+  const optsAfter = (await call('/admin/flag/options', { cookie: hr })).data;
+  assert.deepEqual(optsAfter.divisions, ['MEDICAL SERVICE', 'NURSING SERVICE']);
+  assert.deepEqual(optsAfter.units, ['EMERGENCY ROOM', 'HHIMS', 'PEDIATRICS']);
+  assert.equal((await call('/admin/flag/employees?division=NURSING%20SERVICE', { cookie: hr })).data.rows.length, 2);
+  assert.equal((await call('/admin/flag/employees?q=pediatrics', { cookie: hr })).data.rows[0].employee_no, '2023-0002');
   assert.equal((await call('/admin/flag/employees/import', { method: 'POST', cookie: hr, body: { csv: '2023-0009,A,B\n2023-0001,C,D' } })).status, 400);
   assert.equal((await db.one("SELECT COUNT(*)::int AS n FROM employees WHERE employee_no = '2023-0009'")).n, 0);
   const [ana, maria] = imp.data.rows;
@@ -1182,7 +1190,7 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.deepEqual([...csvBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]); // BOM so Excel reads UTF-8
   const csvText = csvBytes.toString('utf8');
   assert.match(csvText, /Date,Ceremony,Employee No\./);
-  assert.match(csvText, /2023-0002,REYES,ANA,,NURSE II,PEDIATRICS,Excused,,STAFF \(hr\.clerk\),,ON DUTY AT ER/);
+  assert.match(csvText, /2023-0002,REYES,ANA,,NURSE II,NURSING SERVICE,PEDIATRICS,Excused,,STAFF \(hr\.clerk\),,ON DUTY AT ER/);
 
   // Summary over the closed ceremony only (today's are still open)
   const sum = (await call(`/admin/flag/summary?from=${past}&to=${today}`, { cookie: hr })).data;

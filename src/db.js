@@ -350,6 +350,8 @@ const SCHEMA = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
+  -- The employee's division is kept in the "department" column; the unit is separate
+  ALTER TABLE employees ADD COLUMN IF NOT EXISTS unit TEXT;
   -- FALSE for employees who are not expected at flag ceremonies (e.g. fixed night duty)
   ALTER TABLE employees ADD COLUMN IF NOT EXISTS flag_required BOOLEAN NOT NULL DEFAULT TRUE;
   -- Bumped when the PIN is reset or the employee is deactivated: signs them out of every phone

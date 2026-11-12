@@ -209,7 +209,9 @@ function cleanEmployee(b, { partial = false } = {}) {
   }
   if (has('middle_name')) out.middle_name = clean(b.middle_name, 60) || null;
   if (has('position')) out.position = clean(b.position, 80) || null;
-  if (has('department')) out.department = clean(b.department, 80) || null;
+  // Division is stored in the department column
+  if (has('division') || (partial && b.department !== undefined)) out.department = clean(b.division ?? b.department, 80) || null;
+  if (has('unit')) out.unit = clean(b.unit, 80) || null;
   if (b.flag_required !== undefined) out.flag_required = !(b.flag_required === false || b.flag_required === 'false' || b.flag_required === '0');
   return [out, null];
 }
@@ -237,7 +239,7 @@ function csvCell(v) {
 const toCsv = (rows) => `\uFEFF${rows.map((r) => r.map(csvCell).join(',')).join('\r\n')}\r\n`;
 
 // Parses a pasted employee list (from Excel or CSV): header row optional
-const IMPORT_COLUMNS = ['employee_no', 'last_name', 'first_name', 'middle_name', 'position', 'department'];
+const IMPORT_COLUMNS = ['employee_no', 'last_name', 'first_name', 'middle_name', 'position', 'division', 'unit'];
 function parseCsv(text) {
   const rows = [];
   let row = [];

@@ -1454,7 +1454,7 @@ ${cat.hospitalName}`;
     if (!sumF.to.value) sumF.to.value = flagOpts.today;
     $$('[data-flag-dept]').forEach((sel) => {
       const v = sel.value;
-      sel.innerHTML = '<option value="">All departments</option>' + flagOpts.departments.map((d) => `<option${d === v ? ' selected' : ''}>${esc(d)}</option>`).join('');
+      sel.innerHTML = '<option value="">All divisions</option>' + flagOpts.divisions.map((d) => `<option${d === v ? ' selected' : ''}>${esc(d)}</option>`).join('');
     });
   }
   function showFlagSub(name) {
@@ -1620,7 +1620,7 @@ ${cat.hospitalName}`;
     const rows = detail.rows.filter(
       (r) =>
         (!q || r.name.includes(q) || r.employee_no.includes(q)) &&
-        (!f.department || r.department === f.department) &&
+        (!f.division || r.division === f.division) &&
         (!f.status || (f.status === 'MISSING' ? ['ABSENT', 'NOT_YET'].includes(r.status) : r.status === f.status)),
     );
     $('#flagDetailRows').innerHTML =
@@ -1628,7 +1628,7 @@ ${cat.hospitalName}`;
         .map(
           (r) => `<tr>
         <td>${esc(r.name)}<div class="sub mono">${esc(r.employee_no)}${r.position ? ` · ${esc(r.position)}` : ''}</div></td>
-        <td class="small">${esc(r.department || '')}</td>
+        <td class="small">${esc(r.division || '')}${r.unit ? `<div class="sub">${esc(r.unit)}</div>` : ''}</td>
         <td>${flagPill(r.status)}</td>
         <td class="nowrap">${r.time && r.status !== 'EXCUSED' ? fmtTime(r.time) : ''}</td>
         <td class="small">${r.source === 'GPS' ? `Phone GPS<div class="sub">${r.distance_m} m from venue (±${r.accuracy_m} m)</div>` : r.source === 'MANUAL' ? `By ${esc(r.marked_by)}` : ''}${r.source === 'GPS' && r.marked_by ? `<div class="sub">changed by ${esc(r.marked_by)}</div>` : ''}</td>
@@ -1678,7 +1678,7 @@ ${cat.hospitalName}`;
         .map(
           (r) => `<tr>
         <td>${esc(r.employee.name)}<div class="sub mono">${esc(r.employee.employee_no)}</div></td>
-        <td class="small">${esc(r.employee.department || '')}</td>
+        <td class="small">${esc(r.employee.division || '')}${r.employee.unit ? `<div class="sub">${esc(r.employee.unit)}</div>` : ''}</td>
         <td>${r.held}</td><td>${r.on_time}</td><td>${r.late || '—'}</td><td>${r.excused || '—'}</td>
         <td>${r.absent ? `<b style="color:var(--danger)">${r.absent}</b>` : '—'}</td>
         <td>${r.rate === null ? '—' : `${r.rate}%`}</td>
@@ -1702,17 +1702,18 @@ ${cat.hospitalName}`;
         <td class="mono">${esc(e.employee_no)}</td>
         <td>${esc(e.name)}</td>
         <td class="small">${esc(e.position || '')}</td>
-        <td class="small">${esc(e.department || '')}</td>
+        <td class="small">${esc(e.division || '')}</td>
+        <td class="small">${esc(e.unit || '')}</td>
         <td class="small">${e.flag_required ? 'Required' : '<span class="muted">Not required</span>'}</td>
         <td>${e.active ? '<span class="badge ok">Active</span>' : '<span class="badge">Inactive</span>'}${e.locked ? '<div class="sub" style="color:var(--danger)">PIN locked</div>' : ''}</td>
         <td class="no-print nowrap"><button class="btn sm" data-emp-edit="${e.id}">Edit</button> <button class="btn sm secondary" data-emp-pin="${e.id}">Reset PIN</button></td>
       </tr>`,
         )
-        .join('') || '<tr><td colspan="7" class="empty">No employees yet. Add them one by one or import a list.</td></tr>';
+        .join('') || '<tr><td colspan="8" class="empty">No employees yet. Add them one by one or import a list.</td></tr>';
   });
   empF.addEventListener('input', debounce(flagLoaders.employees));
 
-  const deptList = () => `<datalist id="flagDeptList">${(flagOpts?.departments || []).map((d) => `<option value="${esc(d)}">`).join('')}</datalist>`;
+  const suggest = (id, list) => `<datalist id="${id}">${(list || []).map((d) => `<option value="${esc(d)}">`).join('')}</datalist>`;
   const pinShown = (e) =>
     openDialog(
       `<h2>PIN for ${esc(e.name)}</h2>
@@ -1735,7 +1736,8 @@ ${cat.hospitalName}`;
          <label class="field"><span class="req">First name</span><input name="first_name" value="${esc(e.first_name || '')}" required></label>
          <label class="field">Middle name<input name="middle_name" value="${esc(e.middle_name || '')}"></label>
          <label class="field">Position<input name="position" value="${esc(e.position || '')}"></label>
-         <label class="field span-2">Department / unit<input name="department" list="flagDeptList" value="${esc(e.department || '')}">${deptList()}</label>
+         <label class="field">Division<input name="division" list="flagDivList" value="${esc(e.division || '')}" placeholder="E.G. NURSING SERVICE">${suggest('flagDivList', flagOpts?.divisions)}</label>
+         <label class="field">Unit<input name="unit" list="flagUnitList" value="${esc(e.unit || '')}" placeholder="E.G. EMERGENCY ROOM">${suggest('flagUnitList', flagOpts?.units)}</label>
          <label class="check span-2"><input type="checkbox" name="flag_required" ${e.flag_required ? 'checked' : ''}> Required to attend flag ceremonies (untick e.g. for fixed night duty; they are then not counted absent)</label>
          ${isNew ? '<label class="field span-2">PIN (6 digits)<input name="pin" inputmode="numeric" maxlength="6" placeholder="Leave blank for a random PIN"></label>' : `<label class="check span-2"><input type="checkbox" name="active" ${e.active ? 'checked' : ''}> Active (can sign in and check in)</label>`}
        </div>`,
@@ -1772,8 +1774,8 @@ ${cat.hospitalName}`;
     openDialog(
       `<h2>Import employees</h2>
        <p class="muted small">Paste from Excel or a CSV file, one employee per line, in this column order:<br>
-       <b>Employee no., Last name, First name, Middle name, Position, Department</b>. A header row is skipped. Each employee gets a random 6-digit PIN, listed after the import for printing.</p>
-       <textarea name="csv" rows="10" data-nocaps placeholder="2023-0001, DELA CRUZ, JUAN, SANTOS, NURSE II, EMERGENCY ROOM" required></textarea>`,
+       <b>Employee no., Last name, First name, Middle name, Position, Division, Unit</b>. A header row is skipped. Each employee gets a random 6-digit PIN, listed after the import for printing.</p>
+       <textarea name="csv" rows="10" data-nocaps placeholder="2023-0001, DELA CRUZ, JUAN, SANTOS, NURSE II, NURSING SERVICE, EMERGENCY ROOM" required></textarea>`,
       async (d) => {
         const { rows } = await api('/admin/flag/employees/import', { method: 'POST', body: { csv: d.csv } });
         await loadFlagOptions(true);
@@ -1783,8 +1785,8 @@ ${cat.hospitalName}`;
             openDialog(
               `<h2>${rows.length} employee${rows.length === 1 ? '' : 's'} imported</h2>
                <p class="muted small">Print this list and give each employee their PIN privately. The PINs are not shown again. Employees sign in at <b>${esc(location.host)}/flag-ceremony</b>.</p>
-               <div class="table-wrap"><table><thead><tr><th>Employee no.</th><th>Name</th><th>Department</th><th>PIN</th></tr></thead><tbody>
-               ${rows.map((r) => `<tr><td class="mono">${esc(r.employee_no)}</td><td>${esc(r.name)}</td><td class="small">${esc(r.department || '')}</td><td class="mono"><b>${esc(r.pin)}</b></td></tr>`).join('')}
+               <div class="table-wrap"><table><thead><tr><th>Employee no.</th><th>Name</th><th>Division / unit</th><th>PIN</th></tr></thead><tbody>
+               ${rows.map((r) => `<tr><td class="mono">${esc(r.employee_no)}</td><td>${esc(r.name)}</td><td class="small">${esc([r.division, r.unit].filter(Boolean).join(' / '))}</td><td class="mono"><b>${esc(r.pin)}</b></td></tr>`).join('')}
                </tbody></table></div>`,
               async () => window.print(),
               { wide: true, saveLabel: 'Print' },

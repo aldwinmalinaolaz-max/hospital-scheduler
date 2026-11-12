@@ -124,7 +124,7 @@ module.exports = function flagRoutes(db) {
     const closedToday = upcoming.filter((c) => c.ceremony_date === today && flag.phase(c) === 'CLOSED' && !c.cancelled);
     res.json({
       ...base,
-      employee: { employee_no: emp.employee_no, name: flag.fullName(emp), department: emp.department, flag_required: emp.flag_required },
+      employee: { employee_no: emp.employee_no, name: flag.fullName(emp), division: emp.department, unit: emp.unit, flag_required: emp.flag_required },
       today_ceremonies: todays,
       next: upcoming.filter((c) => c.ceremony_date > today && !c.cancelled).slice(0, 3).map(withMine),
       history: [...closedToday.reverse(), ...history].map((c) => {

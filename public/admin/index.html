@@ -170,11 +170,11 @@
           <div class="stats" id="flagStats"></div>
           <form class="filters no-print" id="flagDetailFilters">
             <input type="search" name="q" placeholder="Search name or employee no.">
-            <select name="department" data-flag-dept><option value="">All departments</option></select>
+            <select name="division" data-flag-dept><option value="">All divisions</option></select>
             <select name="status"><option value="">Everyone</option><option value="ON_TIME">Present (on time)</option><option value="LATE">Late</option><option value="EXCUSED">Excused</option><option value="MISSING">Absent / not yet</option></select>
           </form>
           <div class="table-wrap"><table>
-            <thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Time</th><th>How recorded</th><th class="no-print">Selfie</th><th>Remarks</th><th class="no-print"></th></tr></thead>
+            <thead><tr><th>Employee</th><th>Division / unit</th><th>Status</th><th>Time</th><th>How recorded</th><th class="no-print">Selfie</th><th>Remarks</th><th class="no-print"></th></tr></thead>
             <tbody id="flagDetailRows"></tbody>
           </table></div>
         </div>
@@ -184,14 +184,14 @@
         <form class="filters no-print" id="flagSumForm">
           <label class="field">From<input type="date" name="from" required></label>
           <label class="field">To<input type="date" name="to" required></label>
-          <label class="field">Department<select name="department" data-flag-dept><option value="">All departments</option></select></label>
+          <label class="field">Division<select name="division" data-flag-dept><option value="">All divisions</option></select></label>
           <button class="btn" type="submit">View</button>
           <button class="btn secondary" type="button" id="flagSumCsv">Download (CSV)</button>
           <button class="btn secondary" type="button" onclick="window.print()">Print</button>
         </form>
         <p class="muted small" id="flagSumNote"></p>
         <div class="table-wrap"><table>
-          <thead><tr><th>Employee</th><th>Department</th><th>Ceremonies</th><th>Present</th><th>Late</th><th>Excused</th><th>Absent</th><th>Attendance</th></tr></thead>
+          <thead><tr><th>Employee</th><th>Division / unit</th><th>Ceremonies</th><th>Present</th><th>Late</th><th>Excused</th><th>Absent</th><th>Attendance</th></tr></thead>
           <tbody id="flagSumRows"></tbody>
         </table></div>
       </div>
@@ -199,13 +199,13 @@
       <div data-flagview="employees" class="hidden">
         <form class="filters no-print" id="flagEmpFilters">
           <input type="search" name="q" placeholder="Search name, employee no., position">
-          <select name="department" data-flag-dept><option value="">All departments</option></select>
+          <select name="division" data-flag-dept><option value="">All divisions</option></select>
           <select name="active"><option value="1">Active</option><option value="0">Inactive</option><option value="">All</option></select>
           <button class="btn" type="button" id="flagAddEmpBtn">+ Add employee</button>
           <button class="btn secondary" type="button" id="flagImportBtn">Import list</button>
         </form>
         <div class="table-wrap"><table>
-          <thead><tr><th>Employee no.</th><th>Name</th><th>Position</th><th>Department</th><th>Flag ceremony</th><th>Status</th><th class="no-print"></th></tr></thead>
+          <thead><tr><th>Employee no.</th><th>Name</th><th>Position</th><th>Division</th><th>Unit</th><th>Flag ceremony</th><th>Status</th><th class="no-print"></th></tr></thead>
           <tbody id="flagEmpRows"></tbody>
         </table></div>
       </div>

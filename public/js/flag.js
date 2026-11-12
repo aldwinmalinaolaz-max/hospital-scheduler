@@ -37,7 +37,7 @@
     show('#signedIn', !!me.employee);
     if (!me.employee) return stopGps();
     $('#empName').textContent = me.employee.name;
-    $('#empMeta').textContent = [me.employee.employee_no, me.employee.department].filter(Boolean).join(' · ');
+    $('#empMeta').textContent = [me.employee.employee_no, me.employee.division, me.employee.unit].filter(Boolean).join(' · ');
     renderToday();
     renderHistory();
     // Keep the page current (check-in opening and closing) while it stays open
