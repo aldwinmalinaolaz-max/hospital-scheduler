@@ -662,3 +662,4 @@ label.check { display: flex; gap: 8px; align-items: flex-start; } label.check in
 .ocr-text { white-space: pre-wrap; font-size: 0.75rem; max-height: 180px; overflow: auto; background: var(--surface-2); color: var(--text); padding: 8px; border-radius: 6px; margin: 6px 0 0; }
 #idOcr .alert { margin: 8px 0 0; }
 #idOcr p { margin: 6px 0 0; }
+#flagSchedRows select[data-k=title] { min-width: 270px; }

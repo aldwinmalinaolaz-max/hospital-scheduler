@@ -1755,9 +1755,19 @@ ${cat.hospitalName}`;
   // Venue, geofence and weekly schedule
   const setF = $('#flagSettingsForm');
   const dayOpts = (sel) => flagOpts.weekdays.map((d, i) => `<option value="${i}"${i === sel ? ' selected' : ''}>${d}</option>`).join('');
+  // Ceremony types for the weekly schedule, with their usual check-in times
+  const CEREMONY_TYPES = {
+    'FLAG RAISING CEREMONY': { opens: '07:00', starts: '08:00', closes: '09:00' },
+    'FLAG LOWERING CEREMONY': { opens: '16:30', starts: '17:00', closes: '17:30' },
+  };
+  // A title saved before the dropdown existed stays selectable
+  const ceremonyOpts = (sel) =>
+    [...new Set([...Object.keys(CEREMONY_TYPES), ...(sel ? [sel] : [])])]
+      .map((t) => `<option value="${esc(t)}"${t === sel ? ' selected' : ''}>${esc(t.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()))}</option>`)
+      .join('');
   const schedRow = (x) => `<tr>
     <td><select data-k="weekday">${dayOpts(x.weekday)}</select></td>
-    <td><input data-k="title" value="${esc(x.title)}"></td>
+    <td><select data-k="title" aria-label="Ceremony">${ceremonyOpts(x.title)}</select></td>
     <td><input type="time" data-k="opens" value="${esc(x.opens)}"></td>
     <td><input type="time" data-k="starts" value="${esc(x.starts)}"></td>
     <td><input type="time" data-k="closes" value="${esc(x.closes)}"></td>
@@ -1799,7 +1809,8 @@ ${cat.hospitalName}`;
     }
     const at = readLatLng();
     const radius = Math.max(0, Number(setF.radius_m.value) || 0);
-    $('#flagGmaps').classList.toggle('hidden', !at);
+    // visibility (not display) so the layout never shifts under the Save button
+    $('#flagGmaps').style.visibility = at ? 'visible' : 'hidden';
     if (!at) {
       venuePin?.remove();
       venueCircle?.remove();
@@ -1866,13 +1877,23 @@ ${cat.hospitalName}`;
     drawMap();
     refreshMapSize();
   });
-  setF.lat.addEventListener('change', () => drawMap());
-  setF.lng.addEventListener('change', () => drawMap());
+  // Typed coordinates move the pin as they are typed
+  const typedLatLng = debounce(() => drawMap());
+  setF.lat.addEventListener('input', typedLatLng);
+  setF.lng.addEventListener('input', typedLatLng);
   setF.radius_m.addEventListener('input', () => drawMap({ pan: false }));
   $('#flagSchedAdd').addEventListener('click', () =>
     $('#flagSchedRows').insertAdjacentHTML('beforeend', schedRow({ weekday: 5, title: 'FLAG LOWERING CEREMONY', opens: '16:30', starts: '17:00', closes: '17:30' })),
   );
   $('#flagSchedRows').addEventListener('click', (e) => e.target.closest('[data-sched-del]')?.closest('tr').remove());
+  // Choosing a ceremony fills in its usual times (they can still be changed)
+  $('#flagSchedRows').addEventListener('change', (e) => {
+    if (e.target.dataset.k !== 'title') return;
+    const t = CEREMONY_TYPES[e.target.value];
+    if (!t) return;
+    const tr = e.target.closest('tr');
+    for (const k of ['opens', 'starts', 'closes']) $(`[data-k=${k}]`, tr).value = t[k];
+  });
   $('#flagHereBtn').addEventListener('click', () => {
     const note = $('#flagHereNote');
     if (!navigator.geolocation) return (note.textContent = 'This browser cannot share its location.');
