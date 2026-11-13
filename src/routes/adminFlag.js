@@ -39,6 +39,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
   // ---------- Options and settings ----------
 
   router.get('/flag/options', can, async (req, res) => {
+    const divisionList = await flag.getDivisions(db);
     const [deps, units, settings, saved] = await Promise.all([
       db.query("SELECT DISTINCT department FROM employees WHERE department IS NOT NULL AND department <> '' ORDER BY 1"),
       db.query("SELECT DISTINCT unit FROM employees WHERE unit IS NOT NULL AND unit <> '' ORDER BY 1"),
@@ -47,8 +48,8 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     ]);
     res.json({
       // The fixed divisions, plus any older values still in use (for filtering)
-      divisions: [...flag.DIVISIONS, ...deps.map((d) => d.department).filter((d) => !flag.DIVISIONS.includes(d))],
-      division_choices: flag.DIVISIONS,
+      divisions: [...divisionList, ...deps.map((d) => d.department).filter((d) => !divisionList.includes(d))],
+      division_choices: divisionList,
       units: units.map((d) => d.unit),
       today: u.todayStr(), // hospital date (the browser's clock or time zone may differ)
       settings,
@@ -400,6 +401,85 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     res.end(csv);
   });
 
+  // ---------- Divisions and units (names) ----------
+
+  const cleanName = (v) => String(v || '').trim().replace(/\s+/g, ' ').toUpperCase().slice(0, 120);
+
+  router.get('/flag/divisions', can, async (req, res) => {
+    const [divs, used, units] = await Promise.all([
+      db.query('SELECT * FROM flag_divisions ORDER BY sort_order, name'),
+      db.query("SELECT department AS name, COUNT(*)::int AS n FROM employees WHERE department IS NOT NULL AND department <> '' GROUP BY department"),
+      db.query(
+        `SELECT unit AS name, COUNT(*)::int AS n, string_agg(DISTINCT department, ', ') AS divisions
+         FROM employees WHERE unit IS NOT NULL AND unit <> '' GROUP BY unit ORDER BY unit`,
+      ),
+    ]);
+    const count = new Map(used.map((r) => [r.name, r.n]));
+    res.json({
+      divisions: divs.map((d) => ({ id: d.id, name: d.name, employees: count.get(d.name) || 0 })),
+      // Older division values still on employees but no longer in the list
+      other_divisions: used.filter((r) => !divs.some((d) => d.name === r.name)).map((r) => ({ name: r.name, employees: r.n })),
+      units: units.map((r) => ({ name: r.name, employees: r.n, divisions: r.divisions || '' })),
+    });
+  });
+
+  router.post('/flag/divisions', can, async (req, res) => {
+    const name = cleanName(req.body?.name);
+    if (!name) throw new ValidationError('Enter the division name.');
+    if (await db.one('SELECT 1 FROM flag_divisions WHERE name = $1', [name])) throw new ValidationError(`${name} is already in the list.`);
+    const { n } = await db.one('SELECT COALESCE(MAX(sort_order), 0) + 10 AS n FROM flag_divisions');
+    res.status(201).json(await db.one('INSERT INTO flag_divisions (name, sort_order) VALUES ($1, $2) RETURNING *', [name, n]));
+  });
+
+  // Rename a division: every employee in it moves to the new name. Renaming to another
+  // division's name merges the two (only when asked to).
+  router.patch('/flag/divisions/:id', can, async (req, res) => {
+    const d = await db.one('SELECT * FROM flag_divisions WHERE id = $1', [idParam(req.params.id)]);
+    if (!d) throw fail(404, 'Division not found.');
+    const name = cleanName(req.body?.name);
+    if (!name) throw new ValidationError('Enter the division name.');
+    if (name === d.name) return res.json({ ...d, moved: 0 });
+    const other = await db.one('SELECT * FROM flag_divisions WHERE name = $1', [name]);
+    if (other && !req.body?.merge) {
+      const err = fail(409, `${name} is already a division. Merge ${d.name} into it?`);
+      throw err;
+    }
+    const out = await db.tx(async (t) => {
+      const moved = await t.query('UPDATE employees SET department = $1, updated_by = $2, updated_at = now() WHERE department = $3 RETURNING id', [name, req.user.username, d.name]);
+      if (other) await t.query('DELETE FROM flag_divisions WHERE id = $1', [d.id]);
+      else await t.query('UPDATE flag_divisions SET name = $1 WHERE id = $2', [name, d.id]);
+      return { id: other ? other.id : d.id, name, moved: moved.length, merged: !!other };
+    });
+    res.json(out);
+  });
+
+  router.delete('/flag/divisions/:id', can, async (req, res) => {
+    const d = await db.one('SELECT * FROM flag_divisions WHERE id = $1', [idParam(req.params.id)]);
+    if (!d) throw fail(404, 'Division not found.');
+    const { n } = await db.one('SELECT COUNT(*)::int AS n FROM employees WHERE department = $1', [d.name]);
+    if (n) throw new ValidationError(`${n} employee${n === 1 ? ' is' : 's are'} in ${d.name}. Move them to another division first, or rename it instead.`);
+    await db.query('DELETE FROM flag_divisions WHERE id = $1', [d.id]);
+    res.json({ ok: true });
+  });
+
+  // Rename a unit for every employee in it (renaming to an existing unit merges them).
+  // Optionally only within one division.
+  router.post('/flag/units/rename', can, async (req, res) => {
+    const from = cleanName(req.body?.from);
+    const to = cleanName(req.body?.to);
+    if (!from) throw new ValidationError('Choose the unit to rename.');
+    if (!to) throw new ValidationError('Enter the new unit name.');
+    const conds = [['unit = ?', from]];
+    if (req.body?.division) conds.push(['department = ?', String(req.body.division)]);
+    const { where, params } = whereClause(conds);
+    const moved = await db.query(
+      `UPDATE employees SET unit = $${params.length + 1}, updated_by = $${params.length + 2}, updated_at = now() ${where} RETURNING id`,
+      [...params, to, req.user.username],
+    );
+    if (!moved.length) throw fail(404, `No employees are in the unit ${from}.`);
+    res.json({ from, to, moved: moved.length });
+  });
+
   // ---------- Employees ----------
 
   router.get('/flag/employees', can, async (req, res) => {
@@ -430,7 +510,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
 
   router.post('/flag/employees', can, async (req, res) => {
     const b = req.body || {};
-    const [v, err] = flag.cleanEmployee(b);
+    const [v, err] = flag.cleanEmployee(b, { divisions: await flag.getDivisions(db) });
     if (err) throw new ValidationError(err);
     const pin = b.pin ? String(b.pin) : flag.randomPin();
     const bad = flag.checkPin(pin);
@@ -443,7 +523,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const id = idParam(req.params.id);
     const before = await db.one('SELECT * FROM employees WHERE id = $1', [id]);
     if (!before) throw fail(404, 'Employee not found.');
-    const [v, err] = flag.cleanEmployee(req.body || {}, { partial: true, current: before.department });
+    const [v, err] = flag.cleanEmployee(req.body || {}, { partial: true, current: before.department, divisions: await flag.getDivisions(db) });
     if (err) throw new ValidationError(err);
     if (v.employee_no && v.employee_no !== before.employee_no && (await db.one('SELECT 1 FROM employees WHERE employee_no = $1', [v.employee_no]))) {
       throw new ValidationError(`Employee no. ${v.employee_no} already exists.`);
@@ -480,10 +560,11 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const list = flag.parseCsv(req.body?.csv);
     if (!list.length) throw new ValidationError(`Paste at least one employee: ${flag.IMPORT_COLUMNS.join(', ')}.`);
     if (list.length > 2000) throw new ValidationError('Import at most 2,000 employees at a time.');
+    const divisions = await flag.getDivisions(db);
     const created = await db.tx(async (t) => {
       const out = [];
       for (const [i, row] of list.entries()) {
-        const [v, err] = flag.cleanEmployee(row);
+        const [v, err] = flag.cleanEmployee(row, { divisions });
         if (err) throw new ValidationError(`Line ${i + 1} (${row.employee_no || 'no employee no.'}): ${err} Nothing was imported.`);
         const pin = flag.randomPin();
         try {

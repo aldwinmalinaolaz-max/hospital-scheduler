@@ -1795,7 +1795,7 @@ ${cat.hospitalName}`;
     openDialog(
       `<h2>Import employees</h2>
        <p class="muted small">Paste from Excel or a CSV file, one employee per line, in this column order:<br>
-       <b>Employee no., Last name, First name, Middle name, Position, Division, Unit</b>. Division must be ${esc((flagOpts?.division_choices || []).join(', '))} (e.g. "Nursing Service" is read as NURSING). A header row is skipped. Each employee gets a random 6-digit PIN, listed after the import for printing.</p>
+       <b>Employee no., Last name, First name, Middle name, Position, Division, Unit</b>. Division must be ${esc((flagOpts?.division_choices || []).join(', '))} (short forms work too, e.g. "Nursing" is read as NURSING SERVICE DIVISION). A header row is skipped. Each employee gets a random 6-digit PIN, listed after the import for printing.</p>
        <textarea name="csv" rows="10" data-nocaps placeholder="2023-0001, DELA CRUZ, JUAN, SANTOS, NURSE II, NURSING, EMERGENCY ROOM" required></textarea>`,
       async (d) => {
         const { rows } = await api('/admin/flag/employees/import', { method: 'POST', body: { csv: d.csv } });
@@ -1819,6 +1819,80 @@ ${cat.hospitalName}`;
     ),
   );
 
+
+
+  // ---------- Division and unit names ----------
+  async function namesDialog() {
+    const data = await api('/admin/flag/divisions');
+    const row = (kind, n, extra = '') => `<tr>
+      <td><input data-${kind}-name value="${esc(n.name)}" data-was="${esc(n.name)}" aria-label="Name" maxlength="120"></td>
+      <td class="small nowrap">${n.employees} employee${n.employees === 1 ? '' : 's'}${extra}</td>
+      <td class="nowrap"><button type="button" class="btn sm secondary" data-${kind}-save="${esc(kind === 'div' ? n.id : n.name)}">Rename</button>
+        ${kind === 'div' && !n.employees ? `<button type="button" class="btn sm danger" data-div-del="${n.id}">Remove</button>` : ''}</td>
+    </tr>`;
+    openDialog(
+      `<h2>Divisions &amp; units</h2>
+       <p class="muted small">Renaming changes it for every employee in that division or unit. Renaming to a name that already exists merges the two.</p>
+       <h3 class="small" style="margin:12px 0 6px">Divisions (the Division dropdown)</h3>
+       <div class="table-wrap"><table class="names-table"><tbody>
+         ${data.divisions.map((d) => row('div', d)).join('')}
+         <tr><td><input id="newDivName" placeholder="New division name" maxlength="120"></td><td></td><td><button type="button" class="btn sm" id="newDivBtn">+ Add division</button></td></tr>
+       </tbody></table></div>
+       ${data.other_divisions.length ? `<p class="muted small">Not in the list (older values still on employees): ${data.other_divisions.map((d) => `<b>${esc(d.name)}</b> (${d.employees})`).join(', ')}. Edit those employees to choose a division.</p>` : ''}
+       <h3 class="small" style="margin:16px 0 6px">Units</h3>
+       ${data.units.length
+         ? `<div class="table-wrap"><table class="names-table"><tbody>${data.units.map((n) => row('unit', n, n.divisions ? `<div class="sub">${esc(n.divisions)}</div>` : '')).join('')}</tbody></table></div>`
+         : '<p class="muted small">No units yet. Units are typed when adding or editing an employee.</p>'}
+       <div class="alert error hidden" id="namesError"></div>`,
+      async () => {},
+      { wide: true, saveLabel: 'Done' },
+    );
+    const form = $('#dlgForm');
+    const fail = (err) => showError($('#namesError'), err.message);
+    const changed = async () => {
+      await loadFlagOptions(true);
+      flagLoaders.employees();
+      await namesDialog();
+    };
+    form.onclick = async (e) => {
+      const b = e.target.closest('button[type=button]');
+      if (!b) return;
+      try {
+        if (b.id === 'newDivBtn') {
+          await api('/admin/flag/divisions', { method: 'POST', body: { name: $('#newDivName').value } });
+          return changed();
+        }
+        if (b.dataset.divDel) {
+          if (!confirm('Remove this division from the list?')) return;
+          await api(`/admin/flag/divisions/${b.dataset.divDel}`, { method: 'DELETE' });
+          return changed();
+        }
+        const input = b.closest('tr').querySelector('input');
+        if (input.value.trim().toUpperCase() === input.dataset.was) return;
+        if (b.dataset.divSave) {
+          const body = { name: input.value };
+          try {
+            await api(`/admin/flag/divisions/${b.dataset.divSave}`, { method: 'PATCH', body });
+          } catch (err) {
+            if (err.status !== 409 || !confirm(err.message)) throw err;
+            await api(`/admin/flag/divisions/${b.dataset.divSave}`, { method: 'PATCH', body: { ...body, merge: true } });
+          }
+          return changed();
+        }
+        if (b.dataset.unitSave) {
+          const to = input.value.trim().toUpperCase();
+          const exists = data.units.some((u) => u.name === to);
+          if (exists && !confirm(`${to} already exists. Merge ${b.dataset.unitSave} into it?`)) return;
+          await api('/admin/flag/units/rename', { method: 'POST', body: { from: b.dataset.unitSave, to } });
+          return changed();
+        }
+      } catch (err) {
+        if (err.status === 401) return start();
+        fail(err);
+      }
+    };
+  }
+  $('#flagNamesBtn').addEventListener('click', guard(namesDialog));
 
   // ---------- QR scan at the venue (employees without a phone) ----------
   const loadScript = (src, test) =>

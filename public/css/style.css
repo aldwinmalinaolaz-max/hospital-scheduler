@@ -693,3 +693,5 @@ tr.voided td .sub { display: inline-block; text-decoration: none; }
 .scan-log li { padding: 5px 0; border-bottom: 1px solid var(--border); }
 body:not(.can-flag-scan) .needs-flag-scan { display: none !important; }
 fieldset.access label.sub-access { margin-left: 24px; font-size: 0.92em; }
+.names-table td:first-child { width: 60%; }
+.names-table input { width: 100%; }

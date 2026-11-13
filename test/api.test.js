@@ -1031,8 +1031,8 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.equal(e1.status, 201);
   assert.equal(e1.data.pin, '123456');
   assert.equal(e1.data.flag_required, true);
-  assert.equal(e1.data.division, 'NURSING'); // "nursing service" is read as the NURSING division
-  assert.match((await addEmp({ employee_no: '2023-0099', last_name: 'x', first_name: 'y', division: 'radiology' })).data.error, /Division must be one of: ADMINISTRATIVE, FINANCE, MEDICAL, NURSING, OMCC/);
+  assert.equal(e1.data.division, 'NURSING SERVICE DIVISION'); // "nursing service" is read as the full division name
+  assert.match((await addEmp({ employee_no: '2023-0099', last_name: 'x', first_name: 'y', division: 'radiology' })).data.error, /Division must be one of: HOSPITAL OPERATIONS AND PATIENT SUPPORT SERVICES, FINANCE SERVICE DIVISION, MEDICAL SERVICE DIVISION, NURSING SERVICE DIVISION, OMCC/);
   assert.equal((await addEmp({ employee_no: '2023-0098', last_name: 'x', first_name: 'y', division: 'office of the medical center chief' })).data.division, 'OMCC');
   await db.query("DELETE FROM employees WHERE employee_no = '2023-0098'");
   assert.equal(e1.data.unit, 'EMERGENCY ROOM');
@@ -1045,12 +1045,12 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.equal(imp.data.rows.length, 2);
   assert.match(imp.data.rows[0].pin, /^\d{6}$/);
   assert.equal(imp.data.rows[1].name, 'SANTOS, MARIA CLARA');
-  assert.deepEqual([imp.data.rows[1].division, imp.data.rows[1].unit], ['MEDICAL', 'HHIMS']);
+  assert.deepEqual([imp.data.rows[1].division, imp.data.rows[1].unit], ['MEDICAL SERVICE DIVISION', 'HHIMS']);
   const optsAfter = (await call('/admin/flag/options', { cookie: hr })).data;
-  assert.deepEqual(optsAfter.division_choices, ['ADMINISTRATIVE', 'FINANCE', 'MEDICAL', 'NURSING', 'OMCC']);
+  assert.deepEqual(optsAfter.division_choices, ['HOSPITAL OPERATIONS AND PATIENT SUPPORT SERVICES', 'FINANCE SERVICE DIVISION', 'MEDICAL SERVICE DIVISION', 'NURSING SERVICE DIVISION', 'OMCC']);
   assert.deepEqual(optsAfter.divisions, optsAfter.division_choices);
   assert.deepEqual(optsAfter.units, ['EMERGENCY ROOM', 'HHIMS', 'PEDIATRICS']);
-  assert.equal((await call('/admin/flag/employees?division=NURSING', { cookie: hr })).data.rows.length, 2);
+  assert.equal((await call('/admin/flag/employees?division=NURSING%20SERVICE%20DIVISION', { cookie: hr })).data.rows.length, 2);
   assert.equal((await call('/admin/flag/employees?q=pediatrics', { cookie: hr })).data.rows[0].employee_no, '2023-0002');
   assert.equal((await call('/admin/flag/employees/import', { method: 'POST', cookie: hr, body: { csv: '2023-0009,A,B\n2023-0001,C,D' } })).status, 400);
   assert.equal((await db.one("SELECT COUNT(*)::int AS n FROM employees WHERE employee_no = '2023-0009'")).n, 0);
@@ -1202,7 +1202,7 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.deepEqual([...csvBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]); // BOM so Excel reads UTF-8
   const csvText = csvBytes.toString('utf8');
   assert.match(csvText, /Date,Ceremony,Employee No\./);
-  assert.match(csvText, /2023-0002,REYES,ANA,,NURSE II,NURSING,PEDIATRICS,Excused,,STAFF \(hr\.clerk\),,ON DUTY AT ER/);
+  assert.match(csvText, /2023-0002,REYES,ANA,,NURSE II,NURSING SERVICE DIVISION,PEDIATRICS,Excused,,STAFF \(hr\.clerk\),,ON DUTY AT ER/);
 
   // Summary over the closed ceremony only (today's are still open)
   const sum = (await call(`/admin/flag/summary?from=${past}&to=${today}`, { cookie: hr })).data;
@@ -1378,7 +1378,7 @@ test('flag ceremony: QR scan at the venue and unit filter in the summary', async
   roster = (await call(`/admin/flag/ceremonies/${open.id}`, { cookie: admin })).data.rows;
   assert.equal(roster.find((x) => x.id === b.id).status, 'NOT_YET');
   const csv = await (await fetch(`${base}/admin/flag/ceremonies/${open.id}/export.csv`, { headers: { Cookie: admin } })).text();
-  assert.match(csv, /QR-1001,BAUTISTA,ROSA,,,NURSING,ICU,Present,\d\d:\d\d,QR SCAN \(admin\)/);
+  assert.match(csv, /QR-1001,BAUTISTA,ROSA,,,NURSING SERVICE DIVISION,ICU,Present,\d\d:\d\d,QR SCAN \(admin\)/);
 
   // Summary filtered by unit
   await db.query("UPDATE employees SET created_at = now() - interval '5 days' WHERE employee_no LIKE 'QR-%'");
@@ -1387,6 +1387,70 @@ test('flag ceremony: QR scan at the venue and unit filter in the summary', async
   assert.ok(sum.rows.every((x) => x.employee.unit === 'ICU'));
   assert.ok(sum.rows.some((x) => x.employee.employee_no === 'QR-1001'));
   assert.ok((await call('/admin/flag/options', { cookie: admin })).data.units.includes('ICU'));
+});
+
+test('flag ceremony: rename, add and remove divisions; rename units', async () => {
+  const admin = await login();
+  const api = (path, body, method = 'POST') => call(`/admin/flag${path}`, { method, cookie: admin, body });
+  const list = async () => (await call('/admin/flag/divisions', { cookie: admin })).data;
+
+  // Employees saved under the old division names were moved to the new ones
+  await db.query(
+    "INSERT INTO employees (employee_no, last_name, first_name, department, unit, pin_hash) VALUES ('DV-0001', 'OLD', 'ADMIN', 'ADMINISTRATIVE', 'BILLING', 'x:y'), ('DV-0002', 'OLD', 'NURSE', 'NURSING', 'WARD 1', 'x:y')",
+  );
+  await db.query("DELETE FROM schema_migrations WHERE id = '2026-11-13-flag-divisions'");
+  await db.tx((t) => require('../src/db').runMigrations(t));
+  const moved = await db.query("SELECT employee_no, department FROM employees WHERE employee_no LIKE 'DV-%' ORDER BY 1");
+  assert.deepEqual(moved.map((r) => r.department), ['HOSPITAL OPERATIONS AND PATIENT SUPPORT SERVICES', 'NURSING SERVICE DIVISION']);
+
+  let data = await list();
+  assert.deepEqual(data.divisions.map((d) => d.name), ['HOSPITAL OPERATIONS AND PATIENT SUPPORT SERVICES', 'FINANCE SERVICE DIVISION', 'MEDICAL SERVICE DIVISION', 'NURSING SERVICE DIVISION', 'OMCC']);
+  const hops = data.divisions[0];
+  assert.ok(hops.employees >= 1);
+  assert.ok(data.units.some((u) => u.name === 'BILLING' && /HOSPITAL OPERATIONS/.test(u.divisions)));
+
+  // Add; duplicates refused
+  const added = await api('/divisions', { name: 'ancillary services division' });
+  assert.equal(added.status, 201);
+  assert.equal(added.data.name, 'ANCILLARY SERVICES DIVISION');
+  assert.equal((await api('/divisions', { name: 'Ancillary Services Division' })).status, 400);
+  assert.ok((await call('/admin/flag/options', { cookie: admin })).data.division_choices.includes('ANCILLARY SERVICES DIVISION'));
+  // New employees can use it; the dropdown list is what is accepted
+  const emp = await api('/employees', { employee_no: 'DV-0003', last_name: 'x', first_name: 'y', division: 'ancillary services division', unit: 'pharmacy' });
+  assert.equal(emp.data.division, 'ANCILLARY SERVICES DIVISION');
+
+  // Rename: employees follow
+  const anc = (await list()).divisions.find((d) => d.name === 'ANCILLARY SERVICES DIVISION');
+  let r = await api(`/divisions/${anc.id}`, { name: 'allied health services division' }, 'PATCH');
+  assert.equal(r.data.moved, 1);
+  assert.equal((await db.one("SELECT department FROM employees WHERE employee_no = 'DV-0003'")).department, 'ALLIED HEALTH SERVICES DIVISION');
+  // Renaming to an existing division needs confirmation, then merges
+  r = await api(`/divisions/${anc.id}`, { name: 'medical service division' }, 'PATCH');
+  assert.equal(r.status, 409);
+  assert.match(r.data.error, /already a division\. Merge/);
+  r = await api(`/divisions/${anc.id}`, { name: 'medical service division', merge: true }, 'PATCH');
+  assert.equal(r.data.merged, true);
+  assert.equal((await db.one("SELECT department FROM employees WHERE employee_no = 'DV-0003'")).department, 'MEDICAL SERVICE DIVISION');
+  assert.ok(!(await list()).divisions.some((d) => d.name === 'ALLIED HEALTH SERVICES DIVISION'));
+
+  // Remove: only when nobody is in it
+  const nursing = (await list()).divisions.find((d) => d.name === 'NURSING SERVICE DIVISION');
+  assert.match((await api(`/divisions/${nursing.id}`, null, 'DELETE')).data.error, /Move them to another division first/);
+  const empty = (await api('/divisions', { name: 'temporary division' })).data;
+  assert.equal((await api(`/divisions/${empty.id}`, null, 'DELETE')).status, 200);
+
+  // Units: rename everywhere, or merge into an existing unit
+  r = await api('/units/rename', { from: 'pharmacy', to: 'hospital pharmacy' });
+  assert.equal(r.data.moved, 1);
+  assert.equal((await db.one("SELECT unit FROM employees WHERE employee_no = 'DV-0003'")).unit, 'HOSPITAL PHARMACY');
+  await api('/units/rename', { from: 'hospital pharmacy', to: 'billing' });
+  assert.equal((await list()).units.find((u) => u.name === 'BILLING').employees, 2);
+  assert.equal((await api('/units/rename', { from: 'no such unit', to: 'x' })).status, 404);
+  assert.equal((await api('/units/rename', { from: 'billing', to: '' })).status, 400);
+
+  // Staff without Flag Ceremony access cannot change names
+  const opd = (await loginAs('opd.only', 'password123')).cookie;
+  assert.equal((await call('/admin/flag/divisions', { method: 'POST', cookie: opd, body: { name: 'x' } })).status, 403);
 });
 
 test('mobile normalisation', () => {

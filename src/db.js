@@ -354,6 +354,12 @@ const SCHEMA = `
   );
   -- The employee's division is kept in the "department" column; the unit is separate
   ALTER TABLE employees ADD COLUMN IF NOT EXISTS unit TEXT;
+  -- Division names for the employee dropdown (Employees → Divisions & units)
+  CREATE TABLE IF NOT EXISTS flag_divisions (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  );
   -- FALSE for employees who are not expected at flag ceremonies (e.g. fixed night duty)
   ALTER TABLE employees ADD COLUMN IF NOT EXISTS flag_required BOOLEAN NOT NULL DEFAULT TRUE;
   -- Bumped when the PIN is reset or the employee is deactivated: signs them out of every phone
@@ -437,6 +443,7 @@ const SCHEMA = `
   ALTER TABLE opd_schedules ENABLE ROW LEVEL SECURITY;
   ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
   ALTER TABLE flag_settings ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE flag_divisions ENABLE ROW LEVEL SECURITY;
   ALTER TABLE flag_ceremonies ENABLE ROW LEVEL SECURITY;
   ALTER TABLE flag_checkins ENABLE ROW LEVEL SECURITY;
   ALTER TABLE flag_checkin_photos ENABLE ROW LEVEL SECURITY;
@@ -574,6 +581,19 @@ const MIGRATIONS = [
     id: '2026-11-12-flag-no-late',
     async run(t) {
       await t.query("UPDATE flag_checkins SET status = 'ON_TIME' WHERE status = 'LATE'");
+    },
+  },
+  {
+    // Division list (editable) with the new names; employees under the old names move to them
+    id: '2026-11-13-flag-divisions',
+    async run(t) {
+      const flag = require('./flag');
+      for (const [i, name] of flag.DEFAULT_DIVISIONS.entries()) {
+        await t.query('INSERT INTO flag_divisions (name, sort_order) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING', [name, (i + 1) * 10]);
+      }
+      for (const [old, name] of Object.entries(flag.OLD_DIVISION_NAMES)) {
+        await t.query('UPDATE employees SET department = $1 WHERE department = $2', [name, old]);
+      }
     },
   },
 ];

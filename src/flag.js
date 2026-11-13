@@ -10,19 +10,50 @@ const EMPLOYEE_COOKIE = 'hs_emp';
 const DEVICE_COOKIE = 'hs_dev';
 const MAX_PHOTO_BYTES = 600 * 1024;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-// Hospital divisions (the Division dropdown for employees)
-const DIVISIONS = ['ADMINISTRATIVE', 'FINANCE', 'MEDICAL', 'NURSING', 'OMCC'];
-// Matches typed or imported names to a division, e.g. NURSING SERVICE → NURSING,
-// OFFICE OF THE MEDICAL CENTER CHIEF → OMCC. Returns null if none fits.
-function matchDivision(v) {
-  const s = String(v || '').trim().toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+// Hospital divisions (the Division dropdown for employees). Staff can rename, add and remove
+// them (Employees → Divisions & units); these are the starting list.
+const DEFAULT_DIVISIONS = [
+  'HOSPITAL OPERATIONS AND PATIENT SUPPORT SERVICES',
+  'FINANCE SERVICE DIVISION',
+  'MEDICAL SERVICE DIVISION',
+  'NURSING SERVICE DIVISION',
+  'OMCC',
+];
+// Names used before the divisions were renamed, still accepted in imports
+const OLD_DIVISION_NAMES = {
+  ADMINISTRATIVE: 'HOSPITAL OPERATIONS AND PATIENT SUPPORT SERVICES',
+  ADMIN: 'HOSPITAL OPERATIONS AND PATIENT SUPPORT SERVICES',
+  FINANCE: 'FINANCE SERVICE DIVISION',
+  MEDICAL: 'MEDICAL SERVICE DIVISION',
+  NURSING: 'NURSING SERVICE DIVISION',
+  'OFFICE OF THE MEDICAL CENTER CHIEF': 'OMCC',
+  'MEDICAL CENTER CHIEF': 'OMCC',
+};
+const SMALL_WORDS = new Set(['AND', 'OF', 'THE', 'FOR', '&']);
+const words = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9& ]/g, ' ').replace(/\s+/g, ' ').trim();
+const initials = (v) => words(v).split(' ').filter((w) => w && !SMALL_WORDS.has(w)).map((w) => w[0]).join('');
+
+async function getDivisions(db) {
+  return (await db.query('SELECT name FROM flag_divisions ORDER BY sort_order, name')).map((r) => r.name);
+}
+
+// Matches a typed or imported name to one of the divisions: the exact name, an older name
+// (e.g. NURSING), a shorter or longer form (NURSING SERVICE → NURSING SERVICE DIVISION) or
+// the initials (OMCC, HOPPSS). Returns null if no single division fits.
+function matchDivision(v, divisions) {
+  const s = words(v);
   if (!s) return null;
-  if (/^(OMCC|OFFICE OF THE MEDICAL CENTER CHIEF|MEDICAL CENTER CHIEF)\b/.test(s)) return 'OMCC';
-  if (/^ADMIN/.test(s)) return 'ADMINISTRATIVE';
-  if (/^FINANC/.test(s)) return 'FINANCE';
-  if (/^NURS/.test(s)) return 'NURSING';
-  if (/^MEDICAL\b/.test(s)) return 'MEDICAL';
-  return null;
+  const exact = divisions.find((d) => words(d) === s);
+  if (exact) return exact;
+  const old = OLD_DIVISION_NAMES[s];
+  if (old && divisions.includes(old)) return old;
+  const pick = (list) => (list.length === 1 ? list[0] : null);
+  return (
+    pick(divisions.filter((d) => words(d).startsWith(`${s} `) || s.startsWith(`${words(d)} `))) ||
+    pick(divisions.filter((d) => initials(d) === s.replace(/ /g, ''))) ||
+    pick(divisions.filter((d) => words(d).split(' ')[0] === s.split(' ')[0] && s.split(' ')[0].length >= 4)) ||
+    null
+  );
 }
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -203,7 +234,7 @@ function checkLocation(settings, b) {
 // ---------- Employees ----------
 
 // Validates employee fields from the staff panel or a pasted list; returns [values, error]
-function cleanEmployee(b, { partial = false, current = null } = {}) {
+function cleanEmployee(b, { partial = false, current = null, divisions = DEFAULT_DIVISIONS } = {}) {
   const out = {};
   const has = (k) => !partial || b[k] !== undefined;
   if (has('employee_no')) {
@@ -219,10 +250,10 @@ function cleanEmployee(b, { partial = false, current = null } = {}) {
   if (has('position')) out.position = clean(b.position, 80) || null;
   // Division is stored in the department column
   if (has('division') || (partial && b.department !== undefined)) {
-    const raw = clean(b.division ?? b.department, 80);
+    const raw = clean(b.division ?? b.department, 120);
     // A division saved before the dropdown existed may be kept as it is
-    out.department = raw ? matchDivision(raw) || (raw === current ? raw : undefined) : null;
-    if (out.department === undefined) return [null, `Division must be one of: ${DIVISIONS.join(', ')}.`];
+    out.department = raw ? matchDivision(raw, divisions) || (raw === current ? raw : undefined) : null;
+    if (out.department === undefined) return [null, `Division must be one of: ${divisions.join(', ')}.`];
   }
   if (has('unit')) out.unit = clean(b.unit, 80) || null;
   if (b.flag_required !== undefined) out.flag_required = !(b.flag_required === false || b.flag_required === 'false' || b.flag_required === '0');
@@ -303,7 +334,9 @@ module.exports = {
   EMPLOYEE_COOKIE,
   DEVICE_COOKIE,
   STATUSES,
-  DIVISIONS,
+  DEFAULT_DIVISIONS,
+  OLD_DIVISION_NAMES,
+  getDivisions,
   matchDivision,
   WEEKDAYS,
   IMPORT_COLUMNS,
