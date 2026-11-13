@@ -1202,7 +1202,7 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.deepEqual([...csvBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]); // BOM so Excel reads UTF-8
   const csvText = csvBytes.toString('utf8');
   assert.match(csvText, /Date,Ceremony,Employee No\./);
-  assert.match(csvText, /2023-0002,REYES,ANA,,NURSE II,NURSING SERVICE DIVISION,PEDIATRICS,Excused,,STAFF \(hr\.clerk\),,ON DUTY AT ER/);
+  assert.match(csvText, /2023-0002,REYES,ANA,,NURSE II,NURSING SERVICE DIVISION,PEDIATRICS,,Excused,,STAFF \(hr\.clerk\),,ON DUTY AT ER/);
 
   // Summary over the closed ceremony only (today's are still open)
   const sum = (await call(`/admin/flag/summary?from=${past}&to=${today}`, { cookie: hr })).data;
@@ -1378,7 +1378,7 @@ test('flag ceremony: QR scan at the venue and unit filter in the summary', async
   roster = (await call(`/admin/flag/ceremonies/${open.id}`, { cookie: admin })).data.rows;
   assert.equal(roster.find((x) => x.id === b.id).status, 'NOT_YET');
   const csv = await (await fetch(`${base}/admin/flag/ceremonies/${open.id}/export.csv`, { headers: { Cookie: admin } })).text();
-  assert.match(csv, /QR-1001,BAUTISTA,ROSA,,,NURSING SERVICE DIVISION,ICU,Present,\d\d:\d\d,QR SCAN \(admin\)/);
+  assert.match(csv, /QR-1001,BAUTISTA,ROSA,,,NURSING SERVICE DIVISION,ICU,,Present,\d\d:\d\d,QR SCAN \(admin\)/);
 
   // Summary filtered by unit
   await db.query("UPDATE employees SET created_at = now() - interval '5 days' WHERE employee_no LIKE 'QR-%'");
@@ -1451,6 +1451,35 @@ test('flag ceremony: rename, add and remove divisions; rename units', async () =
   // Staff without Flag Ceremony access cannot change names
   const opd = (await loginAs('opd.only', 'password123')).cookie;
   assert.equal((await call('/admin/flag/divisions', { method: 'POST', cookie: opd, body: { name: 'x' } })).status, 403);
+});
+
+test('flag ceremony: Plantilla / Job Order tagging', async () => {
+  const admin = await login();
+  const api = (path, body, method = 'POST') => call(`/admin/flag${path}`, { method, cookie: admin, body });
+  assert.deepEqual((await call('/admin/flag/options', { cookie: admin })).data.employment_types, { PLANTILLA: 'Plantilla', JOB_ORDER: 'Job Order' });
+  const p = await api('/employees', { employee_no: 'ET-0001', last_name: 'plantilla', first_name: 'one', division: 'nursing', employment_type: 'PLANTILLA' });
+  assert.equal(p.data.employment_type, 'PLANTILLA');
+  assert.match((await api('/employees', { employee_no: 'ET-0009', last_name: 'x', first_name: 'y', employment_type: 'contractual' })).data.error, /Plantilla or Job Order/);
+  // Import: optional 8th column, short forms accepted
+  const imp = await api('/employees/import', { csv: 'ET-0002,JO,TWO,,AIDE,Nursing,Ward 2,JO\nET-0003,JO,THREE,,AIDE,Nursing,Ward 2,Job Order\nET-0004,NO,TAG,,CLERK,Finance,Cashier' });
+  assert.deepEqual(imp.data.rows.map((r) => r.employment_type), ['JOB_ORDER', 'JOB_ORDER', null]);
+  // Edit: change and clear the tag
+  const id = imp.data.rows[2].id;
+  assert.equal((await api(`/employees/${id}`, { employment_type: 'plantilla' }, 'PATCH')).data.employment_type, 'PLANTILLA');
+  assert.equal((await api(`/employees/${id}`, { position: 'clerk ii' }, 'PATCH')).data.employment_type, 'PLANTILLA'); // untouched
+  assert.equal((await api(`/employees/${id}`, { employment_type: '' }, 'PATCH')).data.employment_type, null);
+  // Filters
+  const list = async (q) => (await call(`/admin/flag/employees?q=ET-&${q}`, { cookie: admin })).data.rows.map((r) => r.employee_no).sort();
+  assert.deepEqual(await list('employment_type=JOB_ORDER'), ['ET-0002', 'ET-0003']);
+  assert.deepEqual(await list('employment_type=PLANTILLA'), ['ET-0001']);
+  assert.deepEqual(await list('employment_type=NONE'), ['ET-0004']);
+  const today = u.todayStr();
+  const sum = (await call(`/admin/flag/summary?from=${today}&to=${today}&employment_type=JOB_ORDER`, { cookie: admin })).data;
+  assert.ok(sum.rows.length >= 2 && sum.rows.every((r) => r.employee.employment_type === 'JOB_ORDER'));
+  // CSV column
+  const csv = await (await fetch(`${base}/admin/flag/summary.csv?from=${today}&to=${today}&employment_type=JOB_ORDER`, { headers: { Cookie: admin } })).text();
+  assert.match(csv, /,Unit,Employment,Ceremonies,/);
+  assert.match(csv, /ET-0002,JO,TWO,,AIDE,NURSING SERVICE DIVISION,WARD 2,Job Order,/);
 });
 
 test('mobile normalisation', () => {

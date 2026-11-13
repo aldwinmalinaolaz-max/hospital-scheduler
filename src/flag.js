@@ -55,6 +55,16 @@ function matchDivision(v, divisions) {
     null
   );
 }
+// Employment type tag for employees
+const EMPLOYMENT_TYPES = { PLANTILLA: 'Plantilla', JOB_ORDER: 'Job Order' };
+// Reads a typed or imported value: Plantilla (also Permanent, Regular, P) or Job Order (JO, J.O.)
+function matchEmploymentType(v) {
+  const s = String(v || '').toUpperCase().replace(/[^A-Z]/g, '');
+  if (!s) return null;
+  if (['PLANTILLA', 'P', 'PERMANENT', 'REGULAR', 'PLANTILLAPOSITION'].includes(s)) return 'PLANTILLA';
+  if (['JOBORDER', 'JO', 'JOBORDERPOSITION'].includes(s)) return 'JOB_ORDER';
+  return undefined;
+}
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 // Check-in results. ABSENT is never stored: it is an employee with no row for a ceremony that has closed.
@@ -256,6 +266,10 @@ function cleanEmployee(b, { partial = false, current = null, divisions = DEFAULT
     if (out.department === undefined) return [null, `Division must be one of: ${divisions.join(', ')}.`];
   }
   if (has('unit')) out.unit = clean(b.unit, 80) || null;
+  if (has('employment_type')) {
+    out.employment_type = matchEmploymentType(b.employment_type);
+    if (out.employment_type === undefined) return [null, 'Employment type must be Plantilla or Job Order.'];
+  }
   if (b.flag_required !== undefined) out.flag_required = !(b.flag_required === false || b.flag_required === 'false' || b.flag_required === '0');
   return [out, null];
 }
@@ -293,7 +307,7 @@ function csvCell(v) {
 const toCsv = (rows) => `\uFEFF${rows.map((r) => r.map(csvCell).join(',')).join('\r\n')}\r\n`;
 
 // Parses a pasted employee list (from Excel or CSV): header row optional
-const IMPORT_COLUMNS = ['employee_no', 'last_name', 'first_name', 'middle_name', 'position', 'division', 'unit'];
+const IMPORT_COLUMNS = ['employee_no', 'last_name', 'first_name', 'middle_name', 'position', 'division', 'unit', 'employment_type'];
 function parseCsv(text) {
   const rows = [];
   let row = [];
@@ -357,6 +371,8 @@ module.exports = {
   cleanEmployee,
   QR_PREFIX,
   qrCandidates,
+  EMPLOYMENT_TYPES,
+  matchEmploymentType,
   checkPin,
   randomPin,
   fullName,

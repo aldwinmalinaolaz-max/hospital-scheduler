@@ -354,6 +354,8 @@ const SCHEMA = `
   );
   -- The employee's division is kept in the "department" column; the unit is separate
   ALTER TABLE employees ADD COLUMN IF NOT EXISTS unit TEXT;
+  -- Employment type tag: PLANTILLA | JOB_ORDER (NULL = not tagged yet)
+  ALTER TABLE employees ADD COLUMN IF NOT EXISTS employment_type TEXT;
   -- Division names for the employee dropdown (Employees → Divisions & units)
   CREATE TABLE IF NOT EXISTS flag_divisions (
     id SERIAL PRIMARY KEY,

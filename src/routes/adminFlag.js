@@ -30,6 +30,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     division: e.department,
     unit: e.unit,
     flag_required: e.flag_required,
+    employment_type: e.employment_type || null,
     active: e.active,
     locked: !!(e.locked_until && new Date(e.locked_until) > new Date()),
     updated_by: e.updated_by,
@@ -50,6 +51,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       // The fixed divisions, plus any older values still in use (for filtering)
       divisions: [...divisionList, ...deps.map((d) => d.department).filter((d) => !divisionList.includes(d))],
       division_choices: divisionList,
+      employment_types: flag.EMPLOYMENT_TYPES,
       units: units.map((d) => d.unit),
       today: u.todayStr(), // hospital date (the browser's clock or time zone may differ)
       settings,
@@ -253,9 +255,9 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const { ceremony: c, rows } = await roster(req.params.id);
     const label = { ...flag.STATUSES, NOT_YET: 'Not yet', CANCELLED: 'Cancelled' };
     const csv = flag.toCsv([
-      ['Date', 'Ceremony', 'Employee No.', 'Last Name', 'First Name', 'Middle Name', 'Position', 'Division', 'Unit', 'Status', 'Time', 'Recorded By', 'Distance (m)', 'Remarks'],
+      ['Date', 'Ceremony', 'Employee No.', 'Last Name', 'First Name', 'Middle Name', 'Position', 'Division', 'Unit', 'Employment', 'Status', 'Time', 'Recorded By', 'Distance (m)', 'Remarks'],
       ...rows.map((r) => [
-        c.date, c.title, r.employee_no, r.last_name, r.first_name, r.middle_name || '', r.position || '', r.division || '', r.unit || '',
+        c.date, c.title, r.employee_no, r.last_name, r.first_name, r.middle_name || '', r.position || '', r.division || '', r.unit || '', flag.EMPLOYMENT_TYPES[r.employment_type] || '',
         label[r.status] || r.status, r.status === 'EXCUSED' ? '' : r.time || '', r.source === 'MANUAL' ? `STAFF (${r.marked_by})` : r.source === 'QR' ? `QR SCAN (${r.marked_by})` : r.source === 'GPS' ? 'PHONE GPS' : '',
         r.distance_m ?? '', r.remarks || '',
       ]),
@@ -356,6 +358,8 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const conds = [['(e.active AND e.flag_required OR EXISTS (SELECT 1 FROM flag_checkins k WHERE k.employee_id = e.id AND k.ceremony_id = ANY(?::int[])))', ids]];
     if (q.division) conds.push(['e.department = ?', String(q.division)]);
     if (q.unit) conds.push(['e.unit = ?', String(q.unit)]);
+    if (q.employment_type === 'NONE') conds.push(['e.employment_type IS NULL']);
+    else if (q.employment_type) conds.push(['e.employment_type = ?', String(q.employment_type)]);
     const { where, params } = whereClause(conds);
     const emps = await db.query(`SELECT e.* FROM employees e ${where} ORDER BY e.department NULLS LAST, e.unit NULLS LAST, e.last_name, e.first_name`, params);
     const checks = ids.length && emps.length
@@ -390,9 +394,9 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
   router.get('/flag/summary.csv', can, async (req, res) => {
     const { from, to, rows } = await summary(req.query);
     const csv = flag.toCsv([
-      ['Employee No.', 'Last Name', 'First Name', 'Middle Name', 'Position', 'Division', 'Unit', 'Ceremonies', 'Present', 'Excused', 'Absent', 'Attendance %'],
+      ['Employee No.', 'Last Name', 'First Name', 'Middle Name', 'Position', 'Division', 'Unit', 'Employment', 'Ceremonies', 'Present', 'Excused', 'Absent', 'Attendance %'],
       ...rows.map(({ employee: e, ...t }) => [
-        e.employee_no, e.last_name, e.first_name, e.middle_name || '', e.position || '', e.division || '', e.unit || '',
+        e.employee_no, e.last_name, e.first_name, e.middle_name || '', e.position || '', e.division || '', e.unit || '', flag.EMPLOYMENT_TYPES[e.employment_type] || '',
         t.held, t.on_time, t.excused, t.absent, t.rate ?? '',
       ]),
     ]);
@@ -486,6 +490,9 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const q = req.query;
     const conds = [];
     if (q.division) conds.push(['department = ?', String(q.division)]);
+    if (q.unit) conds.push(['unit = ?', String(q.unit)]);
+    if (q.employment_type === 'NONE') conds.push(['employment_type IS NULL']);
+    else if (q.employment_type) conds.push(['employment_type = ?', String(q.employment_type)]);
     if (q.active === '1') conds.push(['active']);
     if (q.active === '0') conds.push(['NOT active']);
     if (q.q) {
@@ -502,9 +509,9 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       throw new ValidationError(`Employee no. ${v.employee_no} already exists.`);
     }
     return t.one(
-      `INSERT INTO employees (employee_no, last_name, first_name, middle_name, position, department, unit, flag_required, pin_hash, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-      [v.employee_no, v.last_name, v.first_name, v.middle_name, v.position, v.department, v.unit, v.flag_required ?? true, auth.hashPassword(pin), by],
+      `INSERT INTO employees (employee_no, last_name, first_name, middle_name, position, department, unit, flag_required, pin_hash, updated_by, employment_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [v.employee_no, v.last_name, v.first_name, v.middle_name, v.position, v.department, v.unit, v.flag_required ?? true, auth.hashPassword(pin), by, v.employment_type ?? null],
     );
   }
 
@@ -535,8 +542,8 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const e = await db.one(
       `UPDATE employees SET employee_no = $1, last_name = $2, first_name = $3, middle_name = $4, position = $5, department = $6,
          flag_required = $7, active = $8, updated_by = $9, updated_at = now(),
-         session_version = session_version + CASE WHEN $10 THEN 1 ELSE 0 END, unit = $12 WHERE id = $11 RETURNING *`,
-      [next.employee_no, next.last_name, next.first_name, next.middle_name, next.position, next.department, next.flag_required, next.active, req.user.username, revoke, id, next.unit],
+         session_version = session_version + CASE WHEN $10 THEN 1 ELSE 0 END, unit = $12, employment_type = $13 WHERE id = $11 RETURNING *`,
+      [next.employee_no, next.last_name, next.first_name, next.middle_name, next.position, next.department, next.flag_required, next.active, req.user.username, revoke, id, next.unit, next.employment_type],
     );
     res.json(presentEmployee(e));
   });

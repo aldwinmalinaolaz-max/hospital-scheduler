@@ -1453,6 +1453,8 @@ ${cat.hospitalName}`;
   // ---------- Flag Ceremony Attendance ----------
   let flagOpts = null;
   let flagSub = 'ceremonies';
+  // Plantilla / Job Order tag
+  const typeTag = (t) => (t === 'PLANTILLA' ? '<span class="emp-tag plantilla">Plantilla</span>' : t === 'JOB_ORDER' ? '<span class="emp-tag jo" title="Job Order">JO</span>' : '');
   const FLAG_LABEL = { ON_TIME: 'Present', EXCUSED: 'Excused', ABSENT: 'Absent', NOT_YET: 'Not yet', CANCELLED: 'Cancelled' };
   const flagPill = (s) => `<span class="flag-pill ${{ ON_TIME: 'ok', EXCUSED: 'info', ABSENT: 'bad' }[s] || ''}">${esc(FLAG_LABEL[s] || s)}</span>`;
   const flagTimes = (c) => `${fmtTime(c.opens)} – ${fmtTime(c.closes)}<div class="sub">starts ${fmtTime(c.starts)}</div>`;
@@ -1638,13 +1640,14 @@ ${cat.hospitalName}`;
         (!q || r.name.includes(q) || r.employee_no.includes(q)) &&
         (!f.division || r.division === f.division) &&
         (!f.unit || r.unit === f.unit) &&
+        (!f.employment_type || (f.employment_type === 'NONE' ? !r.employment_type : r.employment_type === f.employment_type)) &&
         (!f.status || (f.status === 'MISSING' ? ['ABSENT', 'NOT_YET'].includes(r.status) : r.status === f.status)),
     );
     $('#flagDetailRows').innerHTML =
       rows
         .map(
           (r) => `<tr>
-        <td>${esc(r.name)}<div class="sub mono">${esc(r.employee_no)}${r.position ? ` · ${esc(r.position)}` : ''}</div></td>
+        <td>${esc(r.name)} ${typeTag(r.employment_type)}<div class="sub mono">${esc(r.employee_no)}${r.position ? ` · ${esc(r.position)}` : ''}</div></td>
         <td class="small">${esc(r.division || '')}</td>
         <td class="small">${esc(r.unit || '')}</td>
         <td>${flagPill(r.status)}</td>
@@ -1695,7 +1698,7 @@ ${cat.hospitalName}`;
       data.rows
         .map(
           (r) => `<tr>
-        <td>${esc(r.employee.name)}<div class="sub mono">${esc(r.employee.employee_no)}</div></td>
+        <td>${esc(r.employee.name)} ${typeTag(r.employee.employment_type)}<div class="sub mono">${esc(r.employee.employee_no)}</div></td>
         <td class="small">${esc(r.employee.division || '')}</td>
         <td class="small">${esc(r.employee.unit || '')}</td>
         <td>${r.held}</td><td>${r.on_time}</td><td>${r.excused || '—'}</td>
@@ -1723,12 +1726,13 @@ ${cat.hospitalName}`;
         <td class="small">${esc(e.position || '')}</td>
         <td class="small">${esc(e.division || '')}</td>
         <td class="small">${esc(e.unit || '')}</td>
+        <td>${typeTag(e.employment_type) || '<span class="muted small">—</span>'}</td>
         <td class="small">${e.flag_required ? 'Required' : '<span class="muted">Not required</span>'}</td>
         <td>${e.active ? '<span class="badge ok">Active</span>' : '<span class="badge">Inactive</span>'}${e.locked ? '<div class="sub" style="color:var(--danger)">PIN locked</div>' : ''}</td>
         <td class="no-print nowrap"><button class="btn sm" data-emp-edit="${e.id}">Edit</button> <button class="btn sm secondary" data-emp-pin="${e.id}">Reset PIN</button></td>
       </tr>`,
         )
-        .join('') || '<tr><td colspan="8" class="empty">No employees yet. Add them one by one or import a list.</td></tr>';
+        .join('') || '<tr><td colspan="9" class="empty">No employees yet. Add them one by one or import a list.</td></tr>';
   });
   empF.addEventListener('input', debounce(flagLoaders.employees));
 
@@ -1759,6 +1763,10 @@ ${cat.hospitalName}`;
            .map((d) => `<option${d === e.division ? ' selected' : ''}>${esc(d)}</option>`)
            .join('')}</select></label>
          <label class="field">Unit<input name="unit" list="flagUnitList" value="${esc(e.unit || '')}" placeholder="E.G. EMERGENCY ROOM">${suggest('flagUnitList', flagOpts?.units)}</label>
+         <label class="field">Employment type<select name="employment_type"><option value="">— Select —</option>${Object.entries(flagOpts?.employment_types || { PLANTILLA: 'Plantilla', JOB_ORDER: 'Job Order' })
+           .map(([k, l]) => `<option value="${k}"${k === e.employment_type ? ' selected' : ''}>${esc(l)}</option>`)
+           .join('')}</select></label>
+         <span></span>
          <label class="check span-2"><input type="checkbox" name="flag_required" ${e.flag_required ? 'checked' : ''}> Required to attend flag ceremonies (untick e.g. for fixed night duty; they are then not counted absent)</label>
          ${isNew ? '<label class="field span-2">PIN (6 digits)<input name="pin" inputmode="numeric" maxlength="6" placeholder="Leave blank for a random PIN"></label>' : `<label class="check span-2"><input type="checkbox" name="active" ${e.active ? 'checked' : ''}> Active (can sign in and check in)</label>`}
        </div>`,
@@ -1795,8 +1803,8 @@ ${cat.hospitalName}`;
     openDialog(
       `<h2>Import employees</h2>
        <p class="muted small">Paste from Excel or a CSV file, one employee per line, in this column order:<br>
-       <b>Employee no., Last name, First name, Middle name, Position, Division, Unit</b>. Division must be ${esc((flagOpts?.division_choices || []).join(', '))} (short forms work too, e.g. "Nursing" is read as NURSING SERVICE DIVISION). A header row is skipped. Each employee gets a random 6-digit PIN, listed after the import for printing.</p>
-       <textarea name="csv" rows="10" data-nocaps placeholder="2023-0001, DELA CRUZ, JUAN, SANTOS, NURSE II, NURSING, EMERGENCY ROOM" required></textarea>`,
+       <b>Employee no., Last name, First name, Middle name, Position, Division, Unit, Employment type</b> (Plantilla or Job Order / JO; optional). Division must be ${esc((flagOpts?.division_choices || []).join(', '))} (short forms work too, e.g. "Nursing" is read as NURSING SERVICE DIVISION). A header row is skipped. Each employee gets a random 6-digit PIN, listed after the import for printing.</p>
+       <textarea name="csv" rows="10" data-nocaps placeholder="2023-0001, DELA CRUZ, JUAN, SANTOS, NURSE II, NURSING, EMERGENCY ROOM, PLANTILLA" required></textarea>`,
       async (d) => {
         const { rows } = await api('/admin/flag/employees/import', { method: 'POST', body: { csv: d.csv } });
         await loadFlagOptions(true);
