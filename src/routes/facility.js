@@ -7,6 +7,7 @@ const auth = require('../auth');
 const ref = require('../referrals');
 const u = require('../util');
 const { ValidationError, rateLimit } = require('./public');
+const modules = require('../modules');
 
 const COOKIE = 'hs_facility';
 // A different signing secret from staff sessions, so one kind of token can never pass as the other
@@ -14,6 +15,8 @@ const secret = () => `${config.sessionSecret}|facility`;
 
 module.exports = function facilityRoutes(db) {
   const router = express.Router();
+  // The whole portal can be turned off (Staff Panel -> Settings -> Public services)
+  router.use(modules.requireModule(db, 'facility'));
   const json = express.json({ limit: '6mb' }); // referrals can carry attachments
 
   const sessionCookie = (req, user) =>

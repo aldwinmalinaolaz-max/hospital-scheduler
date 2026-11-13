@@ -187,6 +187,9 @@ Employees check in on **their own phones** at `/flag-ceremony` (home page → **
 
 GPS on a phone can be faked with special apps; the geofence, one-phone rule and optional selfie make cheating hard but not impossible, so spot checks at the venue are still worthwhile.
 
+### Public services on/off
+**Staff Panel → Settings → Public services** (Administrators) turns public services and their parts on or off: Request Records (and its *Digital copies* option), Book OPD Appointment, Track / Cancel (and *online cancellation*), Hospital Directory (and each section: departments list, schedules & hours, requirements, contact information, Find your way, maps), the FAQ assistant, the Referral Portal and Flag Ceremony check-in. A service that is off disappears from the menu, home page and footer; its page shows *Not available online right now* with an optional message; and the server refuses its online requests, so old links and bookmarks don't work either. Turning off a service also turns off its parts. The Staff Panel is never affected (existing requests and appointments can still be processed, and HR's QR scan still works when employee check-in is off). Everything is on by default; the list is in `src/modules.js`.
+
 ### Digital Wayfinding System
 The Hospital Directory's **Find your way** section gives walking directions on the campus map. Visitors choose **From** (gates, the plaza, main buildings or any building) and **To** (a department, clinic or office linked to a building, or any building), optionally **Avoid stairs**, and tap **Show the way**: the map opens zoomed to the route (A → B, animated line) with numbered steps such as *Walk about 100 m, passing CENTRAL PLAZA, then turn right at the junction near NEW DIETARY BUILDING (Bldg. 7)*, plus the total distance and walking time. Directory cards linked to a building also get a **Directions** button. Routes are worked out in the visitor's browser (`public/js/wayfind.js`); they run along paths and never cut through a building or gate.
 
@@ -252,6 +255,7 @@ src/
   scheduling.js   pickup-date & OPD slot availability
   reminders.js    background SMS reminder job
   idphotos.js     ID / selfie / receipt photos and the automatic ID check result
+  modules.js      public services that can be turned on and off
   wayfinding.js   wayfinding: path network load/save, campus map seed (wayfinding-seed.js)
   flag.js         flag ceremony: settings, weekly ceremonies, geofence check, PIN helpers
   sms.js          SMS providers + logging

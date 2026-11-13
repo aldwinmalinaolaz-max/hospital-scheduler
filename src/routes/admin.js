@@ -17,6 +17,7 @@ const registerFlagRoutes = require('./adminFlag');
 const payments = require('../payments');
 const idphotos = require('../idphotos');
 const wayfinding = require('../wayfinding');
+const modules = require('../modules');
 
 const COOKIE = 'hs_admin';
 
@@ -876,6 +877,26 @@ module.exports = function adminRoutes(db) {
     );
     res.json(mapMeta(row));
   });
+  // ---------- Public services (modules) on/off ----------
+  router.get('/modules', adminOnly, async (req, res) => {
+    const st = await modules.getSettings(db);
+    const saved = await db.one("SELECT updated_by, updated_at FROM site_settings WHERE key = 'public_modules'");
+    res.json({ modules: modules.MODULES, disabled: st.disabled, message: st.message, updated: saved ? { by: saved.updated_by, at: u.toStamp(saved.updated_at) } : null });
+  });
+
+  router.put('/modules', adminOnly, async (req, res) => {
+    const b = req.body || {};
+    if (!Array.isArray(b.disabled)) throw new ValidationError('Invalid settings.');
+    const disabled = [...new Set(b.disabled.map(String))].filter((k) => modules.KEYS.has(k));
+    const message = String(b.message || '').trim().slice(0, 300);
+    await db.query(
+      `INSERT INTO site_settings (key, data, updated_by, updated_at) VALUES ('public_modules', $1, $2, now())
+       ON CONFLICT (key) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = now()`,
+      [JSON.stringify({ disabled, message }), req.user.username],
+    );
+    res.json({ disabled, message });
+  });
+
   // Wayfinding network of a map (points, paths, which directory places are where)
   router.get('/wayfinding/:mapId', adminOnly, async (req, res) => {
     const m = await db.one('SELECT id, title, width_m FROM maps WHERE id = $1', [Number(req.params.mapId) || 0]);

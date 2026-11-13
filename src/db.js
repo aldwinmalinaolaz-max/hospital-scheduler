@@ -225,6 +225,13 @@ const SCHEMA = `
     updated_by TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
+  -- Settings kept as JSON (e.g. which public services are turned on)
+  CREATE TABLE IF NOT EXISTS site_settings (
+    key TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_by TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
   CREATE TABLE IF NOT EXISTS site_info (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL DEFAULT ''
@@ -462,6 +469,7 @@ const SCHEMA = `
   ALTER TABLE directory_entries ENABLE ROW LEVEL SECURITY;
   ALTER TABLE guides ENABLE ROW LEVEL SECURITY;
   ALTER TABLE site_info ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE site_settings ENABLE ROW LEVEL SECURITY;
   ALTER TABLE schema_migrations ENABLE ROW LEVEL SECURITY;
   ALTER TABLE opd_clinics ENABLE ROW LEVEL SECURITY;
   ALTER TABLE record_id_photos ENABLE ROW LEVEL SECURITY;

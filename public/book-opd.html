@@ -8,21 +8,21 @@
 <link rel="icon" type="image/png" href="/img/favicon.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
 </head>
-<body>
+<body data-page-module="opd">
 <header class="topbar"><div class="inner">
   <a class="brand" href="/"><img class="brand-logo" src="/img/logo.png" alt="" width="60" height="60"><span class="brand-text"><span data-system>ZRMC ONE Hospital System</span><small data-hospital>Zamboanga Regional Medical Center</small></span></a>
 </div></header>
 <div class="layout">
 <nav class="sidenav" aria-label="Main menu">
   <a href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><span>Home</span></a>
-  <a href="/request-records"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg><span>Request Records</span></a>
-  <a href="/book-opd" class="active" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4"/></svg><span>Book OPD Appointment</span></a>
-  <a href="/track"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Track / Cancel</span></a>
-  <a href="/directory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z"/><path d="M8 2v16M16 6v16"/></svg><span>Hospital Directory</span></a>
+  <a href="/request-records" data-module="records"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg><span>Request Records</span></a>
+  <a href="/book-opd" data-module="opd" class="active" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4"/></svg><span>Book OPD Appointment</span></a>
+  <a href="/track" data-module="track"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Track / Cancel</span></a>
+  <a href="/directory" data-module="directory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z"/><path d="M8 2v16M16 6v16"/></svg><span>Hospital Directory</span></a>
   <hr>
-  <a href="/facility" title="For Rural Health Units, Barangay Health Centers and hospitals referring patients to ZRMC"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6M12 7v4M10 9h4"/></svg><span>Referral Portal<small class="nav-sub">For health facilities</small></span></a>
+  <a href="/facility" data-module="facility" title="For Rural Health Units, Barangay Health Centers and hospitals referring patients to ZRMC"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6M12 7v4M10 9h4"/></svg><span>Referral Portal<small class="nav-sub">For health facilities</small></span></a>
   <div class="nav-group">Staff</div>
-  <a href="/flag-ceremony"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 22V3"/><path d="M5 4h13l-2.5 4.5L18 13H5"/></svg><span>Flag Ceremony<small class="nav-sub">GPS check-in</small></span></a>
+  <a href="/flag-ceremony" data-module="flag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 22V3"/><path d="M5 4h13l-2.5 4.5L18 13H5"/></svg><span>Flag Ceremony<small class="nav-sub">GPS check-in</small></span></a>
   <a href="/admin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Staff Panel</span></a>
 </nav>
 <div class="content">
@@ -81,7 +81,7 @@
 
   <section class="card confirm-box hidden" id="done"></section>
 </main>
-<footer><span data-system>ZRMC ONE Hospital System</span> · <span data-hospital>Zamboanga Regional Medical Center</span> · <a href="/facility">Referring facility login</a> · <a href="/flag-ceremony">Flag ceremony check-in</a> · <a href="/admin">Staff login</a></footer>
+<footer><span data-system>ZRMC ONE Hospital System</span> · <span data-hospital>Zamboanga Regional Medical Center</span> · <a href="/facility" data-module="facility">Referring facility login</a> · <a href="/flag-ceremony" data-module="flag">Flag ceremony check-in</a> · <a href="/admin">Staff login</a></footer>
 </div>
 </div>
 <script src="/js/common.js"></script>

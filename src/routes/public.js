@@ -9,6 +9,7 @@ const faq = require('../faq');
 const letter = require('../letter');
 const idphotos = require('../idphotos');
 const wayfinding = require('../wayfinding');
+const modules = require('../modules');
 const payments = require('../payments');
 const crypto = require('node:crypto');
 const directory = require('../directory');
@@ -125,11 +126,12 @@ module.exports = function publicRoutes(db) {
 
   router.get('/catalog', async (req, res) => {
     const today = u.todayStr();
-    const [list, scheds, fees, payment] = await Promise.all([
+    const [list, scheds, fees, payment, mods] = await Promise.all([
       clinics.listClinics(db),
       clinics.schedulesForMonth(db, clinics.monthOf(today)),
       payments.getFees(db),
       payments.paymentInfo(db),
+      modules.getSettings(db),
     ]);
     res.json({
       hospitalName: config.hospitalName,
@@ -141,6 +143,10 @@ module.exports = function publicRoutes(db) {
         return { code: c.code, name: c.name, schedule: clinics.describe(s), note: s?.note || '' };
       }),
       today,
+      // Which public services are turned on (Staff Panel -> Settings -> Public services)
+      modules: modules.effective(mods),
+      module_names: Object.fromEntries([...modules.MODULES, ...modules.MODULES.flatMap((m) => m.subs)].map((m) => [m.key, m.name])),
+      modules_message: mods.message,
     });
   });
 
@@ -150,7 +156,7 @@ module.exports = function publicRoutes(db) {
     res.json({ date: await sched.claimingDate(db) });
   });
 
-  router.post('/records', submitLimit, async (req, res) => {
+  router.post('/records', submitLimit, modules.requireModule(db, 'records'), async (req, res) => {
     const b = req.body || {};
     required(b, [
       ['patient_last', 'Patient last name'],
@@ -199,6 +205,8 @@ module.exports = function publicRoutes(db) {
     const { total: amountDue } = payments.computeTotal(cleanItems, await payments.getFees(db));
     const paymentRef = str(b.payment_ref, 40).toUpperCase() || null;
     if (copyType === 'DIGITAL') {
+      const mods = await modules.getSettings(db);
+      if (!modules.isOn(mods, 'records.digital')) throw new ValidationError(`${modules.offMessage(mods, 'records.digital')} Please choose hardcopy.`);
       if (letter.needsLetter(b)) throw new ValidationError('Digital copies are only available when the patient is the one requesting. Please choose hardcopy.');
       let err;
       [photos, err] = idphotos.readPhotos(b);
@@ -289,7 +297,7 @@ module.exports = function publicRoutes(db) {
     res.json({ slots: await sched.opdSlots(db, dept, str(req.query.date)) });
   });
 
-  router.post('/appointments', submitLimit, async (req, res) => {
+  router.post('/appointments', submitLimit, modules.requireModule(db, 'opd'), async (req, res) => {
     const b = req.body || {};
     required(b, [
       ['department', 'Department'],
@@ -359,7 +367,9 @@ module.exports = function publicRoutes(db) {
 
   // ---- Hospital Directory & Navigation ----
 
-  router.get('/directory', async (req, res) => {
+  router.get('/directory', modules.requireModule(db, 'directory'), async (req, res) => {
+    const mods = await modules.getSettings(db);
+    const on = (k) => modules.isOn(mods, `directory.${k}`);
     const [entries, guides, maps, info] = await Promise.all([
       db.query(
         `SELECT id, name, category, description, location, hours, phone, email, services, keywords, opd_code, map_id, pin_x, pin_y, way_point_id
@@ -375,12 +385,16 @@ module.exports = function publicRoutes(db) {
     res.json({
       hospitalName: config.hospitalName,
       systemName: config.systemName,
-      entries,
-      guides,
-      maps: maps.map((m) => ({ id: m.id, title: m.title, description: m.description, width_m: m.width_m, url: `/api/maps/${m.id}/image?v=${m.v}` })),
-      wayfinding: await wayfinding.publicGraph(db),
-      contact,
-      clinics: await directory.clinicSchedules(db),
+      // Parts that are turned off are left out; "Find your way" also needs the maps
+      sections: Object.fromEntries(['list', 'schedules', 'requirements', 'contact', 'wayfinding', 'maps'].map((k) => [k, on(k)])),
+      entries: on('list') || on('schedules') || on('wayfinding') || on('requirements') ? entries : [],
+      guides: on('requirements') ? guides : [],
+      maps: on('maps') || on('wayfinding')
+        ? maps.map((m) => ({ id: m.id, title: m.title, description: m.description, width_m: m.width_m, url: `/api/maps/${m.id}/image?v=${m.v}` }))
+        : [],
+      wayfinding: on('wayfinding') ? await wayfinding.publicGraph(db) : { points: [], paths: [] },
+      contact: on('contact') ? contact : { notice: contact.notice },
+      clinics: on('schedules') ? await directory.clinicSchedules(db) : { clinics: [], this_month: '', next_month: null },
     });
   });
 
@@ -405,12 +419,12 @@ module.exports = function publicRoutes(db) {
   const activeFaqs = () => db.query('SELECT * FROM faqs WHERE active ORDER BY sort_order, id');
   const chatLimit = rateLimit({ windowMs: 10 * 60e3, max: 60 });
 
-  router.get('/faq', async (req, res) => {
+  router.get('/faq', modules.requireModule(db, 'chat'), async (req, res) => {
     res.json({ questions: (await activeFaqs()).map((f) => ({ id: f.id, question: f.question })) });
   });
 
   // Body: { faq_id } when a suggested question is tapped, or { message } for typed text
-  router.post('/faq/ask', chatLimit, async (req, res) => {
+  router.post('/faq/ask', chatLimit, modules.requireModule(db, 'chat'), async (req, res) => {
     const values = await clinics.faqValues(db);
     const faqs = await activeFaqs();
     if (req.body?.faq_id) {
@@ -454,7 +468,7 @@ module.exports = function publicRoutes(db) {
     return null;
   }
 
-  router.post('/track', submitLimit, async (req, res) => {
+  router.post('/track', submitLimit, modules.requireModule(db, 'track'), async (req, res) => {
     const found = await findByRef(req.body?.ref_no, req.body?.mobile);
     if (!found) return res.status(404).json({ error: 'No request found with that reference number and mobile number.' });
     res.json(found.kind === 'record' ? await publicRecord(db, found.row) : publicAppointment(await clinics.withClinicName(db, found.row)));
@@ -462,7 +476,7 @@ module.exports = function publicRoutes(db) {
 
   // Automatic ID check before re-uploading: compares the text read from the new ID photo (in the
   // requester's browser) with the request's patient details. Nothing is saved.
-  router.post('/track/id-check', submitLimit, async (req, res) => {
+  router.post('/track/id-check', submitLimit, modules.requireModule(db, 'track'), async (req, res) => {
     const found = await findByRef(req.body?.ref_no, req.body?.mobile);
     if (!found || found.kind !== 'record') return res.status(404).json({ error: 'No request found with that reference number and mobile number.' });
     const c = idphotos.ocrColumns(req.body?.text, found.row);
@@ -470,7 +484,7 @@ module.exports = function publicRoutes(db) {
   });
 
   // New ID / selfie photos after staff could not verify the first ones (reference no. + mobile must match)
-  router.post('/track/id-photos', submitLimit, async (req, res) => {
+  router.post('/track/id-photos', submitLimit, modules.requireModule(db, 'track'), async (req, res) => {
     const found = await findByRef(req.body?.ref_no, req.body?.mobile);
     if (!found || found.kind !== 'record') return res.status(404).json({ error: 'No request found with that reference number and mobile number.' });
     const r = found.row;
@@ -489,7 +503,7 @@ module.exports = function publicRoutes(db) {
     res.json(await publicRecord(db, updated));
   });
 
-  router.post('/track/cancel', submitLimit, async (req, res) => {
+  router.post('/track/cancel', submitLimit, modules.requireModule(db, 'track.cancel'), async (req, res) => {
     const found = await findByRef(req.body?.ref_no, req.body?.mobile);
     if (!found) return res.status(404).json({ error: 'No request found with that reference number and mobile number.' });
     const { kind, row } = found;

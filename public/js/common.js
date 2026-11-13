@@ -62,9 +62,38 @@ const STATUS_LABELS = {
 };
 const badge = (s) => `<span class="badge ${esc(s)}">${esc(STATUS_LABELS[s] || s)}</span>`;
 
+// The catalog is fetched once per page (the chat window uses it too)
+let catalogPromise = null;
+const getCatalog = () => (catalogPromise = catalogPromise || api('/catalog'));
+
+// Public services turned off in Staff Panel -> Settings hide everything marked data-module="<key>"
+// (also elements added later), and a page marked data-page-module="<key>" shows a notice instead.
+function applyModules(cat) {
+  const on = cat.modules || {};
+  const off = Object.keys(on).filter((k) => on[k] === false);
+  if (!off.length) return;
+  const style = document.createElement('style');
+  style.textContent = off.map((k) => `[data-module="${k}"]`).join(',') + '{display:none !important}';
+  document.head.appendChild(style);
+  const page = document.body.dataset.pageModule;
+  const main = document.querySelector('main');
+  if (page && on[page] === false && main && !document.querySelector('.module-off-notice')) {
+    const names = cat.module_names || {};
+    const note = document.createElement('section');
+    note.className = 'card module-off-notice';
+    note.innerHTML = `<h2>Not available online right now</h2>
+      <p>${esc(names[page] || 'This service')} is not available online at the moment.${cat.modules_message ? ` ${esc(cat.modules_message)}` : ''}</p>
+      <p class="muted small">Please visit the hospital or call us. For emergencies, go directly to the Emergency Room.</p>
+      <a class="btn" href="/">Back to home</a>`;
+    main.prepend(note);
+    document.body.classList.add('page-off');
+  }
+}
+
 // Fill hospital name wherever [data-hospital] appears
 async function loadCatalog() {
-  const cat = await api('/catalog');
+  const cat = await getCatalog();
+  applyModules(cat);
   $$('[data-hospital]').forEach((el) => (el.textContent = cat.hospitalName));
   $$('[data-system]').forEach((el) => (el.textContent = cat.systemName));
   document.title = `${document.title.split(' · ')[0]} · ${cat.systemName}`;

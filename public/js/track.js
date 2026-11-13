@@ -33,7 +33,7 @@
         ${r.copy_type === 'DIGITAL' && r.id_status === 'REJECTED' ? reuploadForm(r) : ''}
         ${r.emailed_at ? '<div class="alert ok">Your documents were sent to your email. Please check your inbox and spam folder.</div>' : ''}
         ${r.copy_type !== 'DIGITAL' && r.status === 'READY' ? '<div class="alert ok">Your documents are ready. Please bring a valid ID and your reference number to the Hospital Health Information Management Section (HHIMS).</div>' : ''}
-        ${canCancel ? '<div class="actions"><button class="btn danger" id="cancelBtn">Cancel request</button></div>' : ''}`;
+        ${canCancel ? '<div class="actions"><button class="btn danger" id="cancelBtn" data-module="track.cancel">Cancel request</button></div>' : ''}`;
     } else {
       const canCancel = r.status === 'BOOKED';
       result.innerHTML = `
@@ -46,7 +46,7 @@
           <dt>Schedule</dt><dd>${esc(fmtDate(r.appt_date))}, ${esc(r.appt_time_label)}</dd>
           ${r.remarks ? `<dt>Remarks</dt><dd>${esc(r.remarks)}</dd>` : ''}
         </dl>
-        ${canCancel ? '<div class="actions"><a class="btn secondary" href="/book-opd">Book another</a><button class="btn danger" id="cancelBtn">Cancel appointment</button></div>' : ''}`;
+        ${canCancel ? '<div class="actions"><a class="btn secondary" href="/book-opd">Book another</a><button class="btn danger" id="cancelBtn" data-module="track.cancel">Cancel appointment</button></div>' : ''}`;
     }
     $('#cancelBtn')?.addEventListener('click', cancel);
     if ($('#reupload')) wireReupload();

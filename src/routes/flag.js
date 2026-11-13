@@ -7,6 +7,7 @@ const auth = require('../auth');
 const flag = require('../flag');
 const u = require('../util');
 const { ValidationError, rateLimit } = require('./public');
+const modules = require('../modules');
 
 // Separate signing secret from staff and facility sessions
 const secret = () => `${config.sessionSecret}|employee`;
@@ -14,6 +15,8 @@ const DEVICE_DAYS = 400;
 
 module.exports = function flagRoutes(db) {
   const router = express.Router();
+  // Employee check-in can be turned off (Staff Panel -> Settings -> Public services); HR's QR scan still works
+  router.use(modules.requireModule(db, 'flag'));
   const json = express.json({ limit: '1mb' }); // a check-in can carry a selfie
   // Many employees may share one hospital Wi-Fi address on ceremony mornings, so these limits are
   // generous; wrong PINs are limited per employee number instead.

@@ -1562,6 +1562,73 @@ test('digital wayfinding: campus map, routes, editor', async () => {
   assert.equal(seeded, false);
 });
 
+test('public services can be turned on and off', async () => {
+  const admin = await login();
+  const setMods = (disabled, message = '') => call('/admin/modules', { method: 'PUT', cookie: admin, body: { disabled, message } });
+  // Everything is on to start with
+  let cat = (await call('/catalog')).data;
+  assert.ok(Object.values(cat.modules).every(Boolean));
+  assert.equal(cat.module_names['records.digital'], 'Digital copies (emailed, with ID check and online payment)');
+  const listed = (await call('/admin/modules', { cookie: admin })).data;
+  assert.deepEqual(listed.modules.map((m) => m.key), ['records', 'opd', 'track', 'directory', 'chat', 'facility', 'flag']);
+  // Only Administrators
+  const opd = (await loginAs('opd.only', 'password123')).cookie;
+  assert.equal((await call('/admin/modules', { method: 'PUT', cookie: opd, body: { disabled: ['records'] } })).status, 403);
+
+  // Turn off some parts; unknown keys are ignored
+  let r = await setMods(['records.digital', 'track.cancel', 'directory.maps', 'chat', 'facility', 'flag', 'nonsense'], 'Please visit the hospital.');
+  assert.deepEqual(r.data.disabled, ['records.digital', 'track.cancel', 'directory.maps', 'chat', 'facility', 'flag']);
+  cat = (await call('/catalog')).data;
+  assert.equal(cat.modules.records, true);
+  assert.equal(cat.modules['records.digital'], false);
+  assert.equal(cat.modules_message, 'Please visit the hospital.');
+
+  // Records: hardcopy still works, digital copies are refused
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAAABJRU5ErkJggg==';
+  const rec = { ...patient, requester_name: 'Juan Dela Cruz', requester_relation: 'Self (patient)', email: 'juan@example.com', purpose: 'Insurance', items: [{ record_type: 'MEDICAL_CERTIFICATE' }] };
+  const hard = await call('/records', { method: 'POST', body: { ...rec, copy_type: 'HARDCOPY' } });
+  assert.equal(hard.status, 201);
+  const dig = await call('/records', { method: 'POST', body: { ...rec, copy_type: 'DIGITAL', id_photo: png, selfie_photo: png, receipt_photo: png } });
+  assert.equal(dig.status, 400);
+  assert.match(dig.data.error, /Digital copies .* is not available online right now\. Please visit the hospital\. Please choose hardcopy\./);
+  // Track works, but cancelling online does not
+  assert.equal((await call('/track', { method: 'POST', body: { ref_no: hard.data.ref_no, mobile: '0917 123 4567' } })).status, 200);
+  const cancel = await call('/track/cancel', { method: 'POST', body: { ref_no: hard.data.ref_no, mobile: '0917 123 4567' } });
+  assert.equal(cancel.status, 503);
+  assert.equal(cancel.data.module_off, 'track.cancel');
+  // Directory without the maps part still gives the maps "Find your way" needs
+  let dir = (await call('/directory')).data;
+  assert.equal(dir.sections.maps, false);
+  assert.equal(dir.sections.wayfinding, true);
+  assert.ok(dir.maps.length && dir.wayfinding.points.length);
+  // Chat, referral portal and flag ceremony check-in are refused
+  assert.equal((await call('/faq')).status, 503);
+  assert.equal((await call('/faq/ask', { method: 'POST', body: { message: 'hello' } })).status, 503);
+  assert.equal((await call('/facility/login', { method: 'POST', body: { username: 'x', password: 'y' } })).status, 503);
+  assert.equal((await call('/flag/me')).status, 503);
+  // The Staff Panel keeps working
+  assert.equal((await call('/admin/records', { cookie: admin })).status, 200);
+
+  // A module that is off turns off its parts too
+  await setMods(['directory', 'opd']);
+  cat = (await call('/catalog')).data;
+  assert.equal(cat.modules['directory.wayfinding'], false);
+  assert.equal((await call('/directory')).status, 503);
+  const slot = await call('/appointments', { method: 'POST', body: { ...patient, department: 'IM', appt_date: u.todayStr(), appt_time: '08:00' } });
+  assert.equal(slot.status, 503);
+  // Only some directory parts off: their data is left out
+  await setMods(['directory.wayfinding', 'directory.requirements', 'directory.contact', 'directory.schedules', 'directory.maps']);
+  dir = (await call('/directory')).data;
+  assert.deepEqual([dir.maps.length, dir.wayfinding.points.length, dir.guides.length, dir.clinics.clinics.length], [0, 0, 0, 0]);
+  assert.ok(dir.entries.length > 0);
+  assert.equal(dir.contact.phone, undefined);
+
+  // Back on
+  await setMods([]);
+  assert.ok(Object.values((await call('/catalog')).data.modules).every(Boolean));
+  assert.equal((await call('/faq')).status, 200);
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');

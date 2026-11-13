@@ -352,6 +352,16 @@
     </div>
 
     <div data-view="settings" class="hidden">
+      <div class="card admin-only">
+        <h3>Public services</h3>
+        <p class="muted small">Turn services and their parts on or off on the public website. A service that is off disappears from the menu and home page, its page shows "not available online right now", and online requests for it are refused. The Staff Panel keeps working, so existing requests and appointments can still be processed.</p>
+        <form id="modulesForm">
+          <ul class="mod-tree" id="modTree"></ul>
+          <label class="field" style="margin-top:10px">Message shown when a service is off <span class="hint">Optional, e.g. "Online requests resume on December 2. Please visit the HHIMS office."</span>
+            <input name="message" maxlength="300" data-nocaps></label>
+          <div class="actions" style="justify-content:flex-start"><button class="btn" type="submit">Save</button> <span class="muted small" id="modSaved"></span></div>
+        </form>
+      </div>
       <div class="grid grid-2">
         <div class="card">
           <h3>Closed dates / holidays</h3>

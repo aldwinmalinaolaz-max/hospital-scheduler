@@ -486,8 +486,39 @@ ${cat.hospitalName}`;
     loadPaymentSettings();
   }));
 
+  // Public services on/off
+  async function loadModules() {
+    const d = await api('/admin/modules');
+    const off = new Set(d.disabled);
+    const box = (m, sub) =>
+      `<label><input type="checkbox" data-mod="${m.key}" ${off.has(m.key) ? '' : 'checked'}${sub ? ` data-parent="${sub}"` : ''}> ${sub ? esc(m.name) : `<b>${esc(m.name)}</b>`} <span class="off-tag" data-off-tag="${m.key}">OFF</span></label>`;
+    $('#modTree').innerHTML = d.modules
+      .map((m) => `<li>${box(m)}${m.subs.length ? `<ul>${m.subs.map((x) => `<li>${box(x, m.key)}</li>`).join('')}</ul>` : ''}</li>`)
+      .join('');
+    $('#modulesForm').message.value = d.message || '';
+    $('#modSaved').textContent = d.updated ? `Last saved by ${d.updated.by} · ${d.updated.at}` : '';
+    syncModules();
+  }
+  // Sub-modules of a module that is off cannot be used; show them greyed out
+  function syncModules() {
+    $$('#modTree [data-mod]').forEach((c) => {
+      const parent = c.dataset.parent && $(`#modTree [data-mod="${c.dataset.parent}"]`);
+      c.disabled = !!parent && !parent.checked;
+      $(`[data-off-tag="${c.dataset.mod}"]`).hidden = c.checked && !c.disabled;
+    });
+  }
+  $('#modTree').addEventListener('change', syncModules);
+  $('#modulesForm').addEventListener('submit', guard(async (e) => {
+    e.preventDefault();
+    const disabled = $$('#modTree [data-mod]').filter((c) => !c.checked).map((c) => c.dataset.mod);
+    await api('/admin/modules', { method: 'PUT', body: { disabled, message: e.target.message.value } });
+    await loadModules();
+    $('#modSaved').textContent = `Saved. ${$('#modSaved').textContent}`;
+  }));
+
   loaders.settings = guard(async () => {
     if (me?.role === 'ADMIN') loadPaymentSettings();
+    if (me?.role === 'ADMIN') loadModules();
     const { rows } = await api('/admin/closed-dates');
     $('#closedList').innerHTML = rows.length
       ? `<table><tbody>${rows.map((r) => `<tr><td class="nowrap">${esc(fmtDate(r.date))}</td><td>${esc(r.reason)}</td><td><button class="btn sm secondary admin-only" data-del-closed="${r.date}">Remove</button></td></tr>`).join('')}</tbody></table>`
