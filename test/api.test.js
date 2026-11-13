@@ -521,7 +521,7 @@ test('hospital directory: public data, admin editing, maps with pins', async () 
   assert.equal(cashier.map_id, mapId);
   assert.equal(cashier.pin_x, 42.5);
   assert.equal(pub.contact.trunk_line, '(062) 000-0000');
-  assert.match(pub.maps[0].url, new RegExp(`^/api/maps/${mapId}/image\\?v=`));
+  assert.match(pub.maps.find((m) => m.id === mapId).url, new RegExp(`^/api/maps/${mapId}/image\\?v=`));
 
   // Deleting the map keeps the entry but removes the pin
   await call(`/admin/maps/${mapId}`, { method: 'DELETE', cookie: admin });
@@ -1480,6 +1480,86 @@ test('flag ceremony: Plantilla / Job Order tagging', async () => {
   const csv = await (await fetch(`${base}/admin/flag/summary.csv?from=${today}&to=${today}&employment_type=JOB_ORDER`, { headers: { Cookie: admin } })).text();
   assert.match(csv, /,Unit,Employment,Ceremonies,/);
   assert.match(csv, /ET-0002,JO,TWO,,AIDE,NURSING SERVICE DIVISION,WARD 2,Job Order,/);
+});
+
+test('digital wayfinding: campus map, routes, editor', async () => {
+  const W = require('../public/js/wayfind');
+  const admin = await login();
+  let pub = (await call('/directory')).data;
+  const campus = pub.maps.find((m) => m.title === 'ZRMC Campus Map');
+  assert.ok(campus, 'campus map loaded');
+  assert.equal(campus.width_m, 315);
+  assert.equal((await fetch(base.replace('/api', '') + campus.url)).headers.get('content-type'), 'image/jpeg');
+  const pts = pub.wayfinding.points.filter((p) => p.map_id === campus.id);
+  const buildings = pts.filter((p) => p.kind === 'BUILDING');
+  assert.equal(buildings.length, 35); // legend nos. 1-30 incl. 4A, 5A, 5B, 10A, 20A, 22A (no 25)
+  assert.ok(!buildings.some((b) => Number(b.code) > 30), 'proposed projects are not destinations');
+  // The Emergency Room and OPD clinics are linked to their buildings
+  const er = pub.entries.find((e) => e.name === 'Emergency Room');
+  assert.equal(pts.find((p) => p.id === er.way_point_id).code, '1');
+  assert.ok(pub.entries.filter((e) => e.category === 'OPD Clinic').every((e) => pts.find((p) => p.id === e.way_point_id)?.code === '5'));
+
+  // Every building can be reached from every starting point
+  const opts = { ratio: 1450 / 1700, widthM: campus.width_m };
+  const starts = pts.filter((p) => p.is_start);
+  assert.ok(starts.length >= 3);
+  for (const s of starts) for (const b of buildings) assert.ok(W.directions(pts, pub.wayfinding.paths, s.id, b.id, opts).found, `${s.name} -> ${b.name}`);
+  const gate = pts.find((p) => p.name === 'MAIN GATE (PASOBOLONG ROAD)');
+  const icu = buildings.find((b) => b.code === '16');
+  const r = W.directions(pts, pub.wayfinding.paths, gate.id, icu.id, opts);
+  assert.equal(r.steps[0], 'Start at MAIN GATE (PASOBOLONG ROAD).');
+  assert.match(r.steps.at(-1), /to ICU BUILDING \(Bldg\. 16\)\. You have arrived\.$/);
+  assert.ok(r.meters > 50 && r.meters < 400 && r.minutes >= 1);
+  // Routes never pass through a building or a gate
+  assert.ok(r.ids.slice(1, -1).every((id) => !['BUILDING', 'GATE'].includes(pts.find((p) => p.id === id).kind)));
+  assert.deepEqual(W.directions(pts, pub.wayfinding.paths, gate.id, gate.id, opts).steps, ['You are already at MAIN GATE (PASOBOLONG ROAD).']);
+
+  // Editor: load, then save changes (move a point, add a building with a new path, link a place, mark stairs, delete a point)
+  const ed = (await call(`/admin/wayfinding/${campus.id}`, { cookie: admin })).data;
+  assert.equal(ed.points.length, pts.length);
+  const plaza = ed.points.find((p) => p.name === 'CENTRAL PLAZA');
+  const junction = ed.points.find((p) => p.kind === 'JUNCTION');
+  const cashierEntry = (await call('/admin/directory/entries', { method: 'POST', cookie: admin, body: { name: 'Cashier', category: 'Office' } })).data;
+  const body = {
+    width_m: 300,
+    points: [
+      ...ed.points.filter((p) => p.id !== junction.id).map((p) => (p.id === plaza.id ? { ...p, x: p.x + 1 } : p)),
+      { tmp: 'n1', name: 'cashier booth', kind: 'BUILDING', code: '99', x: 50, y: 50, is_start: true },
+    ],
+    paths: [
+      ...ed.paths.filter((e) => e.a !== junction.id && e.b !== junction.id).map((e) => ({ a: e.a, b: e.b, step_free: e.step_free })),
+      { a: plaza.id, b_key: 'tmp:n1', step_free: false },
+    ],
+    links: [{ entry_id: cashierEntry.id, point: 'tmp:n1' }],
+  };
+  const saved = await call(`/admin/wayfinding/${campus.id}`, { method: 'PUT', cookie: admin, body });
+  assert.equal(saved.status, 200, JSON.stringify(saved.data));
+  const booth = saved.data.points.find((p) => p.name === 'CASHIER BOOTH');
+  assert.equal(booth.is_start, true);
+  assert.ok(!saved.data.points.some((p) => p.id === junction.id));
+  assert.equal(saved.data.points.find((p) => p.id === plaza.id).x, Math.round((plaza.x + 1) * 100) / 100);
+  assert.equal(saved.data.entries.find((e) => e.id === cashierEntry.id).way_point_id, booth.id);
+  pub = (await call('/directory')).data;
+  assert.equal(pub.maps.find((m) => m.id === campus.id).width_m, 300);
+  // The new booth is reachable, but not by the step-free route (its only path has stairs)
+  const newPts = pub.wayfinding.points;
+  assert.ok(W.directions(newPts, pub.wayfinding.paths, gate.id, booth.id, opts).found);
+  assert.equal(W.directions(newPts, pub.wayfinding.paths, gate.id, booth.id, { ...opts, stepFree: true }).found, false);
+
+  // Bad data is refused
+  const put = (b) => call(`/admin/wayfinding/${campus.id}`, { method: 'PUT', cookie: admin, body: b });
+  assert.match((await put({ points: [{ tmp: 'a', x: 150, y: 5 }], paths: [] })).data.error, /outside the map/);
+  assert.match((await put({ points: [{ tmp: 'a', kind: 'GATE', x: 5, y: 5 }], paths: [] })).data.error, /needs a name/);
+  assert.match((await put({ points: [{ tmp: 'a', x: 5, y: 5 }], paths: [{ a_key: 'tmp:a', b_key: 'tmp:zz' }] })).data.error, /does not exist/);
+  assert.match((await put({ points: [], paths: [], width_m: 1 })).data.error, /width/);
+  // Only Administrators edit the directory and its maps
+  const opd = (await loginAs('opd.only', 'password123')).cookie;
+  assert.equal((await call(`/admin/wayfinding/${campus.id}`, { cookie: opd })).status, 403);
+  assert.equal((await call('/admin/wayfinding/99999', { cookie: admin })).status, 404);
+
+  // The campus map is loaded only once
+  const seeded = await db.tx((t) => require('../src/wayfinding').seedCampus(t));
+  assert.equal(seeded, false);
 });
 
 test('mobile normalisation', () => {

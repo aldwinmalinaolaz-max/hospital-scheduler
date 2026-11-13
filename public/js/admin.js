@@ -1247,7 +1247,7 @@ ${cat.hospitalName}`;
           <img src="${esc(m.url)}" alt="">
           <b>${esc(m.title)}</b>${m.description ? `<span class="muted small">${esc(m.description)}</span>` : ''}
           <span class="small muted">${dir.entries.filter((e) => e.map_id === m.id && e.pin_x !== null).length} pinned place(s)</span>
-          <div class="dir-actions"><button class="btn sm secondary" data-edit-map="${m.id}">Edit</button><button class="btn sm secondary" data-del-map="${m.id}">Delete</button></div>
+          <div class="dir-actions"><button class="btn sm" data-way-map="${m.id}">Wayfinding</button><button class="btn sm secondary" data-edit-map="${m.id}">Edit</button><button class="btn sm secondary" data-del-map="${m.id}">Delete</button></div>
         </div>`,
         )
         .join('') || '<p class="muted small">No maps uploaded yet.</p>';
@@ -1433,13 +1433,298 @@ ${cat.hospitalName}`;
     });
   }
 
+
+  // ---------- Wayfinding editor (points, paths and directory links on a map) ----------
+  const WAY_KINDS = { GATE: 'Gate / entrance', BUILDING: 'Building', LANDMARK: 'Landmark', JUNCTION: 'Path junction (no name)' };
+  async function wayEditor(mapId) {
+    const data = await api(`/admin/wayfinding/${mapId}`);
+    const map = dir.maps.find((m) => m.id === mapId);
+    let tmpSeq = 0;
+    const st = {
+      points: data.points.map((p) => ({ ...p, key: `id:${p.id}` })),
+      edges: data.paths.map((e) => ({ a: `id:${e.a}`, b: `id:${e.b}`, step_free: e.step_free })),
+      links: new Map(data.entries.filter((e) => e.way_point_id && data.points.some((p) => p.id === e.way_point_id)).map((e) => [e.id, `id:${e.way_point_id}`])),
+      mode: 'select',
+      sel: null, // { type: 'point', key } | { type: 'edge', i }
+      connectFrom: null,
+      measure: [],
+      zoom: 1,
+      ratio: 1,
+      dirty: false,
+    };
+    const P = (key) => st.points.find((p) => p.key === key);
+    const MODES = { select: 'Select / move', add: 'Add points', connect: 'Connect', delete: 'Delete', measure: 'Measure scale' };
+    const HELP = {
+      select: 'Drag a point to move it. Click a point or a path to edit it.',
+      add: 'Click the map to add a point; it is joined to the selected point, so you can trace a road click by click. Click an existing point to continue from it.',
+      connect: 'Click two points to join them with a path (or to remove the path between them).',
+      delete: 'Click a point or a path to delete it.',
+      measure: 'Click two places whose real distance you know (e.g. the ends of a building), then type the distance.',
+    };
+    openDialog(
+      `<h2>Wayfinding — ${esc(map.title)}</h2>
+       <div class="we-bar">
+         <div class="we-modes" role="toolbar">${Object.entries(MODES).map(([k, l]) => `<button type="button" class="btn sm secondary" data-we-mode="${k}">${l}</button>`).join('')}</div>
+         <div class="we-zoom"><button type="button" class="btn sm secondary" data-we-zoom="-1" aria-label="Zoom out">−</button><button type="button" class="btn sm secondary" data-we-zoom="1" aria-label="Zoom in">+</button></div>
+       </div>
+       <p class="muted small" id="weHelp" style="margin:6px 0"></p>
+       <div class="we-body"><div class="we-canvas" id="weCanvas"><img src="${esc(map.url)}" alt="" id="weImg" draggable="false">
+         <svg id="weSvg" viewBox="0 0 100 100" preserveAspectRatio="none"></svg><div id="wePts"></div></div></div>
+       <div class="we-panel" id="wePanel"></div>
+       <div class="grid grid-2" style="margin-top:10px">
+         <label class="field">Real width of the whole map (meters)<span class="hint">For distances and walking times; use <b>Measure scale</b> if unsure. Blank = no distances shown.</span>
+           <input name="width_m" type="number" min="5" max="20000" step="any" value="${map.width_m ?? data.map.width_m ?? ''}"></label>
+         <div class="field"><span>"You are here" QR signs</span><span class="hint">One sign per starting point, linking to directions from that spot. Save first.</span>
+           <button type="button" class="btn sm secondary" id="weSigns" style="align-self:flex-start">Print signs</button></div>
+       </div>
+       <p class="muted small" id="weStats"></p>`,
+      async (d) => {
+        const body = {
+          width_m: d.width_m,
+          points: st.points.map((p) => ({ id: p.id || undefined, tmp: p.id ? undefined : p.key.slice(4), name: p.name, code: p.code, kind: p.kind, x: p.x, y: p.y, is_start: p.is_start })),
+          paths: st.edges.map((e) => ({ a_key: e.a, b_key: e.b, step_free: e.step_free })),
+          links: data.entries.map((e) => ({ entry_id: e.id, point: st.links.get(e.id) || null })).filter((l) => l.point || data.entries.find((e) => e.id === l.entry_id).way_point_id),
+        };
+        await api(`/admin/wayfinding/${mapId}`, { method: 'PUT', body });
+        loaders.directory();
+      },
+      { wide: true, saveLabel: 'Save wayfinding' },
+    );
+    $('#dlg').classList.add('we-dialog');
+    // Enter in a field just applies it (it would otherwise press the first button, Close)
+    $('#dlgForm').addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && ev.target.matches('input')) {
+        ev.preventDefault();
+        ev.target.dispatchEvent(new Event('change'));
+      }
+    });
+    $('#dlgForm [value=cancel]').addEventListener('click', (ev) => {
+      if (st.dirty && !confirm('Close without saving your wayfinding changes?')) ev.preventDefault();
+    });
+    $('#dlg').addEventListener('close', () => $('#dlg').classList.remove('we-dialog'), { once: true });
+    const img = $('#weImg');
+    const canvas = $('#weCanvas');
+    const setRatio = () => img.naturalWidth && (st.ratio = img.naturalHeight / img.naturalWidth);
+    img.complete ? setRatio() : img.addEventListener('load', () => (setRatio(), draw()), { once: true });
+
+    const pos = (ev) => {
+      const r = canvas.getBoundingClientRect();
+      return { x: Math.min(100, Math.max(0, ((ev.clientX - r.left) / r.width) * 100)), y: Math.min(100, Math.max(0, ((ev.clientY - r.top) / r.height) * 100)) };
+    };
+    const edgeIndex = (a, b) => st.edges.findIndex((e) => (e.a === a && e.b === b) || (e.a === b && e.b === a));
+    const touch = () => (st.dirty = true);
+
+    function draw() {
+      $('#weSvg').innerHTML = st.edges
+        .map((e, i) => {
+          const a = P(e.a);
+          const b = P(e.b);
+          const on = st.sel?.type === 'edge' && st.sel.i === i;
+          return `<line class="hit" data-edge="${i}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/><line class="${e.step_free ? 'way' : 'way stairs'}${on ? ' on' : ''}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
+        })
+        .join('') + (st.measure.length === 1 ? `<circle cx="${st.measure[0].x}" cy="${st.measure[0].y}" r="0.6" class="measure"/>` : '');
+      $('#wePts').innerHTML = st.points
+        .map((p) => {
+          const cls = ['we-pt', p.kind.toLowerCase(), p.is_start ? 'start' : '', st.sel?.type === 'point' && st.sel.key === p.key ? 'on' : '', st.connectFrom === p.key ? 'from' : ''].join(' ');
+          return `<span class="${cls}" data-pt="${esc(p.key)}" style="left:${p.x}%;top:${p.y}%" title="${esc(p.name || 'Junction')}">${p.kind === 'BUILDING' && p.code ? esc(p.code) : ''}</span>`;
+        })
+        .join('');
+      $('#weHelp').textContent = HELP[st.mode];
+      $$('[data-we-mode]').forEach((b) => b.classList.toggle('on', b.dataset.weMode === st.mode));
+      const named = st.points.filter((p) => p.name).length;
+      $('#weStats').textContent = `${st.points.length} points (${named} named, ${st.points.filter((p) => p.is_start).length} starting points) · ${st.edges.length} paths · ${st.links.size} directory places linked${st.dirty ? ' · not saved yet' : ''}`;
+      panel();
+    }
+
+    function panel() {
+      const box = $('#wePanel');
+      if (st.sel?.type === 'edge') {
+        const e = st.edges[st.sel.i];
+        box.innerHTML = `<b>Path</b> between ${esc(P(e.a).name || 'junction')} and ${esc(P(e.b).name || 'junction')}
+          <label class="check"><input type="checkbox" id="weStairs" ${e.step_free ? '' : 'checked'}> Has stairs or steps (left out of the step-free route)</label>
+          <button type="button" class="btn sm danger" id="weDelEdge">Delete path</button>`;
+        $('#weStairs').onchange = (ev) => ((e.step_free = !ev.target.checked), touch(), draw());
+        $('#weDelEdge').onclick = () => (st.edges.splice(st.sel.i, 1), (st.sel = null), touch(), draw());
+        return;
+      }
+      const p = st.sel?.type === 'point' && P(st.sel.key);
+      if (!p) {
+        box.innerHTML = '<p class="muted small" style="margin:0">Select a point or a path to edit it.</p>';
+        return;
+      }
+      const here = data.entries.filter((e) => st.links.get(e.id) === p.key);
+      box.innerHTML = `<div class="grid grid-2">
+          <label class="field">Name<input id="weName" value="${esc(p.name || '')}" placeholder="e.g. MAIN GATE, E.R. BUILDING"></label>
+          <label class="field">Type<select id="weKind">${Object.entries(WAY_KINDS).map(([k, l]) => `<option value="${k}"${k === p.kind ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="field">Building no. on the map<input id="weCode" value="${esc(p.code || '')}" maxlength="10"></label>
+          <label class="check" style="align-self:end"><input type="checkbox" id="weStart" ${p.is_start ? 'checked' : ''}> Starting point ("You are here" sign)</label>
+        </div>
+        <label class="field">Directory places here<span class="hint">Offices or clinics inside this building, so visitors can get directions to them</span>
+          <select id="weAddLink"><option value="">+ Add a place…</option>${data.entries.filter((e) => st.links.get(e.id) !== p.key).map((e) => `<option value="${e.id}">${esc(e.name)}${st.links.get(e.id) ? ' (move here)' : ''}</option>`).join('')}</select></label>
+        <div class="we-links">${here.map((e) => `<span class="chip">${esc(e.name)} <button type="button" data-unlink="${e.id}" aria-label="Remove ${esc(e.name)}">×</button></span>`).join('') || '<span class="muted small">None</span>'}</div>
+        <button type="button" class="btn sm danger" id="weDelPt">Delete point</button>`;
+      const upd = (k, v) => ((p[k] = v), touch(), draw());
+      $('#weName').onchange = (ev) => upd('name', ev.target.value.trim().toUpperCase());
+      $('#weKind').onchange = (ev) => upd('kind', ev.target.value);
+      $('#weCode').onchange = (ev) => upd('code', ev.target.value.trim().toUpperCase());
+      $('#weStart').onchange = (ev) => upd('is_start', ev.target.checked);
+      $('#weAddLink').onchange = (ev) => ev.target.value && (st.links.set(Number(ev.target.value), p.key), touch(), draw());
+      box.querySelectorAll('[data-unlink]').forEach((b) => (b.onclick = () => (st.links.delete(Number(b.dataset.unlink)), touch(), draw())));
+      $('#weDelPt').onclick = () => removePoint(p.key);
+    }
+
+    function removePoint(key) {
+      st.points = st.points.filter((p) => p.key !== key);
+      st.edges = st.edges.filter((e) => e.a !== key && e.b !== key);
+      for (const [k, v] of st.links) if (v === key) st.links.delete(k);
+      st.sel = null;
+      touch();
+      draw();
+    }
+
+    // Map clicks and point dragging
+    let drag = null;
+    canvas.addEventListener('pointerdown', (ev) => {
+      const ptEl = ev.target.closest('[data-pt]');
+      if (ptEl && st.mode === 'select') {
+        st.sel = { type: 'point', key: ptEl.dataset.pt };
+        drag = { key: ptEl.dataset.pt, moved: false };
+        canvas.setPointerCapture(ev.pointerId);
+        draw();
+        ev.preventDefault();
+      }
+    });
+    canvas.addEventListener('pointermove', (ev) => {
+      if (!drag) return;
+      const p = P(drag.key);
+      Object.assign(p, pos(ev));
+      drag.moved = true;
+      touch();
+      const el = $(`#wePts [data-pt="${CSS.escape(drag.key)}"]`);
+      el.style.left = `${p.x}%`;
+      el.style.top = `${p.y}%`;
+    });
+    canvas.addEventListener('pointerup', () => {
+      if (drag?.moved) draw();
+      drag = null;
+    });
+    canvas.addEventListener('click', (ev) => {
+      if (ev.target.closest('[data-pt]') && st.mode === 'select') return; // handled by pointerdown
+      const ptKey = ev.target.closest('[data-pt]')?.dataset.pt;
+      const edge = ev.target.closest('[data-edge]')?.dataset.edge;
+      const at = pos(ev);
+      if (st.mode === 'measure') {
+        st.measure.push(at);
+        if (st.measure.length === 2) {
+          const [a, b] = st.measure;
+          st.measure = [];
+          const frac = Math.hypot((b.x - a.x) / 100, ((b.y - a.y) / 100) * st.ratio);
+          const meters = Number(prompt('Real distance between the two places, in meters:'));
+          if (meters > 0 && frac > 0) {
+            $('#dlgForm [name=width_m]').value = Math.round(meters / frac);
+            touch();
+          }
+        }
+        return draw();
+      }
+      if (st.mode === 'delete') {
+        if (ptKey) return removePoint(ptKey);
+        if (edge !== undefined) return st.edges.splice(Number(edge), 1), touch(), draw();
+        return;
+      }
+      if (st.mode === 'connect') {
+        if (!ptKey) return;
+        if (!st.connectFrom) st.connectFrom = ptKey;
+        else if (st.connectFrom === ptKey) st.connectFrom = null;
+        else {
+          const i = edgeIndex(st.connectFrom, ptKey);
+          if (i >= 0) st.edges.splice(i, 1);
+          else st.edges.push({ a: st.connectFrom, b: ptKey, step_free: true });
+          st.connectFrom = ptKey; // keep chaining
+          touch();
+        }
+        return draw();
+      }
+      if (st.mode === 'add') {
+        if (ptKey) {
+          st.sel = { type: 'point', key: ptKey };
+          return draw();
+        }
+        const key = `tmp:${++tmpSeq}`;
+        st.points.push({ key, name: '', code: '', kind: 'JUNCTION', x: Math.round(at.x * 100) / 100, y: Math.round(at.y * 100) / 100, is_start: false });
+        if (st.sel?.type === 'point') st.edges.push({ a: st.sel.key, b: key, step_free: true });
+        st.sel = { type: 'point', key };
+        touch();
+        return draw();
+      }
+      // select mode: paths
+      if (edge !== undefined) st.sel = { type: 'edge', i: Number(edge) };
+      else if (!ptKey) st.sel = null;
+      draw();
+    });
+
+    $$('[data-we-mode]').forEach((b) =>
+      b.addEventListener('click', () => {
+        st.mode = b.dataset.weMode;
+        st.connectFrom = null;
+        st.measure = [];
+        draw();
+      }),
+    );
+    $$('[data-we-zoom]').forEach((b) =>
+      b.addEventListener('click', () => {
+        st.zoom = Math.min(4, Math.max(1, st.zoom + Number(b.dataset.weZoom) * 0.5));
+        canvas.style.width = `${st.zoom * 100}%`;
+      }),
+    );
+
+    // Printable "You are here" signs with a QR code to directions from that spot
+    $('#weSigns').addEventListener('click', guard(async () => {
+      if (st.dirty) return alert('Save the wayfinding first, then print the signs.');
+      const starts = st.points.filter((p) => p.is_start && p.id);
+      if (!starts.length) return alert('No starting points yet. Select a point and tick "Starting point".');
+      await loadScript('/vendor/qr/qrcode.js', () => window.qrcode);
+      const qr = (text) => {
+        const q = window.qrcode(0, 'M');
+        q.addData(text);
+        q.make();
+        return q.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+      };
+      const signs = starts
+        .map((p) => {
+          const url = `${location.origin}/directory?from=${p.id}`;
+          return `<section class="sign"><div class="org">${esc(cat.hospitalName)}</div>
+            <div class="here">YOU ARE HERE</div><div class="name">${esc(p.name)}${p.code ? ` <span>(Bldg. ${esc(p.code)})</span>` : ''}</div>
+            <div class="qr">${qr(url)}</div>
+            <div class="how">Scan with your phone camera for <b>directions</b> to any building, clinic or office.</div>
+            <div class="url">${esc(url)}</div></section>`;
+        })
+        .join('');
+      const w = window.open('', '_blank');
+      if (!w) return alert('Allow pop-ups for this site to print the signs.');
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>You are here signs</title><style>
+        body { font-family: Arial, sans-serif; margin: 0; color: #111; } .bar { padding: 10px; } .bar button { font-size: 14px; padding: 6px 14px; }
+        .sign { width: 148mm; min-height: 200mm; margin: 0 auto 8mm; box-sizing: border-box; border: 3mm solid #1b7a3e; border-radius: 6mm; padding: 10mm; text-align: center; break-after: page; }
+        .org { font-weight: bold; color: #0f4d26; text-transform: uppercase; font-size: 12pt; }
+        .here { font-size: 34pt; font-weight: 900; color: #c62828; margin: 6mm 0 2mm; letter-spacing: .03em; }
+        .name { font-size: 18pt; font-weight: bold; } .name span { font-weight: normal; font-size: 13pt; }
+        .qr { width: 95mm; height: 95mm; margin: 8mm auto; } .qr svg { width: 100%; height: 100%; }
+        .how { font-size: 14pt; } .url { font-size: 8pt; color: #666; margin-top: 4mm; word-break: break-all; }
+        @media print { .bar { display: none; } @page { size: A5; margin: 6mm; } .sign { margin: 0 auto; } }
+      </style></head><body><div class="bar"><b>${starts.length} sign${starts.length === 1 ? '' : 's'}</b> (A5) — print and post at each spot. <button onclick="print()">Print</button></div>${signs}</body></html>`);
+      w.document.close();
+    }));
+    draw();
+  }
+
   $('#addEntryBtn').addEventListener('click', () => entryDialog());
   $('#addGuideBtn').addEventListener('click', () => guideDialog());
   $('#addMapBtn').addEventListener('click', () => mapDialog());
   $('[data-view="directory"]').addEventListener('click', guard(async (ev) => {
-    const b = ev.target.closest('[data-edit-entry],[data-del-entry],[data-edit-guide],[data-del-guide],[data-edit-map],[data-del-map]');
+    const b = ev.target.closest('[data-edit-entry],[data-del-entry],[data-edit-guide],[data-del-guide],[data-edit-map],[data-del-map],[data-way-map]');
     if (!b) return;
     const d = b.dataset;
+    if (d.wayMap) return wayEditor(Number(d.wayMap));
     if (d.editEntry) return entryDialog(dir.entries.find((x) => x.id === Number(d.editEntry)));
     if (d.editGuide) return guideDialog(dir.guides.find((x) => x.id === Number(d.editGuide)));
     if (d.editMap) return mapDialog(dir.maps.find((x) => x.id === Number(d.editMap)));

@@ -184,6 +184,33 @@ const SCHEMA = `
     updated_by TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
+  -- Digital wayfinding on a map: points (gates, buildings, landmarks, junctions) and walkable paths
+  ALTER TABLE maps ADD COLUMN IF NOT EXISTS width_m REAL;   -- real width the map image covers (for distances)
+  CREATE TABLE IF NOT EXISTS way_points (
+    id SERIAL PRIMARY KEY,
+    map_id INTEGER NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
+    name TEXT,                            -- empty for plain path junctions
+    code TEXT,                            -- building no. on the map, e.g. 4A
+    kind TEXT NOT NULL DEFAULT 'JUNCTION',-- GATE | BUILDING | LANDMARK | JUNCTION
+    x REAL NOT NULL,                      -- % of the image width
+    y REAL NOT NULL,                      -- % of the image height
+    is_start BOOLEAN NOT NULL DEFAULT FALSE, -- offered as a starting point / "You are here" sign
+    updated_by TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE TABLE IF NOT EXISTS way_paths (
+    id SERIAL PRIMARY KEY,
+    map_id INTEGER NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
+    a_id INTEGER NOT NULL REFERENCES way_points(id) ON DELETE CASCADE,
+    b_id INTEGER NOT NULL REFERENCES way_points(id) ON DELETE CASCADE,
+    step_free BOOLEAN NOT NULL DEFAULT TRUE  -- FALSE when the way has stairs (not for wheelchairs)
+  );
+  CREATE INDEX IF NOT EXISTS idx_way_points_map ON way_points(map_id);
+  CREATE INDEX IF NOT EXISTS idx_way_paths_map ON way_paths(map_id);
+
+  -- The building / point on a map where a directory place is, for directions
+  ALTER TABLE directory_entries ADD COLUMN IF NOT EXISTS way_point_id INTEGER REFERENCES way_points(id) ON DELETE SET NULL;
+
   CREATE TABLE IF NOT EXISTS guides (
     id SERIAL PRIMARY KEY,
     title TEXT NOT NULL,
@@ -430,6 +457,8 @@ const SCHEMA = `
   ALTER TABLE faqs ENABLE ROW LEVEL SECURITY;
   ALTER TABLE faq_unanswered ENABLE ROW LEVEL SECURITY;
   ALTER TABLE maps ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE way_points ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE way_paths ENABLE ROW LEVEL SECURITY;
   ALTER TABLE directory_entries ENABLE ROW LEVEL SECURITY;
   ALTER TABLE guides ENABLE ROW LEVEL SECURITY;
   ALTER TABLE site_info ENABLE ROW LEVEL SECURITY;
@@ -596,6 +625,12 @@ const MIGRATIONS = [
       for (const [old, name] of Object.entries(flag.OLD_DIVISION_NAMES)) {
         await t.query('UPDATE employees SET department = $1 WHERE department = $2', [name, old]);
       }
+    },
+  },  {
+    // ZRMC campus map (from the Master Development Plan 2025) with its starting wayfinding network
+    id: '2026-11-13-campus-wayfinding',
+    async run(t) {
+      await require('./wayfinding').seedCampus(t);
     },
   },
 ];

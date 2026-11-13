@@ -5,6 +5,7 @@
     phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>',
     mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 6-10 7L2 6"/></svg>',
   };
+  ICON.walk = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13" cy="4" r="2"/><path d="M9 21l2-7 3 3v5M7 12l3-4 4 2 3 3M10 8l1 6"/></svg>';
   const linkOut = (url, label) => `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label)}</a>`;
   // Only numbers with enough digits are made tappable (e.g. not "Local 101")
   const telLink = (phone) => {
@@ -24,6 +25,9 @@
     return;
   }
   const { entries, guides, maps, contact } = data;
+  const way = data.wayfinding || { points: [], paths: [] };
+  const wayPointById = new Map(way.points.map((p) => [p.id, p]));
+  const wayPoint = (e) => (e.way_point_id ? wayPointById.get(e.way_point_id) : null);
   const { clinics, this_month: thisMonth, next_month: nextMonth } = data.clinics;
   const mapById = new Map(maps.map((m) => [m.id, m]));
   const entryById = new Map(entries.map((e) => [e.id, e]));
@@ -59,6 +63,7 @@
       ${services.length ? `<details class="dir-services"><summary>Services (${services.length})</summary><ul class="list-tight">${services.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}
       <div class="dir-actions">
         ${hasPin(e) ? `<button type="button" class="btn sm" data-show-map="${e.id}">${ICON.pin} Show on map</button>` : ''}
+        ${wayPoint(e) ? `<button type="button" class="btn sm secondary" data-directions="${e.id}">${ICON.walk} Directions</button>` : ''}
         ${clinic ? `<a class="btn sm secondary" href="/book-opd?department=${encodeURIComponent(e.opd_code)}">Book appointment</a>` : ''}
         ${e.category === 'Office' && /records|hhims|health information/i.test(e.name) ? '<a class="btn sm secondary" href="/request-records">Request records</a>' : ''}
       </div>
@@ -195,17 +200,126 @@
       pin.addEventListener('click', () => highlight(p.id));
       $('#mapCanvas').appendChild(pin);
     });
+    $('#mapPlaces').classList.toggle('hidden', !places.length && way.points.some((p) => p.map_id === mapId));
     $('#mapPlaces').innerHTML = places.length
       ? places.map((p, i) => `<button type="button" data-place="${p.id}"><span>${i + 1}</span>${esc(p.name)}</button>`).join('')
       : '<p class="muted small">No places are marked on this map yet.</p>';
     setZoom(1);
-    viewer.showModal();
+    clearRoute();
+    if (!viewer.open) viewer.showModal();
     if (entryId) {
       const go = () => highlight(entryId);
       $('#mapImg').complete ? go() : $('#mapImg').addEventListener('load', go, { once: true });
     }
   }
+  // ---------- Find your way (digital wayfinding) ----------
+  const named = way.points.filter((p) => p.name);
+  const pointName = (p) => (p.kind === 'BUILDING' && p.code ? `${p.code}. ${p.name}` : p.name);
+  const placesAt = entries.filter((e) => wayPoint(e));
+  if (named.length) {
+    $('#directions').classList.remove('hidden');
+    const byName = (a, b) => pointName(a).localeCompare(pointName(b), 'en', { numeric: true });
+    const group = (label, list) => (list.length ? `<optgroup label="${esc(label)}">${list.join('')}</optgroup>` : '');
+    const opt = (value, text) => `<option value="${esc(value)}">${esc(text)}</option>`;
+    const starts = named.filter((p) => p.is_start);
+    const gates = named.filter((p) => p.kind === 'GATE' && !p.is_start);
+    const buildings = named.filter((p) => p.kind === 'BUILDING').sort(byName);
+    const landmarks = named.filter((p) => p.kind === 'LANDMARK' && !p.is_start);
+    $('#wfFrom').innerHTML =
+      group('Starting points', starts.map((p) => opt(`p${p.id}`, pointName(p)))) +
+      group('Gates', gates.map((p) => opt(`p${p.id}`, pointName(p)))) +
+      group('Landmarks', landmarks.map((p) => opt(`p${p.id}`, pointName(p)))) +
+      group('Buildings', buildings.map((p) => opt(`p${p.id}`, pointName(p))));
+    $('#wfTo').innerHTML +=
+      group('Departments, clinics & offices', placesAt.map((e) => opt(`e${e.id}`, `${e.name} — ${wayPoint(e).name}`))) +
+      group('Buildings', buildings.map((p) => opt(`p${p.id}`, pointName(p)))) +
+      group('Gates & landmarks', [...named.filter((p) => p.kind === 'GATE'), ...named.filter((p) => p.kind === 'LANDMARK')].map((p) => opt(`p${p.id}`, pointName(p))));
+    // A "You are here" sign opens this page with ?from=<point>
+    const params = new URLSearchParams(location.search);
+    const here = wayPointById.get(Number(params.get('from')));
+    if (here?.name) {
+      $('#wfFrom').value = `p${here.id}`;
+      $('#wfHere').innerHTML = `📍 <b>You are here:</b> ${esc(pointName(here))}. Choose where you want to go.`;
+      $('#wfHere').classList.remove('hidden');
+      if (!location.hash) setTimeout(() => $('#directions').scrollIntoView({ behavior: 'smooth' }), 100);
+    }
+    if (params.get('to')) $('#wfTo').value = params.get('to');
+  }
+  const pointOf = (v) => (v?.[0] === 'e' ? wayPoint(entryById.get(Number(v.slice(1)))) : wayPointById.get(Number(String(v || '').slice(1))));
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  function clearRoute() {
+    $('#mapRoute').classList.add('hidden');
+    $('#mapRoute').innerHTML = '';
+    $('#mapSteps').classList.add('hidden');
+    $$('#mapCanvas .mv-end').forEach((x) => x.remove());
+  }
+  const imageSize = (url) =>
+    new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+      img.onerror = () => resolve({ w: 4, h: 3 });
+      img.src = url;
+    });
+
+  async function showRoute() {
+    const from = pointOf($('#wfFrom').value);
+    const to = pointOf($('#wfTo').value);
+    const toLabel = $('#wfTo').selectedOptions[0]?.textContent || '';
+    if (!to) return $('#wfTo').focus();
+    if (!from) return $('#wfFrom').focus();
+    if (from.map_id !== to.map_id) return alert('These two places are on different maps. Please ask at the information desk for directions.');
+    const m = mapById.get(to.map_id);
+    const { w, h } = await imageSize(m.url);
+    const r = Wayfind.directions(way.points, way.paths, from.id, to.id, { ratio: h / w, widthM: m.width_m, stepFree: $('#wfStepFree').checked });
+    openMap(m.id);
+    if (!r.found) {
+      $('#mapSteps').innerHTML = `<div class="alert warn small" style="margin:0">No ${$('#wfStepFree').checked ? 'step-free ' : ''}walking route was found on the map. Please ask the guard or the information desk.</div>`;
+      $('#mapSteps').classList.remove('hidden');
+      return;
+    }
+    // Draw the route and the start/end markers
+    const pts = r.ids.map((id) => wayPointById.get(id));
+    const line = pts.map((p) => `${p.x},${p.y}`).join(' ');
+    $('#mapRoute').innerHTML = `<polyline class="halo" points="${line}" /><polyline class="path" points="${line}" />`;
+    $('#mapRoute').classList.remove('hidden');
+    for (const [p, cls, text] of [[from, 'start', 'A'], [to, 'end', 'B']]) {
+      const pin = document.createElement('span');
+      pin.className = `mv-end ${cls}`;
+      pin.style.left = `${p.x}%`;
+      pin.style.top = `${p.y}%`;
+      pin.textContent = text;
+      pin.title = pointName(p);
+      $('#mapCanvas').appendChild(pin);
+    }
+    $('#mapTitle').textContent = `Directions to ${toLabel.replace(/ — .*/, '')}`;
+    $('#mapSub').textContent = `${m.title}${r.meters !== null ? ` · about ${r.meters} m, ${r.minutes} min walk` : ''}${$('#wfStepFree').checked ? ' · step-free route' : ''}`;
+    $('#mapSteps').innerHTML = `<ol>${r.steps.map((t) => `<li>${esc(t)}</li>`).join('')}</ol>
+      <p class="muted small" style="margin:6px 0 0">${esc(m.description || '')}</p>`;
+    $('#mapSteps').classList.remove('hidden');
+    // Zoom so the whole route fits on screen, centred on it
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    requestAnimationFrame(() => {
+      const body = $('.mv-body');
+      const fitW = (0.8 * 100) / Math.max(8, x1 - x0);
+      const fitH = (0.8 * body.clientHeight * 100) / (Math.max(8, y1 - y0) * body.clientWidth * (h / w));
+      setZoom(Math.min(fitW, fitH));
+      requestAnimationFrame(() => {
+        const c = $('#mapCanvas');
+        body.scrollTo({ left: (((x0 + x1) / 2) / 100) * c.offsetWidth - body.clientWidth / 2, top: (((y0 + y1) / 2) / 100) * c.offsetHeight - body.clientHeight / 2, behavior: 'smooth' });
+      });
+    });
+  }
+  $('#wfGo').addEventListener('click', showRoute);
+
   document.addEventListener('click', (e) => {
+    const dir = e.target.closest('[data-directions]');
+    if (dir) {
+      $('#wfTo').value = `e${dir.dataset.directions}`;
+      return showRoute();
+    }
     const show = e.target.closest('[data-show-map]');
     if (show) {
       const entry = entryById.get(Number(show.dataset.showMap));

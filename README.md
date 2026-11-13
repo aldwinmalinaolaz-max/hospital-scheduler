@@ -187,6 +187,13 @@ Employees check in on **their own phones** at `/flag-ceremony` (home page → **
 
 GPS on a phone can be faked with special apps; the geofence, one-phone rule and optional selfie make cheating hard but not impossible, so spot checks at the venue are still worthwhile.
 
+### Digital Wayfinding System
+The Hospital Directory's **Find your way** section gives walking directions on the campus map. Visitors choose **From** (gates, the plaza, main buildings or any building) and **To** (a department, clinic or office linked to a building, or any building), optionally **Avoid stairs**, and tap **Show the way**: the map opens zoomed to the route (A → B, animated line) with numbered steps such as *Walk about 100 m, passing CENTRAL PLAZA, then turn right at the junction near NEW DIETARY BUILDING (Bldg. 7)*, plus the total distance and walking time. Directory cards linked to a building also get a **Directions** button. Routes are worked out in the visitor's browser (`public/js/wayfind.js`); they run along paths and never cut through a building or gate.
+
+- **Campus map:** the *ZRMC Campus Map* is cropped from the **Master Development Plan 2025** (title block, signatures and lot description left out) and loaded once into a new database (`seed/campus-map.jpg`, `src/wayfinding-seed.js`): the 35 existing buildings in the plan's legend (nos. 1–30, with 4A, 5A, 5B, 10A, 20A and 22A; no. 25 is not on the drawing), the main and back gates, the central plaza, and a path network traced along the existing roads and walkways. The plan's proposed projects (nos. 31–42) and DPWH roads are not destinations. The Emergency Room and the OPD clinics are linked to their buildings. The plan is *not to scale*: distances use an estimated map width of 315 m (adjust it in the editor).
+- **"You are here" QR signs:** each starting point gets an A5 sign with a QR code to `/directory?from=<point>`, which opens directions with that spot already chosen. Print them from the editor **on the live site**, so the QR codes carry its address.
+- **Staff Panel → Directory → map → Wayfinding** (Administrators): drag points; **Add points** (each click adds a point joined to the selected one, to trace a road); **Connect** / **Delete**; set a point's name, type (gate, building, landmark or junction), building no., *starting point* and the directory places inside it; mark paths with stairs; set the map's real width or **Measure scale** between two known points; **Print signs**. Changes are saved together with **Save wayfinding**.
+
 ### FAQ assistant
 Every public page has a **Questions? Ask us** button that opens a chat window. Visitors can tap a suggested question or type their own. The assistant picks the staff-written FAQ whose keywords best match the message, so it only ever gives answers you have approved.
 
@@ -245,6 +252,7 @@ src/
   scheduling.js   pickup-date & OPD slot availability
   reminders.js    background SMS reminder job
   idphotos.js     ID / selfie / receipt photos and the automatic ID check result
+  wayfinding.js   wayfinding: path network load/save, campus map seed (wayfinding-seed.js)
   flag.js         flag ceremony: settings, weekly ceremonies, geofence check, PIN helpers
   sms.js          SMS providers + logging
   messages.js     SMS templates

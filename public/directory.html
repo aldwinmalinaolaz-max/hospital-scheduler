@@ -31,7 +31,7 @@
   <p class="muted">Find departments, clinics and offices, their schedules and locations, and what to bring for common transactions.</p>
   <div class="alert info hidden" id="notice"></div>
   <nav class="dir-jump" aria-label="Sections">
-    <a href="#directory">Directory</a><a href="#schedules">Schedules</a><a href="#requirements">Requirements</a><a href="#contact">Contact</a><a href="#maps">Maps</a>
+    <a href="#directory">Directory</a><a href="#schedules">Schedules</a><a href="#requirements">Requirements</a><a href="#contact">Contact</a><a href="#directions">Directions</a><a href="#maps">Maps</a>
   </nav>
 
   <section id="directory" class="dir-section">
@@ -66,6 +66,20 @@
     <div class="card" id="contactCard"></div>
   </section>
 
+  <section id="directions" class="dir-section hidden">
+    <h2>Find your way</h2>
+    <div class="card wayfind">
+      <div class="alert info hidden" id="wfHere" role="status"></div>
+      <div class="grid grid-2">
+        <label class="field">From<select id="wfFrom"></select></label>
+        <label class="field">To<select id="wfTo"><option value="">Choose where you want to go…</option></select></label>
+      </div>
+      <label class="check"><input type="checkbox" id="wfStepFree"> Avoid stairs (wheelchair, stroller)</label>
+      <div class="dir-actions"><button class="btn" type="button" id="wfGo">Show the way</button></div>
+      <p class="muted small" id="wfHint" style="margin-bottom:0">Tip: scan a <b>"You are here"</b> QR sign on the hospital grounds to start from where you are.</p>
+    </div>
+  </section>
+
   <section id="maps" class="dir-section">
     <h2>Building &amp; service-area maps</h2>
     <div class="map-grid" id="mapGrid"></div>
@@ -81,7 +95,8 @@
       <button type="button" class="btn sm" id="mapClose">Close</button>
     </div>
   </div>
-  <div class="mv-body"><div class="mv-canvas" id="mapCanvas"><img id="mapImg" alt=""></div></div>
+  <div class="mv-body"><div class="mv-canvas" id="mapCanvas"><img id="mapImg" alt=""><svg class="mv-route hidden" id="mapRoute" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg></div></div>
+  <div class="mv-steps hidden" id="mapSteps" aria-live="polite"></div>
   <div class="mv-places" id="mapPlaces"></div>
 </dialog>
 <footer><span data-system>ZRMC ONE Hospital System</span> · <span data-hospital>Zamboanga Regional Medical Center</span> · <a href="/facility">Referring facility login</a> · <a href="/flag-ceremony">Flag ceremony check-in</a> · <a href="/admin">Staff login</a></footer>
@@ -89,5 +104,6 @@
 </div>
 <script src="/js/common.js"></script>
 <script src="/js/chat.js" defer></script>
+<script src="/js/wayfind.js"></script>
 <script src="/js/directory.js"></script>
 </body></html>

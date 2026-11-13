@@ -8,6 +8,7 @@ const { lock } = require('../db');
 const faq = require('../faq');
 const letter = require('../letter');
 const idphotos = require('../idphotos');
+const wayfinding = require('../wayfinding');
 const payments = require('../payments');
 const crypto = require('node:crypto');
 const directory = require('../directory');
@@ -361,11 +362,11 @@ module.exports = function publicRoutes(db) {
   router.get('/directory', async (req, res) => {
     const [entries, guides, maps, info] = await Promise.all([
       db.query(
-        `SELECT id, name, category, description, location, hours, phone, email, services, keywords, opd_code, map_id, pin_x, pin_y
+        `SELECT id, name, category, description, location, hours, phone, email, services, keywords, opd_code, map_id, pin_x, pin_y, way_point_id
          FROM directory_entries WHERE active ORDER BY sort_order, name`,
       ),
       db.query('SELECT id, title, summary, steps, requirements, office_id, link_url, link_label FROM guides WHERE active ORDER BY sort_order, title'),
-      db.query("SELECT id, title, description, extract(epoch FROM updated_at)::bigint AS v FROM maps ORDER BY sort_order, title"),
+      db.query("SELECT id, title, description, width_m, extract(epoch FROM updated_at)::bigint AS v FROM maps ORDER BY sort_order, title"),
       db.query("SELECT key, value FROM site_info WHERE value <> ''"),
     ]);
     const contact = Object.fromEntries(info.map((r) => [r.key, r.value]));
@@ -376,7 +377,8 @@ module.exports = function publicRoutes(db) {
       systemName: config.systemName,
       entries,
       guides,
-      maps: maps.map((m) => ({ id: m.id, title: m.title, description: m.description, url: `/api/maps/${m.id}/image?v=${m.v}` })),
+      maps: maps.map((m) => ({ id: m.id, title: m.title, description: m.description, width_m: m.width_m, url: `/api/maps/${m.id}/image?v=${m.v}` })),
+      wayfinding: await wayfinding.publicGraph(db),
       contact,
       clinics: await directory.clinicSchedules(db),
     });

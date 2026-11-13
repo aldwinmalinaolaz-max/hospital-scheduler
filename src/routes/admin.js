@@ -16,6 +16,7 @@ const registerReferralRoutes = require('./adminReferrals');
 const registerFlagRoutes = require('./adminFlag');
 const payments = require('../payments');
 const idphotos = require('../idphotos');
+const wayfinding = require('../wayfinding');
 
 const COOKIE = 'hs_admin';
 
@@ -875,6 +876,27 @@ module.exports = function adminRoutes(db) {
     );
     res.json(mapMeta(row));
   });
+  // Wayfinding network of a map (points, paths, which directory places are where)
+  router.get('/wayfinding/:mapId', adminOnly, async (req, res) => {
+    const m = await db.one('SELECT id, title, width_m FROM maps WHERE id = $1', [Number(req.params.mapId) || 0]);
+    if (!m) return res.status(404).json({ error: 'Map not found.' });
+    res.json({ map: m, ...(await wayfinding.mapGraph(db, m.id)) });
+  });
+
+  router.put('/wayfinding/:mapId', adminOnly, async (req, res) => {
+    const m = await db.one('SELECT id FROM maps WHERE id = $1', [Number(req.params.mapId) || 0]);
+    if (!m) return res.status(404).json({ error: 'Map not found.' });
+    const [g, err] = wayfinding.cleanGraph(req.body || {});
+    if (err) throw new ValidationError(err);
+    try {
+      await db.tx((t) => wayfinding.saveGraph(t, m.id, g, req.user.username));
+    } catch (e) {
+      if (e.validation) throw new ValidationError(e.message);
+      throw e;
+    }
+    res.json({ ok: true, ...(await wayfinding.mapGraph(db, m.id)) });
+  });
+
   router.delete('/maps/:id', adminOnly, async (req, res) => {
     // Entries on this map keep their details but lose the pin
     await db.query('UPDATE directory_entries SET pin_x = NULL, pin_y = NULL WHERE map_id = $1', [Number(req.params.id)]);
