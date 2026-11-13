@@ -28,7 +28,7 @@ function createApp(db) {
   const smallJson = express.json({ limit: '100kb' });
   const photoJson = express.json({ limit: '6mb' });
   const carriesPhotos = (req) =>
-    req.method === 'POST' && (req.path === '/api/records' || req.path === '/api/track/id-photos');
+    req.method === 'POST' && (req.path === '/api/records' || req.path === '/api/track/id-photos' || req.path === '/api/admin/flag/employees/import');
   app.use((req, res, next) => {
     // These routes parse their own bodies (uploads need a larger limit)
     if (req.path.startsWith('/api/admin/maps') || req.path === '/api/admin/payment-qr' || req.path.startsWith('/api/facility/') || req.path.startsWith('/api/flag/')) return next();

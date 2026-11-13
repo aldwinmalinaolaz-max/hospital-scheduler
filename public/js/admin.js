@@ -2115,35 +2115,155 @@ ${cat.hospitalName}`;
       { saveLabel: 'Reset PIN' },
     );
   });
-  $('#flagImportBtn').addEventListener('click', () =>
+  // ---------- Import employees from Excel / CSV / pasted list ----------
+  const IMPORT_FIELDS = [
+    ['employee_no', 'Employee no.', /employee\s*(no|num|number|#|id)|^emp\.?\s*(no|id)|^id\s*(no|number)?\.?$|^(no|number)\.?$/i],
+    ['last_name', 'Last name', /last|surname|family/i],
+    ['first_name', 'First name', /first|given/i],
+    ['middle_name', 'Middle name', /middle/i],
+    ['position', 'Position', /position|designation|job\s*title|^title$/i],
+    ['division', 'Division', /division|department|^service$/i],
+    ['unit', 'Unit', /unit|section|ward|office/i],
+    ['employment_type', 'Employment type', /employment|plantilla|job\s*order|status|^type$/i],
+  ];
+  // Matches the header row to the fields (any column order); without headers, the standard order
+  function rowsToEmployees(rows) {
+    const firstFilled = rows.findIndex((r) => r.some((c) => String(c || '').trim()));
+    if (firstFilled < 0) return { list: [], mapping: null };
+    const head = rows[firstFilled].map((c) => String(c || '').trim());
+    const map = {};
+    head.forEach((h, i) => {
+      if (!h) return;
+      // Employment type first, so "Employment status" is not read as the employee no.
+      const f = [IMPORT_FIELDS[7], ...IMPORT_FIELDS.slice(0, 7)].find(([key, , re]) => map[key] === undefined && re.test(h));
+      if (f) map[f[0]] = i;
+    });
+    const hasHeader = Object.keys(map).length >= 2 && map.employee_no !== undefined;
+    const cols = hasHeader ? map : Object.fromEntries(IMPORT_FIELDS.map(([k], i) => [k, i]));
+    const list = [];
+    rows.forEach((r, i) => {
+      if (i < firstFilled + (hasHeader ? 1 : 0) || !r.some((c) => String(c || '').trim())) return;
+      const e = { line: i + 1 };
+      for (const [k] of IMPORT_FIELDS) e[k] = cols[k] === undefined ? '' : String(r[cols[k]] ?? '').trim();
+      list.push(e);
+    });
+    return { list, mapping: hasHeader ? map : null, head };
+  }
+
+  const pinListDialog = (rows, skipped) =>
+    openDialog(
+      `<h2>${rows.length} employee${rows.length === 1 ? '' : 's'} imported</h2>
+       ${skipped.length ? `<p class="small">${skipped.length} already in the list and left as they are: ${esc(skipped.slice(0, 20).join(', '))}${skipped.length > 20 ? '…' : ''}</p>` : ''}
+       <p class="muted small">Print this list and give each employee their PIN privately. The PINs are not shown again. Employees sign in at <b>${esc(location.host)}/flag-ceremony</b>.</p>
+       <div class="table-wrap"><table><thead><tr><th>Employee no.</th><th>Name</th><th>Division / unit</th><th>PIN</th></tr></thead><tbody>
+       ${rows.map((r) => `<tr><td class="mono">${esc(r.employee_no)}</td><td>${esc(r.name)}</td><td class="small">${esc([r.division, r.unit].filter(Boolean).join(' / '))}</td><td class="mono"><b>${esc(r.pin)}</b></td></tr>`).join('')}
+       </tbody></table></div>`,
+      async () => window.print(),
+      { wide: true, saveLabel: 'Print' },
+    );
+
+  function downloadTemplate() {
+    const csv = `﻿${IMPORT_FIELDS.map(([, l]) => l).join(',')}\r\n2023-0001,DELA CRUZ,JUAN,SANTOS,NURSE II,NURSING SERVICE DIVISION,EMERGENCY ROOM,PLANTILLA\r\n2023-0002,REYES,ANA,,ADMINISTRATIVE AIDE,HOSPITAL OPERATIONS AND PATIENT SUPPORT SERVICES,HHIMS,JOB ORDER\r\n`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = 'employee-import-template.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  $('#flagImportBtn').addEventListener('click', () => {
+    let parsed = { list: [] };
     openDialog(
       `<h2>Import employees</h2>
-       <p class="muted small">Paste from Excel or a CSV file, one employee per line, in this column order:<br>
-       <b>Employee no., Last name, First name, Middle name, Position, Division, Unit, Employment type</b> (Plantilla or Job Order / JO; optional). Division must be ${esc((flagOpts?.division_choices || []).join(', '))} (short forms work too, e.g. "Nursing" is read as NURSING SERVICE DIVISION). A header row is skipped. Each employee gets a random 6-digit PIN, listed after the import for printing.</p>
-       <textarea name="csv" rows="10" data-nocaps placeholder="2023-0001, DELA CRUZ, JUAN, SANTOS, NURSE II, NURSING, EMERGENCY ROOM, PLANTILLA" required></textarea>`,
-      async (d) => {
-        const { rows } = await api('/admin/flag/employees/import', { method: 'POST', body: { csv: d.csv } });
+       <p class="muted small">Choose an <b>Excel file (.xlsx)</b> or CSV. The first row should have column titles; columns can be in any order:
+       <b>${IMPORT_FIELDS.map(([, l]) => l).join(', ')}</b> (middle name, position, division, unit and employment type are optional).
+       Division must be one of: ${esc((flagOpts?.division_choices || []).join(', '))} (short forms such as "Nursing" work). Employment type: Plantilla or Job Order (JO).
+       <a href="#" id="impTemplate">Download a template</a>.</p>
+       <label class="field">Excel or CSV file<input type="file" id="impFile" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"></label>
+       <details><summary class="small">Or paste the list instead</summary>
+         <textarea id="impPaste" rows="6" data-nocaps placeholder="Copy the rows (with the title row) from Excel and paste here"></textarea></details>
+       <label class="check" style="margin-top:8px"><input type="checkbox" id="impSkip"> Skip employees already in the list (same employee no.) instead of stopping</label>
+       <div id="impPreview" class="small" style="margin-top:8px"></div>
+       <div id="impProgress" class="small" aria-live="polite"></div>
+       <div class="alert error hidden" id="impErrors"></div>`,
+      async () => {
+        if (!parsed.list.length) throw new Error('Choose an Excel file or paste the list first.');
+        const errBox = $('#impErrors');
+        errBox.classList.add('hidden');
+        const skip = $('#impSkip').checked;
+        const progress = $('#impProgress');
+        const btn = $('#dlgForm [value=save]');
+        btn.disabled = true;
+        const created = [];
+        let skipped = [];
+        try {
+          // 1. Check everything first: nothing is imported if any row has a problem
+          progress.textContent = `Checking ${parsed.list.length} employees…`;
+          try {
+            await api('/admin/flag/employees/import', { method: 'POST', body: { rows: parsed.list, dry_run: true, skip_existing: skip } });
+          } catch (err) {
+            const data = err.data || {};
+            errBox.innerHTML = `<b>${esc(err.message)}</b>${data.errors ? `<ul class="list-tight">${data.errors.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}`;
+            errBox.classList.remove('hidden');
+            progress.textContent = '';
+            throw Object.assign(new Error(''), { shown: true });
+          }
+          // 2. Import in batches, so no single request takes too long
+          const BATCH = 100;
+          for (let i = 0; i < parsed.list.length; i += BATCH) {
+            progress.textContent = `Importing… ${Math.min(i + BATCH, parsed.list.length)} of ${parsed.list.length}`;
+            const r = await api('/admin/flag/employees/import', { method: 'POST', body: { rows: parsed.list.slice(i, i + BATCH), skip_existing: skip } });
+            created.push(...r.rows);
+            skipped = skipped.concat(r.skipped || []);
+          }
+        } catch (err) {
+          btn.disabled = false;
+          if (created.length) {
+            // Some batches went in: show their PINs; the rest can be imported again with "Skip"
+            await loadFlagOptions(true);
+            flagLoaders.employees();
+            setTimeout(() => pinListDialog(created, skipped), 0);
+            alert(`${created.length} employees were imported before the import stopped (${err.message || 'connection problem'}). Import the same file again with "Skip employees already in the list" ticked to add the rest.`);
+            return;
+          }
+          if (err.shown) throw Object.assign(new Error('Fix the problems listed above in the file, then choose it again.'), {});
+          throw err;
+        }
         await loadFlagOptions(true);
         flagLoaders.employees();
-        setTimeout(
-          () =>
-            openDialog(
-              `<h2>${rows.length} employee${rows.length === 1 ? '' : 's'} imported</h2>
-               <p class="muted small">Print this list and give each employee their PIN privately. The PINs are not shown again. Employees sign in at <b>${esc(location.host)}/flag-ceremony</b>.</p>
-               <div class="table-wrap"><table><thead><tr><th>Employee no.</th><th>Name</th><th>Division / unit</th><th>PIN</th></tr></thead><tbody>
-               ${rows.map((r) => `<tr><td class="mono">${esc(r.employee_no)}</td><td>${esc(r.name)}</td><td class="small">${esc([r.division, r.unit].filter(Boolean).join(' / '))}</td><td class="mono"><b>${esc(r.pin)}</b></td></tr>`).join('')}
-               </tbody></table></div>`,
-              async () => window.print(),
-              { wide: true, saveLabel: 'Print' },
-            ),
-          0,
-        );
+        setTimeout(() => pinListDialog(created, skipped), 0);
       },
       { wide: true, saveLabel: 'Import' },
-    ),
-  );
-
-
+    );
+    const show = (result, source) => {
+      parsed = result;
+      showError($('#dlgError'), ''); // a message about an earlier file no longer applies
+      const { list, mapping, head } = result;
+      const preview = $('#impPreview');
+      if (!list.length) return (preview.innerHTML = '<span style="color:var(--danger)">No employees found.</span>');
+      const cols = IMPORT_FIELDS.filter(([k]) => list.some((e) => e[k]));
+      preview.innerHTML = `<b>${list.length} employee${list.length === 1 ? '' : 's'}</b> found in ${esc(source)}.
+        ${mapping ? `Columns read: ${IMPORT_FIELDS.filter(([k]) => mapping[k] !== undefined).map(([k, l]) => `${esc(l)} ← “${esc(head[mapping[k]])}”`).join(', ')}.` : 'No title row found, so the standard column order is used.'}
+        <div class="table-wrap" style="margin-top:6px"><table><thead><tr><th>Row</th>${cols.map(([, l]) => `<th>${esc(l)}</th>`).join('')}</tr></thead><tbody>
+        ${list.slice(0, 5).map((e) => `<tr><td>${e.line}</td>${cols.map(([k]) => `<td>${esc(e[k])}</td>`).join('')}</tr>`).join('')}
+        </tbody></table></div>${list.length > 5 ? `<span class="muted">…and ${list.length - 5} more</span>` : ''}`;
+      $('#impErrors').classList.add('hidden');
+    };
+    $('#impTemplate').addEventListener('click', (e) => (e.preventDefault(), downloadTemplate()));
+    $('#impFile').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      $('#impPreview').textContent = 'Reading the file…';
+      try {
+        const { rows, sheet } = await SheetRead.readFile(file);
+        show(rowsToEmployees(rows), `${file.name}${sheet ? ` (sheet “${sheet}”)` : ''}`);
+      } catch (err) {
+        parsed = { list: [] };
+        $('#impPreview').innerHTML = `<span style="color:var(--danger)">${esc(err.message)}</span>`;
+      }
+    });
+    $('#impPaste').addEventListener('input', debounce(() => show(rowsToEmployees(SheetRead.parseDelimited($('#impPaste').value)), 'the pasted list')));
+  });
 
   // ---------- Division and unit names ----------
   async function namesDialog() {

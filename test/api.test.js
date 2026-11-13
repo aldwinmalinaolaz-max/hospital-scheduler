@@ -1629,6 +1629,48 @@ test('public services can be turned on and off', async () => {
   assert.equal((await call('/faq')).status, 200);
 });
 
+test('employee import: check first, list every problem, fast batches, skip existing', async () => {
+  const admin = await login();
+  const imp = (body) => call('/admin/flag/employees/import', { method: 'POST', cookie: admin, body });
+  const row = (n, extra = {}) => ({ line: n + 1, employee_no: `IM-${String(n).padStart(4, '0')}`, last_name: 'test', first_name: `person ${n}`, division: 'nursing', unit: 'ward 3', employment_type: 'jo', ...extra });
+
+  // Problems are all listed and nothing is saved
+  const bad = await imp({ dry_run: true, rows: [row(1), row(2, { last_name: '' }), row(3, { division: 'radiology' }), row(1), row(4, { employment_type: 'casual' })] });
+  assert.equal(bad.status, 400);
+  assert.match(bad.data.error, /4 problems found\. Nothing was imported\./);
+  assert.equal(bad.data.errors.length, 4);
+  assert.match(bad.data.errors[0], /^Row 3 \(IM-0002\): Please enter the employee's last name\./);
+  assert.match(bad.data.errors[1], /^Row 4 \(IM-0003\): Division must be one of/);
+  assert.match(bad.data.errors[2], /^Row 2: employee no\. IM-0001 is also on row 2\./);
+  assert.match(bad.data.errors[3], /Employment type must be Plantilla or Job Order/);
+  assert.equal((await db.one("SELECT COUNT(*)::int AS n FROM employees WHERE employee_no LIKE 'IM-%'")).n, 0);
+
+  // A full batch of 250 goes in quickly, with one PIN each
+  const list = Array.from({ length: 250 }, (_, i) => row(i));
+  assert.deepEqual((await imp({ dry_run: true, rows: list })).data, { ok: true, count: 250, skipped: [] });
+  const t0 = Date.now();
+  const done = await imp({ rows: list });
+  const ms = Date.now() - t0;
+  assert.equal(done.status, 201);
+  assert.equal(done.data.rows.length, 250);
+  assert.ok(ms < 10000, `took ${ms} ms`);
+  assert.ok(done.data.rows.every((r) => /^\d{6}$/.test(r.pin) && r.division === 'NURSING SERVICE DIVISION' && r.employment_type === 'JOB_ORDER'));
+  assert.equal(new Set(done.data.rows.map((r) => r.employee_no)).size, 250);
+  // The PINs work
+  const first = done.data.rows.find((r) => r.employee_no === 'IM-0000');
+  assert.equal((await call('/flag/login', { method: 'POST', body: { employee_no: 'IM-0000', pin: first.pin } })).status, 200);
+
+  // Batches are limited; existing employees stop the import unless skipped
+  assert.match((await imp({ rows: Array.from({ length: 251 }, (_, i) => row(1000 + i)) })).data.error, /at most 250/);
+  const again = await imp({ dry_run: true, rows: [row(0), row(300)] });
+  assert.match(again.data.errors[0], /IM-0000 is already in the list/);
+  const skipped = await imp({ rows: [row(0), row(300)], skip_existing: true });
+  assert.deepEqual(skipped.data.skipped, ['IM-0000']);
+  assert.deepEqual(skipped.data.rows.map((r) => r.employee_no), ['IM-0300']);
+  // The pasted-text form still works
+  assert.equal((await imp({ csv: 'IM-0400,PASTE,ONE,,,Nursing,Ward 1,Plantilla' })).data.rows[0].employment_type, 'PLANTILLA');
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');

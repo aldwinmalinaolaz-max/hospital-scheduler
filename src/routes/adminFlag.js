@@ -562,27 +562,69 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     res.json({ ...presentEmployee(e), pin });
   });
 
-  // Adds many employees at once from a pasted list; each gets a random PIN shown once
+  // Adds many employees at once (from an Excel file, CSV or pasted list); each gets a random PIN
+  // shown once. The page first sends the whole list with dry_run to check it (nothing is saved if
+  // anything is wrong, and every problem is listed), then sends it in batches of up to 250 so each
+  // request stays well within the hosting time limit.
+  const IMPORT_BATCH = 250;
   router.post('/flag/employees/import', can, async (req, res) => {
-    const list = flag.parseCsv(req.body?.csv);
-    if (!list.length) throw new ValidationError(`Paste at least one employee: ${flag.IMPORT_COLUMNS.join(', ')}.`);
-    if (list.length > 2000) throw new ValidationError('Import at most 2,000 employees at a time.');
+    const b = req.body || {};
+    const list = Array.isArray(b.rows)
+      ? b.rows.map((r, i) => ({ ...Object.fromEntries(flag.IMPORT_COLUMNS.map((k) => [k, String(r?.[k] ?? '').trim()])), line: Number(r?.line) || i + 1 }))
+      : flag.parseCsv(b.csv).map((r, i) => ({ ...r, line: i + 1 }));
+    if (!list.length) throw new ValidationError('No employees found. Choose an Excel file or paste the list.');
+    if (list.length > 5000) throw new ValidationError('Import at most 5,000 employees at a time.');
+    if (!b.dry_run && list.length > IMPORT_BATCH) throw new ValidationError(`Send at most ${IMPORT_BATCH} employees per batch.`);
     const divisions = await flag.getDivisions(db);
-    const created = await db.tx(async (t) => {
-      const out = [];
-      for (const [i, row] of list.entries()) {
-        const [v, err] = flag.cleanEmployee(row, { divisions });
-        if (err) throw new ValidationError(`Line ${i + 1} (${row.employee_no || 'no employee no.'}): ${err} Nothing was imported.`);
-        const pin = flag.randomPin();
-        try {
-          out.push({ ...presentEmployee(await insertEmployee(t, v, pin, req.user.username)), pin });
-        } catch (e) {
-          if (e instanceof ValidationError) e.message = `Line ${i + 1}: ${e.message} Nothing was imported.`;
-          throw e;
-        }
+    const errors = [];
+    const ok = [];
+    const seen = new Map();
+    for (const r of list) {
+      const [v, err] = flag.cleanEmployee(r, { divisions });
+      if (err) {
+        errors.push(`Row ${r.line}${r.employee_no ? ` (${r.employee_no})` : ''}: ${err}`);
+        continue;
       }
-      return out;
+      if (seen.has(v.employee_no)) {
+        errors.push(`Row ${r.line}: employee no. ${v.employee_no} is also on row ${seen.get(v.employee_no)}.`);
+        continue;
+      }
+      seen.set(v.employee_no, r.line);
+      ok.push({ ...v, line: r.line });
+    }
+    const existing = new Set(
+      (await db.query('SELECT employee_no FROM employees WHERE employee_no = ANY($1::text[])', [ok.map((v) => v.employee_no)])).map((r) => r.employee_no),
+    );
+    const skipped = b.skip_existing ? ok.filter((v) => existing.has(v.employee_no)).map((v) => v.employee_no) : [];
+    const toAdd = ok.filter((v) => !existing.has(v.employee_no));
+    if (!b.skip_existing) {
+      for (const v of ok) if (existing.has(v.employee_no)) errors.push(`Row ${v.line}: employee no. ${v.employee_no} is already in the list.`);
+    }
+    if (errors.length) {
+      return res.status(400).json({ error: `${errors.length} problem${errors.length === 1 ? '' : 's'} found. Nothing was imported.`, errors: errors.slice(0, 200) });
+    }
+    if (b.dry_run) return res.json({ ok: true, count: toAdd.length, skipped });
+    if (!toAdd.length) return res.status(201).json({ rows: [], skipped });
+
+    const pins = toAdd.map(() => flag.randomPin());
+    const hashes = await Promise.all(pins.map((p) => auth.hashPasswordAsync(p)));
+    const cols = ['employee_no', 'last_name', 'first_name', 'middle_name', 'position', 'department', 'unit', 'flag_required', 'pin_hash', 'updated_by', 'employment_type'];
+    const params = [];
+    const values = toAdd.map((v, i) => {
+      const row = [v.employee_no, v.last_name, v.first_name, v.middle_name ?? null, v.position ?? null, v.department ?? null, v.unit ?? null,
+        v.flag_required ?? true, hashes[i], req.user.username, v.employment_type ?? null];
+      params.push(...row);
+      return `(${row.map((_, c) => `$${params.length - row.length + c + 1}`).join(', ')})`;
     });
-    res.status(201).json({ rows: created });
+    // One statement for the whole batch; a number added meanwhile by someone else is skipped
+    const inserted = await db.query(
+      `INSERT INTO employees (${cols.join(', ')}) VALUES ${values.join(', ')} ON CONFLICT (employee_no) DO NOTHING RETURNING *`,
+      params,
+    );
+    const pinOf = new Map(toAdd.map((v, i) => [v.employee_no, pins[i]]));
+    res.status(201).json({
+      rows: inserted.map((e) => ({ ...presentEmployee(e), pin: pinOf.get(e.employee_no) })),
+      skipped: [...skipped, ...toAdd.filter((v) => !inserted.some((e) => e.employee_no === v.employee_no)).map((v) => v.employee_no)],
+    });
   });
 };

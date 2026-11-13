@@ -8,6 +8,14 @@ function hashPassword(password) {
   return `${salt}:${hash}`;
 }
 
+// Same hash as hashPassword, computed off the main thread (many at once, e.g. PINs for an import)
+function hashPasswordAsync(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return new Promise((resolve, reject) =>
+    crypto.scrypt(password, salt, 64, (err, key) => (err ? reject(err) : resolve(`${salt}:${key.toString('hex')}`))),
+  );
+}
+
 function verifyPassword(password, stored) {
   const [salt, hash] = stored.split(':');
   const candidate = crypto.scryptSync(password, salt, 64);
@@ -46,4 +54,4 @@ function parseCookies(header = '') {
   );
 }
 
-module.exports = { hashPassword, verifyPassword, createToken, readToken, parseCookies, SESSION_HOURS };
+module.exports = { hashPassword, hashPasswordAsync, verifyPassword, createToken, readToken, parseCookies, SESSION_HOURS };
