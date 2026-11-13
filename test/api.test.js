@@ -1072,9 +1072,21 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.equal((await p2('/flag/login', { method: 'POST', body: { employee_no: ana.employee_no, pin: ana.pin } })).status, 423);
   assert.equal((await call('/admin/flag/employees?q=reyes', { cookie: hr })).data.rows[0].locked, true);
   const reset = await call(`/admin/flag/employees/${ana.id}/pin`, { method: 'POST', cookie: hr, body: {} });
-  assert.match(reset.data.pin, /^\d{6}$/);
-  assert.equal((await p2('/flag/login', { method: 'POST', body: { employee_no: ana.employee_no, pin: reset.data.pin } })).status, 200);
+  assert.equal(reset.data.pin, '123456'); // the default PIN
+  assert.equal(reset.data.pin_must_change, true);
+  const anaLogin = await p2('/flag/login', { method: 'POST', body: { employee_no: ana.employee_no, pin: reset.data.pin } });
+  assert.equal(anaLogin.status, 200);
+  assert.equal(anaLogin.data.must_change_pin, true);
   assert.equal((await p1('/flag/login', { method: 'POST', body: { employee_no: '2023-0001', pin: '123456' } })).status, 200);
+  // A PIN set by HR must be replaced before checking in; easy PINs are refused
+  assert.equal((await p1('/flag/me')).data.employee.must_change_pin, true);
+  assert.match((await p1('/flag/pin', { method: 'POST', body: { pin: '123456', new_pin: '123456' } })).data.error, /default PIN/);
+  assert.match((await p1('/flag/pin', { method: 'POST', body: { pin: '123456', new_pin: '111111' } })).data.error, /too easy/);
+  assert.match((await p1('/flag/pin', { method: 'POST', body: { pin: '123456', new_pin: '345678' } })).data.error, /too easy/);
+  assert.equal((await p1('/flag/pin', { method: 'POST', body: { pin: '123456', new_pin: '482913' } })).status, 200);
+  assert.equal((await p1('/flag/me')).data.employee.must_change_pin, false);
+  assert.equal((await p2('/flag/pin', { method: 'POST', body: { pin: '123456', new_pin: '739104' } })).status, 200);
+  assert.equal((await call('/admin/flag/employees?pin=default', { cookie: hr })).data.rows.some((e) => e.id === ana.id), false);
   const me1 = (await p1('/flag/me')).data;
   assert.equal(me1.employee.name, 'DELA CRUZ, JUAN S.');
   assert.deepEqual(me1.center, VENUE);
@@ -1114,6 +1126,8 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   await p1('/flag/logout', { method: 'POST' });
   assert.equal((await p1('/flag/me')).data.employee, null);
   assert.equal((await p1('/flag/login', { method: 'POST', body: { employee_no: maria.employee_no, pin: maria.pin } })).status, 200);
+  assert.equal((await checkin(p1, open.id, here)).status, 403); // must set her own PIN first
+  assert.equal((await p1('/flag/pin', { method: 'POST', body: { pin: maria.pin, new_pin: '602847' } })).status, 200);
   const buddy = await checkin(p1, open.id, here);
   assert.equal(buddy.status, 409);
   assert.match(buddy.data.error, /already used to check in employee no\. 2023-0001/);
@@ -1224,16 +1238,16 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   assert.equal((await db.one('SELECT status FROM flag_checkins WHERE ceremony_id = $1', [lateCer.id])).status, 'ON_TIME');
 
   // Employee changes their PIN: wrong current PIN, bad new PIN, then OK (this phone stays signed in)
-  assert.equal((await p2('/flag/pin', { method: 'POST', body: { pin: '000000', new_pin: '654321' } })).status, 401);
-  assert.equal((await p2('/flag/pin', { method: 'POST', body: { pin: reset.data.pin, new_pin: '12' } })).status, 400);
-  assert.equal((await p2('/flag/pin', { method: 'POST', body: { pin: reset.data.pin, new_pin: '654321' } })).status, 200);
+  assert.equal((await p2('/flag/pin', { method: 'POST', body: { pin: '000000', new_pin: '581736' } })).status, 401);
+  assert.equal((await p2('/flag/pin', { method: 'POST', body: { pin: '739104', new_pin: '12' } })).status, 400);
+  assert.equal((await p2('/flag/pin', { method: 'POST', body: { pin: '739104', new_pin: '581736' } })).status, 200);
   assert.equal((await p2('/flag/me')).data.employee.employee_no, '2023-0002');
-  assert.equal((await phone()('/flag/login', { method: 'POST', body: { employee_no: '2023-0002', pin: '654321' } })).status, 200);
+  assert.equal((await phone()('/flag/login', { method: 'POST', body: { employee_no: '2023-0002', pin: '581736' } })).status, 200);
 
   // Deactivating signs the employee out of their phone
   assert.equal((await call(`/admin/flag/employees/${ana.id}`, { method: 'PATCH', cookie: hr, body: { active: false } })).data.active, false);
   assert.equal((await p2('/flag/me')).data.employee, null);
-  assert.equal((await p2('/flag/login', { method: 'POST', body: { employee_no: '2023-0002', pin: '654321' } })).status, 403);
+  assert.equal((await p2('/flag/login', { method: 'POST', body: { employee_no: '2023-0002', pin: '581736' } })).status, 403);
 
   // Changing the weekly schedule rebuilds upcoming weekly ceremonies that nobody has checked in to
   await put({ schedule: [{ weekday: 1, title: 'flag raising', opens: '06:30', starts: '07:30', closes: '08:30' }] });
@@ -1289,7 +1303,10 @@ test('flag ceremony: move a date for a holiday, remarks for bad weather', async 
 
   // Employees see the move
   const ph = await call('/flag/login', { method: 'POST', body: { employee_no: 'MV-0001', pin: '246810' } });
-  const cookie = ph.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+  const firstCookie = ph.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+  // Set their own PIN first (the response signs this phone in again)
+  const own = await call('/flag/pin', { method: 'POST', cookie: firstCookie, body: { pin: '246810', new_pin: '913572' } });
+  const cookie = [firstCookie.split('; ').find((c) => c.startsWith('hs_dev=')), ...own.headers.getSetCookie().map((c) => c.split(';')[0])].filter(Boolean).join('; ');
   const tryOld = await call('/flag/checkin', { method: 'POST', cookie, body: { ceremony_id: cer.id, lat: 6.9076, lng: 122.079, accuracy: 10 } });
   assert.match(tryOld.data.error, /moved to .*\(HOLIDAY: BONIFACIO DAY\)/);
   const me = (await call('/flag/me', { cookie })).data;
@@ -1680,6 +1697,34 @@ test('employee import: check first, list every problem, fast batches, skip exist
   assert.ok(require('../src/flag').qrCandidates('NAME: X\nID NO. 2022-P-0046').includes('2022-P-0046'));
   // The pasted-text form still works
   assert.equal((await imp({ csv: 'IM-0400,PASTE,ONE,,,Nursing,Ward 1,Plantilla' })).data.rows[0].employment_type, 'PLANTILLA');
+});
+
+test('flag ceremony: default PIN 123456, changed by the employee after signing in', async () => {
+  const admin = await login();
+  // New employees (added or imported) start with the default PIN and must change it
+  const added = (await call('/admin/flag/employees', { method: 'POST', cookie: admin, body: { employee_no: 'DP-0001', last_name: 'default', first_name: 'pin' } })).data;
+  assert.equal(added.pin, '123456');
+  assert.equal(added.pin_must_change, true);
+  const imported = (await call('/admin/flag/employees/import', { method: 'POST', cookie: admin, body: { rows: [{ employee_no: 'DP-0002', last_name: 'b', first_name: 'c' }] } })).data.rows[0];
+  assert.deepEqual([imported.pin, imported.pin_must_change], ['123456', true]);
+  const defaults = (await call('/admin/flag/employees?pin=default&q=DP-', { cookie: admin })).data.rows.map((e) => e.employee_no).sort();
+  assert.deepEqual(defaults, ['DP-0001', 'DP-0002']);
+  assert.equal((await call('/admin/flag/options', { cookie: admin })).data.default_pin, '123456');
+
+  // The one-time update gives everyone the default PIN again and signs them out
+  const signIn = (no, pin) => call('/flag/login', { method: 'POST', body: { employee_no: no, pin } });
+  const r = await signIn('DP-0001', '123456');
+  const c1 = r.headers.getSetCookie().map((x) => x.split(';')[0]).join('; ');
+  const own = await call('/flag/pin', { method: 'POST', cookie: c1, body: { pin: '123456', new_pin: '275196' } });
+  assert.equal(own.status, 200);
+  assert.equal((await signIn('DP-0001', '123456')).status, 401);
+  await db.query("DELETE FROM schema_migrations WHERE id = '2026-11-13-flag-default-pins'");
+  await db.tx((t) => require('../src/db').runMigrations(t));
+  assert.equal((await signIn('DP-0001', '275196')).status, 401);
+  const again = await signIn('DP-0001', '123456');
+  assert.deepEqual([again.status, again.data.must_change_pin], [200, true]);
+  const count = await db.one('SELECT COUNT(*)::int AS n FROM employees WHERE NOT pin_must_change');
+  assert.equal(count.n, 0);
 });
 
 test('mobile normalisation', () => {

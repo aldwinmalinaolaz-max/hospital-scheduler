@@ -38,6 +38,19 @@
     if (!me.employee) return stopGps();
     $('#empName').textContent = me.employee.name;
     $('#empMeta').textContent = [me.employee.employee_no, me.employee.division, me.employee.unit].filter(Boolean).join(' · ');
+    // Still on the PIN given by HR: choosing their own comes first
+    const first = !!me.employee.must_change_pin;
+    show('#pinFirst', first);
+    $('#pinTitle').textContent = first ? 'Set your own PIN' : 'Change my PIN';
+    show('#pinCancel', !first);
+    show('#todayBox', !first);
+    show('#historyCard', !first);
+    show('#pinLink', !first);
+    if (first) {
+      stopGps();
+      show('#pinCard', true);
+      return;
+    }
     renderToday();
     renderHistory();
     // Keep the page current (check-in opening and closing) while it stays open
@@ -229,7 +242,7 @@
     stopGps();
     load();
   });
-  $('#pinLink').addEventListener('click', (e) => {
+  $('#pinLinkA').addEventListener('click', (e) => {
     e.preventDefault();
     show('#pinCard', true);
     $('#pinCard').scrollIntoView({ behavior: 'smooth' });
@@ -244,7 +257,9 @@
       e.target.reset();
       showError($('#pinError'), '');
       show('#pinCard', false);
-      alert('Your PIN has been changed.');
+      const wasFirst = me?.employee?.must_change_pin;
+      alert(wasFirst ? 'Your PIN is set. Use it from now on.' : 'Your PIN has been changed.');
+      if (wasFirst) load();
     } catch (err) {
       if (err.status === 401 && /sign in/i.test(err.message)) return load();
       showError($('#pinError'), err.message);

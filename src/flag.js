@@ -300,6 +300,15 @@ function qrCandidates(code) {
 }
 
 const checkPin = (pin) => (/^\d{6}$/.test(String(pin || '')) ? null : 'The PIN must be exactly 6 digits.');
+// A PIN the employee chooses must not be the default or easy to guess
+function checkOwnPin(pin) {
+  const bad = checkPin(pin);
+  if (bad) return bad;
+  const p = String(pin);
+  if (p === config.flag.defaultPin) return `Choose your own PIN; ${config.flag.defaultPin} is the default PIN everyone starts with.`;
+  if (/^(\d)\1{5}$/.test(p) || '0123456789012345'.includes(p) || '9876543210987654'.includes(p)) return 'That PIN is too easy to guess (like 111111 or 123456). Choose another one.';
+  return null;
+}
 const randomPin = () => String(crypto.randomInt(0, 1e6)).padStart(6, '0');
 const fullName = (e) => `${e.last_name}, ${e.first_name}${e.middle_name ? ` ${e.middle_name[0]}.` : ''}`;
 
@@ -390,6 +399,7 @@ module.exports = {
   EMPLOYMENT_TYPES,
   matchEmploymentType,
   checkPin,
+  checkOwnPin,
   randomPin,
   fullName,
   decodePhoto,

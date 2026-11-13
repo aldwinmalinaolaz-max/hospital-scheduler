@@ -37,7 +37,7 @@
 
   <section class="card login-box hidden" id="signIn">
     <h2>Sign in</h2>
-    <p class="muted small">Use your employee no. and the 6-digit PIN given by HR. Your phone will remember you, so you only sign in once.</p>
+    <p class="muted small">Use your employee no. and the 6-digit PIN given by HR (the first time, you then set your own). Your phone will remember you, so you only sign in once.</p>
     <form id="signInForm" class="grid" autocomplete="off" novalidate>
       <label class="field">Employee no.<input name="employee_no" autocomplete="username" required></label>
       <label class="field">PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="current-password" required></label>
@@ -50,20 +50,21 @@
   <div id="signedIn" class="hidden">
     <div class="card flag-who">
       <div><b id="empName"></b><div class="muted small" id="empMeta"></div></div>
-      <div class="flag-who-actions"><a href="#" id="pinLink">Change PIN</a> &middot; <a href="#" id="signOut">Sign out</a></div>
+      <div class="flag-who-actions"><span id="pinLink"><a href="#" id="pinLinkA">Change PIN</a> &middot; </span><a href="#" id="signOut">Sign out</a></div>
     </div>
     <div id="todayBox"></div>
     <section class="card hidden" id="pinCard">
-      <h2>Change my PIN</h2>
+      <h2 id="pinTitle">Change my PIN</h2>
+      <div class="alert info hidden" id="pinFirst">Welcome! For your security, <b>set your own 6-digit PIN</b> now. You are still using the PIN given by HR, which others may know. You can check in after this.</div>
       <form id="pinForm" class="grid" autocomplete="off" novalidate>
         <label class="field">Current PIN<input name="pin" type="password" inputmode="numeric" maxlength="6" required></label>
-        <label class="field">New PIN (6 digits)<input name="new_pin" type="password" inputmode="numeric" maxlength="6" required></label>
+        <label class="field">New PIN (6 digits, not easy to guess)<input name="new_pin" type="password" inputmode="numeric" maxlength="6" required></label>
         <label class="field">Repeat new PIN<input name="new_pin2" type="password" inputmode="numeric" maxlength="6" required></label>
         <div class="alert error hidden" id="pinError" role="alert"></div>
         <div class="actions"><button class="btn secondary" type="button" id="pinCancel">Cancel</button><button class="btn" type="submit">Change PIN</button></div>
       </form>
     </section>
-    <section class="card">
+    <section class="card" id="historyCard">
       <h2>My recent flag ceremonies</h2>
       <div id="historyBox"></div>
     </section>

@@ -2044,7 +2044,7 @@ ${cat.hospitalName}`;
         <td class="small">${esc(e.unit || '')}</td>
         <td>${typeTag(e.employment_type) || '<span class="muted small">—</span>'}</td>
         <td class="small">${e.flag_required ? 'Required' : '<span class="muted">Not required</span>'}</td>
-        <td>${e.active ? '<span class="badge ok">Active</span>' : '<span class="badge">Inactive</span>'}${e.locked ? '<div class="sub" style="color:var(--danger)">PIN locked</div>' : ''}</td>
+        <td>${e.active ? '<span class="badge ok">Active</span>' : '<span class="badge">Inactive</span>'}${e.locked ? '<div class="sub" style="color:var(--danger)">PIN locked</div>' : ''}${e.pin_must_change ? '<div class="sub" style="color:var(--warn)" title="Has not signed in and set their own PIN yet">Default PIN</div>' : ''}</td>
         <td class="no-print nowrap"><button class="btn sm" data-emp-edit="${e.id}">Edit</button> <button class="btn sm secondary" data-emp-pin="${e.id}">Reset PIN</button></td>
       </tr>`,
         )
@@ -2058,7 +2058,7 @@ ${cat.hospitalName}`;
       `<h2>PIN for ${esc(e.name)}</h2>
        <p>Employee no. <b class="mono">${esc(e.employee_no)}</b></p>
        <p class="pin-slip">${esc(e.pin)}</p>
-       <p class="muted small">Give this PIN to the employee privately. It is shown only now. They sign in at <b>${esc(location.host)}/flag-ceremony</b> and can change it there (Change PIN).</p>`,
+       <p class="muted small">The employee signs in at <b>${esc(location.host)}/flag-ceremony</b> with their employee no. and this PIN, and must then set their own PIN before they can check in.</p>`,
       async () => {},
       { saveLabel: 'Done' },
     );
@@ -2084,7 +2084,7 @@ ${cat.hospitalName}`;
            .join('')}</select></label>
          <span></span>
          <label class="check span-2"><input type="checkbox" name="flag_required" ${e.flag_required ? 'checked' : ''}> Required to attend flag ceremonies (untick e.g. for fixed night duty; they are then not counted absent)</label>
-         ${isNew ? '<label class="field span-2">PIN (6 digits)<input name="pin" inputmode="numeric" maxlength="6" placeholder="Leave blank for a random PIN"></label>' : `<label class="check span-2"><input type="checkbox" name="active" ${e.active ? 'checked' : ''}> Active (can sign in and check in)</label>`}
+         ${isNew ? `<label class="field span-2">PIN (6 digits)<input name="pin" inputmode="numeric" maxlength="6" placeholder="Leave blank for the default PIN ${esc(flagOpts?.default_pin || '123456')}"></label>` : `<label class="check span-2"><input type="checkbox" name="active" ${e.active ? 'checked' : ''}> Active (can sign in and check in)</label>`}
        </div>`,
       async (d) => {
         const body = { ...d, flag_required: $('#dlgForm [name=flag_required]').checked };
@@ -2105,8 +2105,8 @@ ${cat.hospitalName}`;
     const e = empF._rows.find((r) => r.id === Number(pb.dataset.empPin));
     openDialog(
       `<h2>Reset PIN</h2><p>${esc(e.name)} · <span class="mono">${esc(e.employee_no)}</span></p>
-       <label class="field">New PIN (6 digits)<input name="pin" inputmode="numeric" maxlength="6" placeholder="Leave blank for a random PIN"></label>
-       <p class="muted small">This also unlocks the employee no. after too many wrong PINs and signs the employee out of their phone.</p>`,
+       <label class="field">New PIN (6 digits)<input name="pin" inputmode="numeric" maxlength="6" placeholder="Leave blank for the default PIN ${esc(flagOpts?.default_pin || '123456')}"></label>
+       <p class="muted small">This also unlocks the employee no. after too many wrong PINs and signs the employee out of their phone. They must set their own PIN again after signing in.</p>`,
       async (d) => {
         const r = await api(`/admin/flag/employees/${e.id}/pin`, { method: 'POST', body: d });
         flagLoaders.employees();
@@ -2154,9 +2154,9 @@ ${cat.hospitalName}`;
     openDialog(
       `<h2>${rows.length} employee${rows.length === 1 ? '' : 's'} imported</h2>
        ${skipped.length ? `<p class="small">${skipped.length} already in the list and left as they are: ${esc(skipped.slice(0, 20).join(', '))}${skipped.length > 20 ? '…' : ''}</p>` : ''}
-       <p class="muted small">Print this list and give each employee their PIN privately. The PINs are not shown again. Employees sign in at <b>${esc(location.host)}/flag-ceremony</b>.</p>
-       <div class="table-wrap"><table><thead><tr><th>Employee no.</th><th>Name</th><th>Division / unit</th><th>PIN</th></tr></thead><tbody>
-       ${rows.map((r) => `<tr><td class="mono">${esc(r.employee_no)}</td><td>${esc(r.name)}</td><td class="small">${esc([r.division, r.unit].filter(Boolean).join(' / '))}</td><td class="mono"><b>${esc(r.pin)}</b></td></tr>`).join('')}
+       <p class="small">Everyone signs in at <b>${esc(location.host)}/flag-ceremony</b> with their employee no. and the default PIN <b class="mono">${esc(flagOpts?.default_pin || '123456')}</b>, then sets their own PIN before they can check in. Use the <b>Default PIN</b> filter to see who has not done this yet.</p>
+       <div class="table-wrap"><table><thead><tr><th>Employee no.</th><th>Name</th><th>Division / unit</th></tr></thead><tbody>
+       ${rows.map((r) => `<tr><td class="mono">${esc(r.employee_no)}</td><td>${esc(r.name)}</td><td class="small">${esc([r.division, r.unit].filter(Boolean).join(' / '))}</td></tr>`).join('')}
        </tbody></table></div>`,
       async () => window.print(),
       { wide: true, saveLabel: 'Print' },
@@ -2178,6 +2178,7 @@ ${cat.hospitalName}`;
        <p class="muted small">Choose an <b>Excel file (.xlsx)</b> or CSV. The first row should have column titles; columns can be in any order:
        <b>${IMPORT_FIELDS.map(([, l]) => l).join(', ')}</b> (middle name, position, division, unit and employment type are optional).
        Division must be one of: ${esc((flagOpts?.division_choices || []).join(', '))} (short forms such as "Nursing" work). Employment type: Plantilla or Job Order (JO).
+       Everyone gets the default PIN <b class="mono">${esc(flagOpts?.default_pin || '123456')}</b> and sets their own after signing in.
        <a href="#" id="impTemplate">Download a template</a>.</p>
        <label class="field">Excel or CSV file<input type="file" id="impFile" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"></label>
        <details><summary class="small">Or paste the list instead</summary>

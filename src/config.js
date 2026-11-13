@@ -56,6 +56,8 @@ module.exports = {
   // Flag Ceremony Attendance (Staff → Flag Ceremony). The venue, geofence and weekly schedule
   // are set in the Staff Panel; these are the security settings.
   flag: {
+    // PIN given to new employees and on PIN resets; employees must change it after signing in
+    defaultPin: /^\d{6}$/.test(env.FLAG_DEFAULT_PIN || '') ? env.FLAG_DEFAULT_PIN : '123456',
     // Wrong PINs allowed before an employee number is locked, and for how long
     maxPinAttempts: int(env.FLAG_MAX_PIN_ATTEMPTS, 5),
     lockMinutes: int(env.FLAG_LOCK_MINUTES, 15),

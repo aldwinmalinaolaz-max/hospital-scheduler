@@ -33,6 +33,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     employment_type: e.employment_type || null,
     active: e.active,
     locked: !!(e.locked_until && new Date(e.locked_until) > new Date()),
+    pin_must_change: !!e.pin_must_change,
     updated_by: e.updated_by,
     updated_at: u.toStamp(e.updated_at),
   });
@@ -62,6 +63,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       photo_retention_days: config.flag.photoRetentionDays,
       max_pin_attempts: config.flag.maxPinAttempts,
       import_columns: flag.IMPORT_COLUMNS,
+      default_pin: config.flag.defaultPin,
     });
   });
 
@@ -495,6 +497,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     else if (q.employment_type) conds.push(['employment_type = ?', String(q.employment_type)]);
     if (q.active === '1') conds.push(['active']);
     if (q.active === '0') conds.push(['NOT active']);
+    if (q.pin === 'default') conds.push(['pin_must_change']);
     if (q.q) {
       const s = `%${String(q.q).trim()}%`;
       conds.push(['(employee_no ILIKE ? OR last_name ILIKE ? OR first_name ILIKE ? OR position ILIKE ? OR unit ILIKE ?)', s, s, s, s, s]);
@@ -509,8 +512,8 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       throw new ValidationError(`Employee no. ${v.employee_no} already exists.`);
     }
     return t.one(
-      `INSERT INTO employees (employee_no, last_name, first_name, middle_name, position, department, unit, flag_required, pin_hash, updated_by, employment_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      `INSERT INTO employees (employee_no, last_name, first_name, middle_name, position, department, unit, flag_required, pin_hash, updated_by, employment_type, pin_must_change)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE) RETURNING *`,
       [v.employee_no, v.last_name, v.first_name, v.middle_name, v.position, v.department, v.unit, v.flag_required ?? true, auth.hashPassword(pin), by, v.employment_type ?? null],
     );
   }
@@ -519,7 +522,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const b = req.body || {};
     const [v, err] = flag.cleanEmployee(b, { divisions: await flag.getDivisions(db) });
     if (err) throw new ValidationError(err);
-    const pin = b.pin ? String(b.pin) : flag.randomPin();
+    const pin = b.pin ? String(b.pin) : config.flag.defaultPin; // employees change it after signing in
     const bad = flag.checkPin(pin);
     if (bad) throw new ValidationError(bad);
     const e = await insertEmployee(db, v, pin, req.user.username);
@@ -548,14 +551,15 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     res.json(presentEmployee(e));
   });
 
-  // Sets a new PIN (random if none given), unlocks the employee no. and signs them out of their phone
+  // Sets a new PIN (the default if none given), unlocks the employee no. and signs them out of their
+  // phone; they choose their own PIN after signing in
   router.post('/flag/employees/:id/pin', can, async (req, res) => {
-    const pin = req.body?.pin ? String(req.body.pin) : flag.randomPin();
+    const pin = req.body?.pin ? String(req.body.pin) : config.flag.defaultPin;
     const bad = flag.checkPin(pin);
     if (bad) throw new ValidationError(bad);
     const e = await db.one(
       `UPDATE employees SET pin_hash = $1, failed_pins = 0, locked_until = NULL, session_version = session_version + 1,
-         updated_by = $2, updated_at = now() WHERE id = $3 RETURNING *`,
+         pin_must_change = TRUE, updated_by = $2, updated_at = now() WHERE id = $3 RETURNING *`,
       [auth.hashPassword(pin), req.user.username, idParam(req.params.id)],
     );
     if (!e) throw fail(404, 'Employee not found.');
@@ -606,13 +610,15 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     if (b.dry_run) return res.json({ ok: true, count: toAdd.length, skipped });
     if (!toAdd.length) return res.status(201).json({ rows: [], skipped });
 
-    const pins = toAdd.map(() => flag.randomPin());
-    const hashes = await Promise.all(pins.map((p) => auth.hashPasswordAsync(p)));
-    const cols = ['employee_no', 'last_name', 'first_name', 'middle_name', 'position', 'department', 'unit', 'flag_required', 'pin_hash', 'updated_by', 'employment_type'];
+    // Everyone starts with the default PIN and chooses their own after signing in
+    const pins = toAdd.map(() => config.flag.defaultPin);
+    const hash = await auth.hashPasswordAsync(config.flag.defaultPin);
+    const hashes = toAdd.map(() => hash);
+    const cols = ['employee_no', 'last_name', 'first_name', 'middle_name', 'position', 'department', 'unit', 'flag_required', 'pin_hash', 'updated_by', 'employment_type', 'pin_must_change'];
     const params = [];
     const values = toAdd.map((v, i) => {
       const row = [v.employee_no, v.last_name, v.first_name, v.middle_name ?? null, v.position ?? null, v.department ?? null, v.unit ?? null,
-        v.flag_required ?? true, hashes[i], req.user.username, v.employment_type ?? null];
+        v.flag_required ?? true, hashes[i], req.user.username, v.employment_type ?? null, true];
       params.push(...row);
       return `(${row.map((_, c) => `$${params.length - row.length + c + 1}`).join(', ')})`;
     });

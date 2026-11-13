@@ -127,7 +127,7 @@ module.exports = function flagRoutes(db) {
     const closedToday = upcoming.filter((c) => c.ceremony_date === today && flag.phase(c) === 'CLOSED' && !c.cancelled);
     res.json({
       ...base,
-      employee: { employee_no: emp.employee_no, name: flag.fullName(emp), division: emp.department, unit: emp.unit, flag_required: emp.flag_required },
+      employee: { employee_no: emp.employee_no, name: flag.fullName(emp), division: emp.department, unit: emp.unit, flag_required: emp.flag_required, must_change_pin: emp.pin_must_change },
       today_ceremonies: todays,
       next: upcoming.filter((c) => c.ceremony_date > today && !c.cancelled).slice(0, 3).map(withMine),
       history: [...closedToday.reverse(), ...history].map((c) => {
@@ -143,7 +143,8 @@ module.exports = function flagRoutes(db) {
     const emp = await identify(b.employee_no, b.pin);
     deviceOf(req, res);
     res.append('Set-Cookie', employeeCookie(req, emp));
-    res.json({ name: flag.fullName(emp) });
+    // With a PIN set by HR (e.g. the default 123456) they must choose their own before anything else
+    res.json({ name: flag.fullName(emp), must_change_pin: emp.pin_must_change });
   });
 
   router.post('/logout', (req, res) => {
@@ -154,6 +155,7 @@ module.exports = function flagRoutes(db) {
   router.post('/checkin', json, checkinLimit, requireEmployee, async (req, res) => {
     const b = req.body || {};
     const emp = req.emp;
+    if (emp.pin_must_change) throw fail(403, 'Please set your own PIN first (you are still using the PIN given by HR).');
     const settings = await flag.getSettings(db);
     if (!flag.geofenceReady(settings)) throw fail(409, 'Flag ceremony check-in has not been set up yet. Please inform HR.');
     const c = /^\d+$/.test(String(b.ceremony_id)) && (await db.one('SELECT * FROM flag_ceremonies WHERE id = $1', [Number(b.ceremony_id)]));
@@ -218,11 +220,11 @@ module.exports = function flagRoutes(db) {
   router.post('/pin', json, loginLimit, requireEmployee, async (req, res) => {
     const b = req.body || {};
     const emp = await identify(req.emp.employee_no, b.pin);
-    const bad = flag.checkPin(b.new_pin);
+    const bad = flag.checkOwnPin(b.new_pin);
     if (bad) throw new ValidationError(bad);
     // Signs the employee out of every other phone; this one gets a fresh sign-in
     const updated = await db.one(
-      'UPDATE employees SET pin_hash = $1, session_version = session_version + 1, updated_at = now() WHERE id = $2 RETURNING *',
+      'UPDATE employees SET pin_hash = $1, pin_must_change = FALSE, session_version = session_version + 1, updated_at = now() WHERE id = $2 RETURNING *',
       [auth.hashPassword(String(b.new_pin)), emp.id],
     );
     res.append('Set-Cookie', employeeCookie(req, updated));

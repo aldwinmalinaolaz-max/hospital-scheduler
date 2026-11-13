@@ -400,6 +400,8 @@ const SCHEMA = `
   ALTER TABLE employees ADD COLUMN IF NOT EXISTS flag_required BOOLEAN NOT NULL DEFAULT TRUE;
   -- Bumped when the PIN is reset or the employee is deactivated: signs them out of every phone
   ALTER TABLE employees ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0;
+  -- TRUE while the employee still has a PIN set by HR (the default); they must choose their own
+  ALTER TABLE employees ADD COLUMN IF NOT EXISTS pin_must_change BOOLEAN NOT NULL DEFAULT FALSE;
   CREATE TABLE IF NOT EXISTS flag_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     data TEXT NOT NULL,                   -- JSON, see DEFAULT_SETTINGS in flag.js
@@ -639,6 +641,16 @@ const MIGRATIONS = [
     id: '2026-11-13-campus-wayfinding',
     async run(t) {
       await require('./wayfinding').seedCampus(t);
+    },
+  },  {
+    // Every employee's PIN becomes the default PIN (123456); they set their own after signing in
+    id: '2026-11-13-flag-default-pins',
+    async run(t) {
+      await t.query(
+        `UPDATE employees SET pin_hash = $1, pin_must_change = TRUE, failed_pins = 0, locked_until = NULL,
+           session_version = session_version + 1, updated_by = 'system', updated_at = now()`,
+        [hashPassword(require('./config').flag.defaultPin)],
+      );
     },
   },
 ];
