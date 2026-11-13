@@ -1667,6 +1667,17 @@ test('employee import: check first, list every problem, fast batches, skip exist
   const skipped = await imp({ rows: [row(0), row(300)], skip_existing: true });
   assert.deepEqual(skipped.data.skipped, ['IM-0000']);
   assert.deepEqual(skipped.data.rows.map((r) => r.employee_no), ['IM-0300']);
+  // Employee numbers as typed in Excel: dashes and spaces are tidied; slashes and periods allowed
+  const odd = await imp({ rows: [row(500, { employee_no: '2022–P–0046' }), row(501, { employee_no: '2022 - P - 0047' }), row(502, { employee_no: '2022/P/0048' })] });
+  assert.deepEqual(odd.data.rows.map((r) => r.employee_no).sort(), ['2022-P-0046', '2022-P-0047', '2022/P/0048']);
+  const missing = await imp({ dry_run: true, rows: [row(503, { employee_no: '' }), row(504, { employee_no: 'Prepared by: HR' })] });
+  assert.match(missing.data.errors[0], /^Row 504: Employee no\. is missing\./);
+  assert.match(missing.data.errors[1], /Employee no\. "Prepared by: HR" can only have letters, numbers, dashes/);
+  // Signing in and QR scanning use the same clean-up
+  const p46 = odd.data.rows.find((r) => r.employee_no === '2022-P-0046');
+  assert.equal((await call('/flag/login', { method: 'POST', body: { employee_no: '2022 – p – 0046', pin: p46.pin } })).status, 200);
+  assert.deepEqual(require('../src/flag').qrCandidates('ZRMC-EMP:2022/P/0048'), ['2022/P/0048']);
+  assert.ok(require('../src/flag').qrCandidates('NAME: X\nID NO. 2022-P-0046').includes('2022-P-0046'));
   // The pasted-text form still works
   assert.equal((await imp({ csv: 'IM-0400,PASTE,ONE,,,Nursing,Ward 1,Plantilla' })).data.rows[0].employment_type, 'PLANTILLA');
 });

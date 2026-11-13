@@ -56,7 +56,7 @@ module.exports = function flagRoutes(db) {
 
   // Checks the employee number and PIN, locking the number after too many wrong PINs
   async function identify(employeeNo, pin) {
-    const no = String(employeeNo || '').trim().toUpperCase();
+    const no = flag.cleanEmployeeNo(employeeNo); // same clean-up as when employees are added
     const emp = no && (await db.one('SELECT * FROM employees WHERE employee_no = $1', [no]));
     const wrong = fail(401, 'Employee no. or PIN is incorrect.');
     if (!emp) throw wrong;

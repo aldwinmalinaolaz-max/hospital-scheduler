@@ -244,12 +244,27 @@ function checkLocation(settings, b) {
 // ---------- Employees ----------
 
 // Validates employee fields from the staff panel or a pasted list; returns [values, error]
+// Employee numbers as typed in Excel: en/em dashes and minus signs become "-", and spaces around
+// dashes or slashes are removed (2022 – P – 0046 → 2022-P-0046)
+function cleanEmployeeNo(v) {
+  return String(v ?? '')
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    .replace(/\s*([-/])\s*/g, '$1')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
 function cleanEmployee(b, { partial = false, current = null, divisions = DEFAULT_DIVISIONS } = {}) {
   const out = {};
   const has = (k) => !partial || b[k] !== undefined;
   if (has('employee_no')) {
-    out.employee_no = clean(b.employee_no, 30);
-    if (!/^[A-Z0-9][A-Z0-9-]{0,29}$/.test(out.employee_no)) return [null, 'Employee no. must be letters, numbers or dashes (up to 30).'];
+    const raw = String(b.employee_no ?? '').trim();
+    out.employee_no = cleanEmployeeNo(raw);
+    if (!out.employee_no) return [null, 'Employee no. is missing.'];
+    if (!/^[A-Z0-9][A-Z0-9./-]{0,29}$/.test(out.employee_no)) {
+      return [null, `Employee no. "${raw.slice(0, 40)}" can only have letters, numbers, dashes (-), slashes (/) or periods, up to 30 characters.`];
+    }
   }
   for (const [k, label] of [['last_name', 'last name'], ['first_name', 'first name']]) {
     if (!has(k)) continue;
@@ -280,8 +295,8 @@ const QR_PREFIX = 'ZRMC-EMP:';
 function qrCandidates(code) {
   const t = String(code || '').trim().toUpperCase().slice(0, 500);
   if (!t) return [];
-  if (t.startsWith(QR_PREFIX)) return [t.slice(QR_PREFIX.length).trim()];
-  return [...new Set([t, ...(t.match(/[A-Z0-9][A-Z0-9-]{1,29}/g) || [])])].slice(0, 30);
+  if (t.startsWith(QR_PREFIX)) return [cleanEmployeeNo(t.slice(QR_PREFIX.length))];
+  return [...new Set([cleanEmployeeNo(t), ...(cleanEmployeeNo(t).match(/[A-Z0-9][A-Z0-9./-]{1,29}/g) || [])])].slice(0, 30);
 }
 
 const checkPin = (pin) => (/^\d{6}$/.test(String(pin || '')) ? null : 'The PIN must be exactly 6 digits.');
@@ -369,6 +384,7 @@ module.exports = {
   distanceM,
   checkLocation,
   cleanEmployee,
+  cleanEmployeeNo,
   QR_PREFIX,
   qrCandidates,
   EMPLOYMENT_TYPES,
