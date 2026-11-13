@@ -137,6 +137,7 @@ body:not(.can-records) .needs-records, body:not(.can-opd) .needs-opd { display: 
 body:is([data-page='staff'], [data-page='facility']):not(.signed-in) .sidenav { display: none; }
 body:is([data-page='staff'], [data-page='facility']):not(.signed-in) .layout { grid-template-columns: minmax(0, 1fr); }
 body:not(.can-referrals) .needs-referrals { display: none !important; }
+body:not(.can-records):not(.can-opd) .needs-sms { display: none !important; }
 
 @media (max-width: 820px) {
   .layout { grid-template-columns: minmax(0, 1fr); min-height: 0; }

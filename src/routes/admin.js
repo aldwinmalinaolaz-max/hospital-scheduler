@@ -228,8 +228,8 @@ module.exports = function adminRoutes(db) {
         (SELECT COUNT(*)::int FROM referrals WHERE status IN ('SENT','RECEIVED')) AS "referralsOpen",
         (SELECT COUNT(*)::int FROM referrals WHERE status IN ('SENT','RECEIVED') AND urgency = 'EMERGENCY') AS "referralsEmergency",
         (SELECT COUNT(*)::int FROM record_requests WHERE pickup_date = $1 AND status NOT IN ('CANCELLED','REJECTED')) AS "pickupsToday",
-        (SELECT COUNT(*)::int FROM sms_log WHERE status = 'FAILED' AND created_at >= now() - interval '7 days') AS "smsFailed"`,
-      [today],
+        (SELECT COUNT(*)::int FROM sms_log WHERE status = 'FAILED' AND created_at >= now() - interval '7 days' AND kind LIKE ANY($2::text[])) AS "smsFailed"`,
+      [today, smsKindsFor(req.user).length ? smsKindsFor(req.user) : ['-']],
     );
     // Only report numbers for the sections this user can see
     const a = access(req.user);
@@ -238,7 +238,8 @@ module.exports = function adminRoutes(db) {
       ...(a.referrals && { referralsOpen: s.referralsOpen, referralsEmergency: s.referralsEmergency }),
       ...(a.records && { recordsPending: s.recordsPending, recordsReady: s.recordsReady, pickupsToday: s.pickupsToday, idsToCheck: s.idsToCheck }),
     };
-    res.json({ today, ...visible, smsFailed: s.smsFailed, smsProvider: config.sms.provider });
+    const smsVisible = a.records || a.opd;
+    res.json({ today, ...visible, ...(smsVisible && { smsFailed: s.smsFailed }), smsProvider: config.sms.provider });
   });
 
   // ---------- Records ----------
@@ -589,33 +590,38 @@ module.exports = function adminRoutes(db) {
 
   // ---------- SMS ----------
 
-  // SMS messages belong to a section by their kind (RECORD_… / APPT_…); test messages are admin-only
+  // The SMS Log covers Records Requests (RECORD_…) and OPD Appointments (APPT_…) only, for staff
+  // with access to those sections; Administrators also see their gateway test messages. Texts of
+  // other modules (e.g. referrals) are still sent and stored, but not listed here.
+  const SMS_SECTIONS = { records: 'RECORD_%', opd: 'APPT_%' };
   function smsKindsFor(user) {
-    if (user.role === 'ADMIN') return null; // everything
     const a = access(user);
-    return [a.records && 'RECORD_%', a.opd && 'APPT_%'].filter(Boolean);
+    return [a.records && SMS_SECTIONS.records, a.opd && SMS_SECTIONS.opd, user.role === 'ADMIN' && 'TEST'].filter(Boolean);
   }
-  const canSeeSms = (user, kind) => {
-    const kinds = smsKindsFor(user);
-    return !kinds || kinds.some((k) => kind.startsWith(k.slice(0, -1)));
+  const canSeeSms = (user, kind) => smsKindsFor(user).some((k) => (k.endsWith('%') ? kind.startsWith(k.slice(0, -1)) : kind === k));
+  const smsAccess = (req, res, next) => {
+    const a = access(req.user);
+    if (a.records || a.opd) return next();
+    res.status(403).json({ error: 'The SMS Log is for staff with Records Requests or OPD Appointments access.' });
   };
 
-  router.get('/sms', async (req, res) => {
-    const kinds = smsKindsFor(req.user);
-    const rows = kinds
-      ? await db.query('SELECT * FROM sms_log WHERE kind LIKE ANY($1::text[]) ORDER BY id DESC LIMIT 300', [kinds])
-      : await db.query('SELECT * FROM sms_log ORDER BY id DESC LIMIT 300');
-    res.json({ rows: rows.map(stamp), provider: config.sms.provider });
+  router.get('/sms', smsAccess, async (req, res) => {
+    let kinds = smsKindsFor(req.user);
+    // Optional filter: ?section=records | opd
+    if (SMS_SECTIONS[req.query.section]) kinds = kinds.filter((k) => k === SMS_SECTIONS[req.query.section]);
+    const rows = kinds.length ? await db.query('SELECT * FROM sms_log WHERE kind LIKE ANY($1::text[]) ORDER BY id DESC LIMIT 300', [kinds]) : [];
+    const a = access(req.user);
+    res.json({ rows: rows.map(stamp), provider: config.sms.provider, sections: { records: !!a.records, opd: !!a.opd } });
   });
 
-  router.post('/sms/:id/resend', async (req, res) => {
+  router.post('/sms/:id/resend', smsAccess, async (req, res) => {
     const row = await db.one('SELECT * FROM sms_log WHERE id = $1', [Number(req.params.id)]);
     if (!row || !canSeeSms(req.user, row.kind)) return res.status(404).json({ error: 'Not found.' });
     const ok = await sendSms(db, { to: row.recipient, message: row.message, kind: row.kind, refNo: row.ref_no });
     res.json({ ok });
   });
 
-  router.post('/sms/:id/check', async (req, res) => {
+  router.post('/sms/:id/check', smsAccess, async (req, res) => {
     const row = await db.one('SELECT * FROM sms_log WHERE id = $1', [Number(req.params.id)]);
     if (!row || !canSeeSms(req.user, row.kind)) return res.status(404).json({ error: 'Not found.' });
     try {

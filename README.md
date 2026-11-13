@@ -211,7 +211,7 @@ A set of starter FAQs is created the first time the app starts. Review them, esp
 ### Users and roles
 Staff accounts are managed in **Admin → Users** by administrators. There are two roles:
 - **Administrator:** everything, plus managing users, holidays/closed dates and the test SMS.
-- **Staff:** works only in the sections they're given access to, can view the SMS log for those sections, and can change their own password.
+- **Staff:** works only in the sections they're given access to, can view the SMS log for those sections (Records Requests and/or OPD Appointments), and can change their own password.
 
 Each Staff user has access checkboxes: **Records Requests**, **OPD Appointments**, **Referrals** and **Flag Ceremony Attendance**. They need at least one. A Records-only user doesn't see the OPD tab, OPD dashboard numbers or OPD text messages, and the server refuses OPD requests from them; the same applies the other way round. Access changes take effect on the user's next click, without logging them out. Administrators always have both.
 
@@ -225,7 +225,7 @@ Everything typed into the forms is converted to capital letters, both in the bro
 ### Staff panel
 - **Dashboard:** today's counts, today's OPD list and today's pickups.
 - **Records and Appointments:** search and filter, one-click status buttons, an edit dialog for rescheduling and remarks (with an option to notify the patient), and a printable daily list.
-- **SMS Log:** every message sent, with failures shown and a **Resend** button.
+- **SMS Log:** texts of **Records Requests and OPD Appointments only**, for Administrators and staff with access to those sections (others don't see the tab); filter by section; failures shown with a **Resend** button. Texts of other modules (e.g. referrals) are still sent but not listed here. Administrators also see their gateway test messages.
 - **Users** (administrators only): add users, change roles, deactivate, reset passwords.
 - **Settings:** holidays and closed dates, a test SMS, and password change.
 

@@ -66,7 +66,7 @@
   // ---------- Tabs ----------
   const loaders = {};
   function showTab(name) {
-    const allowed = { flag: me?.access.attendance, referrals: me?.access.referrals, schedules: me?.access.opd, users: me?.role === 'ADMIN', faqs: me?.role === 'ADMIN', directory: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
+    const allowed = { sms: !!(me?.access.records || me?.access.opd), flag: me?.access.attendance, referrals: me?.access.referrals, schedules: me?.access.opd, users: me?.role === 'ADMIN', faqs: me?.role === 'ADMIN', directory: me?.role === 'ADMIN', records: me?.access.records, appointments: me?.access.opd };
     if (!loaders[name] || allowed[name] === false) name = 'dashboard';
     $$('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $$('[data-view]').forEach((v) => v.classList.toggle('hidden', v.dataset.view !== name));
@@ -89,7 +89,7 @@
       me.access.records && stat(s.recordsReady, 'Records ready for claiming'),
       me.access.records && stat(s.idsToCheck, 'Digital copies: IDs to check'),
       me.access.referrals && stat(s.referralsOpen, `Referrals waiting${s.referralsEmergency ? ` (${s.referralsEmergency} emergency)` : ''}`),
-      stat(s.smsFailed, `Failed SMS (7 days) · ${esc(s.smsProvider)}`),
+      s.smsFailed !== undefined && stat(s.smsFailed, `Failed SMS (7 days) · ${esc(s.smsProvider)}`),
     ]
       .filter(Boolean)
       .join('');
@@ -407,7 +407,9 @@ ${cat.hospitalName}`;
 
   // ---------- SMS ----------
   loaders.sms = guard(async () => {
-    const { rows, provider } = await api('/admin/sms');
+    const { rows, provider, sections } = await api(`/admin/sms${$('#smsSection').value ? `?section=${$('#smsSection').value}` : ''}`);
+    // The filter only makes sense with access to both sections
+    $('#smsSection').classList.toggle('hidden', !(sections.records && sections.opd));
     const testMode = provider === 'console';
     $('#smsProvider').className = `alert small ${testMode ? 'warn' : 'info'}`;
     $('#smsProvider').innerHTML = testMode
@@ -432,6 +434,7 @@ ${cat.hospitalName}`;
         )
         .join('') || '<tr><td colspan="6" class="empty">No SMS sent yet.</td></tr>';
   });
+  $('#smsSection').addEventListener('change', () => loaders.sms());
   $('#smsRows').addEventListener('click', guard(async (e) => {
     const b = e.target.closest('[data-resend], [data-check]');
     if (!b) return;

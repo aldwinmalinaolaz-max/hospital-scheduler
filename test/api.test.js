@@ -1727,6 +1727,32 @@ test('flag ceremony: default PIN 123456, changed by the employee after signing i
   assert.equal(count.n, 0);
 });
 
+test('SMS log: Records requests and OPD appointments only', async () => {
+  const admin = await login();
+  // Texts from other modules (referrals) and a gateway test are in the database...
+  await db.query("INSERT INTO sms_log (recipient, message, kind, status, provider) VALUES ('+639170000001', 'referral text', 'REFERRAL_ACCEPTED', 'SENT', 'console'), ('+639170000002', 'gateway test', 'TEST', 'SENT', 'console')");
+  const kindsSeen = async (cookie, q = '') => new Set((await call(`/admin/sms${q}`, { cookie })).data.rows.map((r) => r.kind.replace(/_.*/, '_')));
+  // ...but the log lists only records and OPD texts (plus an administrator's own test texts)
+  const all = await kindsSeen(admin);
+  assert.ok(!all.has('REFERRAL_'));
+  assert.ok(all.has('RECORD_') && all.has('APPT_') && all.has('TEST'));
+  assert.deepEqual([...(await kindsSeen(admin, '?section=records'))], ['RECORD_']);
+  assert.deepEqual([...(await kindsSeen(admin, '?section=opd'))], ['APPT_']);
+  // Staff without Records or OPD access (e.g. referrals or flag ceremony only) have no SMS log
+  await call('/admin/users', { method: 'POST', cookie: admin, body: { username: 'ref.only', full_name: 'ref only', password: 'password123', role: 'STAFF', can_records: false, can_opd: false, can_referrals: true } });
+  const ref = (await loginAs('ref.only', 'password123')).cookie;
+  const denied = await call('/admin/sms', { cookie: ref });
+  assert.equal(denied.status, 403);
+  assert.match(denied.data.error, /Records Requests or OPD Appointments/);
+  const anyId = (await db.one('SELECT id FROM sms_log ORDER BY id LIMIT 1')).id;
+  assert.equal((await call(`/admin/sms/${anyId}/resend`, { method: 'POST', cookie: ref })).status, 403);
+  assert.equal((await call('/admin/stats', { cookie: ref })).data.smsFailed, undefined);
+  // A referral text cannot be resent from the log even by an administrator
+  const refSms = (await db.one("SELECT id FROM sms_log WHERE kind = 'REFERRAL_ACCEPTED' ORDER BY id DESC LIMIT 1")).id;
+  assert.equal((await call(`/admin/sms/${refSms}/resend`, { method: 'POST', cookie: admin })).status, 404);
+  assert.equal(typeof (await call('/admin/stats', { cookie: admin })).data.smsFailed, 'number');
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');
