@@ -83,8 +83,10 @@ module.exports = function adminRoutes(db) {
     opd: user.role === 'ADMIN' || user.can_opd,
     referrals: user.role === 'ADMIN' || user.can_referrals,
     attendance: user.role === 'ADMIN' || user.can_attendance,
+    // QR scanning at the venue: Administrators and HR staff only
+    flag_scan: user.role === 'ADMIN' || (user.can_attendance && user.can_flag_scan),
   });
-  const SECTION_NAMES = { records: 'Records Requests', opd: 'OPD Appointments', referrals: 'Referrals', attendance: 'Flag Ceremony Attendance' };
+  const SECTION_NAMES = { records: 'Records Requests', opd: 'OPD Appointments', referrals: 'Referrals', attendance: 'Flag Ceremony Attendance', flag_scan: 'flag ceremony QR scanning (Administrators and HR only)' };
   const requireAccess = (section) => (req, res, next) =>
     access(req.user)[section] ? next() : res.status(403).json({ error: `You don't have access to ${SECTION_NAMES[section]}.` });
 
@@ -117,6 +119,7 @@ module.exports = function adminRoutes(db) {
     can_records: row.can_records,
     can_referrals: row.can_referrals,
     can_attendance: row.can_attendance,
+    can_flag_scan: row.can_flag_scan,
     can_opd: row.can_opd,
     last_login_at: row.last_login_at ? u.toStamp(row.last_login_at) : null,
     created_at: u.toStamp(row.created_at),
@@ -159,9 +162,9 @@ module.exports = function adminRoutes(db) {
     );
     if (await db.one('SELECT 1 FROM admins WHERE lower(username) = $1', [username])) throw new ValidationError('That username is already taken.');
     const user = await db.one(
-      `INSERT INTO admins (username, password_hash, full_name, role, can_records, can_opd, can_referrals, can_attendance)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [username, auth.hashPassword(b.password), fullName, role, canRecords, canOpd, canReferrals, canAttendance],
+      `INSERT INTO admins (username, password_hash, full_name, role, can_records, can_opd, can_referrals, can_attendance, can_flag_scan)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [username, auth.hashPassword(b.password), fullName, role, canRecords, canOpd, canReferrals, canAttendance, role !== 'ADMIN' && canAttendance && !!b.can_flag_scan],
     );
     res.status(201).json(publicUser(user));
   });
@@ -190,8 +193,9 @@ module.exports = function adminRoutes(db) {
       const revoke = role !== before.role || active !== before.active;
       return t.one(
         `UPDATE admins SET full_name = $1, role = $2, active = $3, can_records = $4, can_opd = $5, can_referrals = $8, can_attendance = $9,
-          session_version = session_version + CASE WHEN $6 THEN 1 ELSE 0 END WHERE id = $7 RETURNING *`,
-        [fullName, role, !!active, canRecords, canOpd, revoke, id, canReferrals, canAttendance],
+          can_flag_scan = $10, session_version = session_version + CASE WHEN $6 THEN 1 ELSE 0 END WHERE id = $7 RETURNING *`,
+        [fullName, role, !!active, canRecords, canOpd, revoke, id, canReferrals, canAttendance,
+          role !== 'ADMIN' && canAttendance && !!(b.can_flag_scan ?? before.can_flag_scan)],
       );
     });
     if (!user) return res.status(404).json({ error: 'Not found.' });

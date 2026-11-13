@@ -334,6 +334,8 @@ const SCHEMA = `
   -- Flag Ceremony Attendance: employees check in on their phones inside a GPS geofence
   -- (staff permission column keeps its original name)
   ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_attendance BOOLEAN NOT NULL DEFAULT FALSE;
+  -- QR scanning at the flag ceremony venue: Administrators and HR staff only (needs can_attendance)
+  ALTER TABLE admins ADD COLUMN IF NOT EXISTS can_flag_scan BOOLEAN NOT NULL DEFAULT FALSE;
   CREATE TABLE IF NOT EXISTS employees (
     id SERIAL PRIMARY KEY,
     employee_no TEXT NOT NULL UNIQUE,

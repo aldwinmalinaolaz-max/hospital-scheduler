@@ -319,7 +319,7 @@ test('per-user access: records-only and OPD-only staff', async () => {
   const opd = (await loginAs('opd.only', 'password123')).cookie;
 
   // /me tells the browser which tabs to show
-  assert.deepEqual((await call('/admin/me', { cookie: rec })).data.access, { records: true, opd: false, referrals: false, attendance: false });
+  assert.deepEqual((await call('/admin/me', { cookie: rec })).data.access, { records: true, opd: false, referrals: false, attendance: false, flag_scan: false });
 
   // Records-only user
   assert.equal((await call('/admin/records', { cookie: rec })).status, 200);
@@ -345,7 +345,7 @@ test('per-user access: records-only and OPD-only staff', async () => {
   assert.equal((await call('/admin/records', { cookie: opd })).status, 200);
 
   // Administrators always have both
-  assert.deepEqual((await call('/admin/me', { cookie: admin })).data.access, { records: true, opd: true, referrals: true, attendance: true });
+  assert.deepEqual((await call('/admin/me', { cookie: admin })).data.access, { records: true, opd: true, referrals: true, attendance: true, flag_scan: true });
 });
 
 test('patient-entered text is stored in capitals', async () => {
@@ -993,7 +993,7 @@ test('flag ceremony: geofence check-in, PINs, one phone per employee, excuses an
   });
   assert.equal(created.status, 201);
   const hr = (await call('/admin/login', { method: 'POST', body: { username: 'hr.clerk', password: 'password123' } })).headers.get('set-cookie').split(';')[0];
-  assert.deepEqual((await call('/admin/me', { cookie: hr })).data.access, { records: false, opd: false, referrals: false, attendance: true });
+  assert.deepEqual((await call('/admin/me', { cookie: hr })).data.access, { records: false, opd: false, referrals: false, attendance: true, flag_scan: false });
   assert.equal((await call('/admin/records', { cookie: hr })).status, 403);
   await call('/admin/users', { method: 'POST', cookie: admin, body: { username: 'opd.only', full_name: 'opd', password: 'password123', role: 'STAFF', can_records: false } });
   const opd = (await call('/admin/login', { method: 'POST', body: { username: 'opd.only', password: 'password123' } })).headers.get('set-cookie').split(';')[0];
@@ -1349,9 +1349,26 @@ test('flag ceremony: QR scan at the venue and unit filter in the summary', async
     [u.addDays(today, -1)],
   );
   assert.match((await scanAt(past.id, 'QR-1001')).data.error, /closed at 9:00 AM/);
-  // Only staff with Flag Ceremony access can scan
+  // Only Administrators and HR (Flag Ceremony access + QR scanning) can scan
   const opd = (await loginAs('opd.only', 'password123')).cookie;
   assert.equal((await scanAt(open.id, 'QR-1001', opd)).status, 403);
+  const hrUser = (await call('/admin/users', { cookie: admin })).data.rows.find((x) => x.username === 'hr.clerk');
+  assert.equal(hrUser.can_flag_scan, false);
+  const hr = (await loginAs('hr.clerk', 'password123')).cookie;
+  const denied = await scanAt(open.id, 'QR-1001', hr);
+  assert.equal(denied.status, 403);
+  assert.match(denied.data.error, /Administrators and HR only/);
+  assert.equal((await call(`/admin/flag/ceremonies/${open.id}`, { cookie: hr })).status, 200); // still sees the reports
+  // QR scanning without Flag Ceremony access is not kept
+  await call(`/admin/users/${hrUser.id}`, { method: 'PATCH', cookie: admin, body: { can_attendance: false, can_records: true, can_flag_scan: true } });
+  assert.equal((await call('/admin/users', { cookie: admin })).data.rows.find((x) => x.username === 'hr.clerk').can_flag_scan, false);
+  const granted = await call(`/admin/users/${hrUser.id}`, { method: 'PATCH', cookie: admin, body: { can_attendance: true, can_records: false, can_flag_scan: true } });
+  assert.equal(granted.data.can_flag_scan, true);
+  assert.equal((await call('/admin/me', { cookie: hr })).data.access.flag_scan, true);
+  assert.equal((await scanAt(open.id, 'QR-1001', hr)).data.result, 'ALREADY');
+  // A new HR user can be created with QR scanning
+  const made = await call('/admin/users', { method: 'POST', cookie: admin, body: { username: 'hr.scan', full_name: 'hr scan', password: 'password123', role: 'STAFF', can_records: false, can_opd: false, can_attendance: true, can_flag_scan: true } });
+  assert.equal(made.data.can_flag_scan, true);
 
   // The attendance list shows who scanned; a wrong scan can be removed
   let roster = (await call(`/admin/flag/ceremonies/${open.id}`, { cookie: admin })).data.rows;

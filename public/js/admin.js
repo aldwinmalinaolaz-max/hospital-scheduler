@@ -21,6 +21,7 @@
       document.body.classList.toggle('can-opd', me.access.opd);
       document.body.classList.toggle('can-referrals', me.access.referrals);
       document.body.classList.toggle('can-attendance', me.access.attendance);
+      document.body.classList.toggle('can-flag-scan', !!me.access.flag_scan);
       $('#whoami').innerHTML = `${esc(me.full_name || me.username)} · <b>${me.role === 'ADMIN' ? 'Administrator' : 'Staff'}</b>`;
       $('#whoami').classList.remove('hidden');
       $('#login').classList.add('hidden');
@@ -29,7 +30,7 @@
       showTab(location.hash.slice(1) || 'dashboard');
     } catch {
       me = null;
-      document.body.classList.remove('signed-in', 'is-admin', 'can-records', 'can-opd', 'can-referrals', 'can-attendance');
+      document.body.classList.remove('signed-in', 'is-admin', 'can-records', 'can-opd', 'can-referrals', 'can-attendance', 'can-flag-scan');
       $('#whoami').classList.add('hidden');
       $('#login').classList.remove('hidden');
       $('#app').classList.add('hidden');
@@ -525,7 +526,7 @@ ${cat.hospitalName}`;
   const roleLabel = (r) => (r === 'ADMIN' ? 'Administrator' : 'Staff');
   const roleOpts = (sel) => ['STAFF', 'ADMIN'].map((r) => `<option value="${r}"${r === sel ? ' selected' : ''}>${roleLabel(r)}</option>`).join('');
   const accessLabel = (x) =>
-    x.role === 'ADMIN' ? 'All' : [x.can_records && 'Records Requests', x.can_opd && 'OPD Appointments', x.can_referrals && 'Referrals', x.can_attendance && 'Flag Ceremony'].filter(Boolean).join('<br>');
+    x.role === 'ADMIN' ? 'All' : [x.can_records && 'Records Requests', x.can_opd && 'OPD Appointments', x.can_referrals && 'Referrals', x.can_attendance && `Flag Ceremony${x.can_flag_scan ? ' + QR scanning' : ''}`].filter(Boolean).join('<br>');
   // Access checkboxes; disabled for Administrators, who always have both
   const accessFields = (x) => `
     <fieldset class="access" ${x.role === 'ADMIN' ? 'disabled' : ''}>
@@ -534,18 +535,29 @@ ${cat.hospitalName}`;
       <label><input type="checkbox" name="can_opd" ${x.can_opd !== false ? 'checked' : ''}> OPD Appointments</label>
       <label><input type="checkbox" name="can_referrals" ${x.can_referrals ? 'checked' : ''}> Referrals (RHUs, health centers, hospitals)</label>
       <label><input type="checkbox" name="can_attendance" ${x.can_attendance ? 'checked' : ''}> Flag Ceremony Attendance (employees, ceremonies, reports)</label>
+      <label class="sub-access"><input type="checkbox" name="can_flag_scan" ${x.can_flag_scan ? 'checked' : ''}> QR scanning at the venue (HR only)</label>
       <p class="hint">Administrators always have access to all sections.</p>
     </fieldset>`;
   const wireAccess = () => {
     const role = $('#dlgForm [name=role]');
     const fs = $('#dlgForm fieldset.access');
     role.addEventListener('change', () => (fs.disabled = role.value === 'ADMIN'));
+    // QR scanning is part of Flag Ceremony access
+    const att = $('#dlgForm [name=can_attendance]');
+    const scanBox = $('#dlgForm [name=can_flag_scan]');
+    const sync = () => {
+      scanBox.disabled = !att.checked;
+      if (!att.checked) scanBox.checked = false;
+    };
+    att.addEventListener('change', sync);
+    sync();
   };
   const readAccess = () => ({
     can_records: $('#dlgForm [name=can_records]').checked,
     can_opd: $('#dlgForm [name=can_opd]').checked,
     can_referrals: $('#dlgForm [name=can_referrals]').checked,
     can_attendance: $('#dlgForm [name=can_attendance]').checked,
+    can_flag_scan: $('#dlgForm [name=can_attendance]').checked && $('#dlgForm [name=can_flag_scan]').checked,
   });
 
   loaders.users = guard(async () => {
@@ -1462,6 +1474,7 @@ ${cat.hospitalName}`;
     });
   }
   function showFlagSub(name) {
+    if (name === 'scan' && !me?.access.flag_scan) name = 'ceremonies'; // Administrators and HR only
     flagSub = name;
     $$('#flagTabs button').forEach((b) => b.classList.toggle('on', b.dataset.flag === name));
     $$('[data-flagview]').forEach((v) => v.classList.toggle('hidden', v.dataset.flagview !== name));

@@ -300,7 +300,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
 
   // QR scan at the venue, for employees without a phone: staff scan the QR on the employee's ID
   // (or type the employee no.) and the employee is recorded present
-  router.post('/flag/ceremonies/:id/scan', can, async (req, res) => {
+  router.post('/flag/ceremonies/:id/scan', can, requireAccess('flag_scan'), async (req, res) => {
     const c = await db.one('SELECT * FROM flag_ceremonies WHERE id = $1', [idParam(req.params.id)]);
     if (!c) throw fail(404, 'Ceremony not found.');
     if (c.cancelled) throw fail(409, 'This ceremony was cancelled or moved.');

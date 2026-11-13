@@ -691,3 +691,5 @@ tr.voided td .sub { display: inline-block; text-decoration: none; }
 .scan-result .small { color: var(--text); }
 .scan-log { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; font-size: 0.9rem; }
 .scan-log li { padding: 5px 0; border-bottom: 1px solid var(--border); }
+body:not(.can-flag-scan) .needs-flag-scan { display: none !important; }
+fieldset.access label.sub-access { margin-left: 24px; font-size: 0.92em; }
