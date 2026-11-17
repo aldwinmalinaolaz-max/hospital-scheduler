@@ -2049,6 +2049,14 @@ test('attendance sheet import reads dates and names', () => {
   assert.equal(si.headerDate('Designation'), null);
   const cols = si.resolveDates(['Dec. 5', 'Dec. 19', 'Jan. 2'].map((label, col) => ({ col, label, parsed: si.headerDate(label) })), 2025);
   assert.deepEqual(cols.map((c) => c.date), ['2025-12-05', '2025-12-19', '2026-01-02']);
+  // Two-row headings: month (merged cell) over day numbers; Excel dates with a time; Jan-09; 1-16-2026
+  const two = si.readGrid([['FLAG RETREAT'], ['No.', 'NAME OF EMPLOYEE', 'DESIGNATION', 'JANUARY', '', '', 'FEBRUARY', '', 'TOTAL'], ['', '', '', '2', '9', '16', '6', '13', ''], ['1', 'ABAGA, REYMAR', 'CLERK', 'P', 'X', 'OB', 'P', 'P', '3']], 2026);
+  assert.deepEqual(two.problems, []);
+  assert.deepEqual(two.entries.map((e) => e.codes.map((c) => `${c.date}=${c.code}`)), [['2026-01-02=P', '2026-01-09=X', '2026-01-16=OB', '2026-02-06=P', '2026-02-13=P']]);
+  const above = si.readGrid([['', '', '', 'JANUARY 2025', '', 'FEBRUARY'], ['No.', 'NAME OF EMPLOYEE', 'DESIGNATION', '3', '10', '7'], ['1', 'A, B', 'CLERK', 'P', 'X', 'OB']], 2026);
+  assert.deepEqual(above.entries[0].codes.map((c) => c.date), ['2025-01-03', '2025-01-10', '2025-02-07']);
+  assert.deepEqual(si.readGrid([['NAME OF EMPLOYEE', '46024.70833', 'Jan-09', '1-16-2026'], ['A, B', 'P', 'P', 'X']], 2026).entries[0].codes.map((c) => c.date), ['2026-01-02', '2026-01-09', '2026-01-16']);
+  assert.match(si.readGrid([['NAME OF EMPLOYEE', 'DESIGNATION', 'Remarks'], ['A, B', 'x', 'P']], 2026).problems[0], /no ceremony dates were found.*“Remarks”/);
   assert.deepEqual(si.splitName('ROJAS-TURCO, HANNAH M.'), { last: 'ROJASTURCO', first: 'HANNAH' });
   assert.deepEqual(si.splitName('Dela Cruz Jr., Ma. Cristina DC.'), { last: 'DELACRUZ', first: 'MACRISTINA' });
   assert.deepEqual(si.splitName('Hannah M. Rojas-Turco'), { last: 'ROJASTURCO', first: 'HANNAH' });

@@ -5,7 +5,23 @@
 
 const MONTHS = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
 const pad = (n) => String(n).padStart(2, '0');
-const monthOf = (word) => MONTHS[String(word || '').toUpperCase().slice(0, 3)] || null;
+const MONTH_NAMES = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+// "Jan", "JANUARY", "Sept" → 1..12 (the word must be the start of a month's name, so "Remarks" is not March)
+const monthOf = (word) => {
+  const w = String(word || '').toUpperCase();
+  const m = MONTHS[w.slice(0, 3)];
+  return m && w.length >= 3 && MONTH_NAMES[m - 1].startsWith(w) ? m : null;
+};
+// A month heading over the day columns: "JANUARY", "Jan.", "JANUARY 2026", "January, 2026"
+function monthTitle(text) {
+  const m = /^([A-Za-z]{3,9})\.?,?(?:\s+(\d{4}))?$/.exec(String(text ?? '').trim());
+  return m && monthOf(m[1]) ? { month: monthOf(m[1]), year: m[2] ? +m[2] : null } : null;
+}
+// A day number under a month heading: 1..31 (also "2nd")
+const dayNum = (text) => {
+  const m = /^(\d{1,2})(?:st|nd|rd|th)?\.?$/i.exec(String(text ?? '').trim());
+  return m && +m[1] >= 1 && +m[1] <= 31 ? +m[1] : null;
+};
 const validDay = (y, m, d) => {
   const dt = new Date(Date.UTC(y, m - 1, d));
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
@@ -19,7 +35,7 @@ function headerDate(text) {
   let m;
   if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ].*)?$/.exec(s))) return { year: +m[1], month: +m[2], day: +m[3] };
   // Excel stores dates as days since 1899-12-30 (a date-formatted title cell reads as a number)
-  if (/^\d{5}(\.0+)?$/.test(s) && +s > 36000 && +s < 73000) {
+  if (/^\d{5}(\.\d+)?$/.test(s) && +s > 36000 && +s < 73000) {
     const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(+s) * 86400000);
     return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
   }
@@ -27,12 +43,16 @@ function headerDate(text) {
   if ((m = /^([A-Za-z]{3,9})\.?\s*(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?(?:\s+(?:ret|rais)\.?)?$/i.exec(s)) && monthOf(m[1])) {
     return { year: m[3] ? +m[3] : null, month: monthOf(m[1]), day: +m[2] };
   }
+  // Jan-02 · January-2-2026
+  if ((m = /^([A-Za-z]{3,9})\.?-(\d{1,2})(?:-(\d{2}|\d{4}))?$/.exec(s)) && monthOf(m[1])) {
+    return { year: m[3] ? fullYear(+m[3]) : null, month: monthOf(m[1]), day: +m[2] };
+  }
   // 2-Jan · 2 Jan 2026 · 02-Jan-26
   if ((m = /^(\d{1,2})[- ]([A-Za-z]{3,9})\.?(?:[- ,]+(\d{2}|\d{4}))?$/.exec(s)) && monthOf(m[2])) {
     return { year: m[3] ? fullYear(+m[3]) : null, month: monthOf(m[2]), day: +m[1] };
   }
   // 1/2 · 1/2/2026 (month first, as in the Philippines)
-  if ((m = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?$/.exec(s))) return { year: m[3] ? fullYear(+m[3]) : null, month: +m[1], day: +m[2] };
+  if ((m = /^(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2}|\d{4}))?$/.exec(s))) return { year: m[3] ? fullYear(+m[3]) : null, month: +m[1], day: +m[2] };
   return null;
 }
 
@@ -60,31 +80,85 @@ const title = (v) => String(v ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
 // The rows of the sheet (arrays of cell text) → { entries, ignored, problems }. A row with a
 // NAME OF EMPLOYEE title starts a table (the printout repeats it for each division); rows without
 // any code (division titles, totals, blank rows) are skipped.
+// The date columns of a table whose name title is on row i. Dates can be on that row ("Jan. 2"),
+// or split over two rows: a month heading (often a merged cell, so it covers the blank cells to
+// its right) with day numbers on the row below; up to two rows above and below are read.
+function headerColumns(rows, i, nameCol) {
+  const get = (r) => (Array.isArray(rows[r]) ? rows[r] : []).map((v) => String(v ?? '').trim());
+  const isDateish = (c) => headerDate(c) || monthTitle(c) || dayNum(c);
+  const above = [i - 2, i - 1].filter((r) => r >= 0 && !get(r)[nameCol] && get(r).some((c, j) => j > nameCol && (monthTitle(c) || headerDate(c))));
+  const below = [];
+  for (const r of [i + 1, i + 2]) {
+    const c = get(r);
+    if (c[nameCol] || !c.some((x, j) => j > nameCol && isDateish(x))) break;
+    if (c.some((x, j) => j > nameCol && x && !isDateish(x) && !KNOWN_TITLE.test(title(x)))) break; // a data row
+    below.push(r);
+  }
+  const band = [...above, i, ...below];
+  const width = Math.max(...band.map((r) => get(r).length));
+  const cols = [];
+  for (let j = nameCol + 1; j < width; j++) {
+    let found = null;
+    for (const [bi, r] of band.entries()) {
+      const c = get(r)[j];
+      if (!c) continue;
+      const full = headerDate(c);
+      if (full && !(dayNum(c) && !/[^\d]/.test(c))) {
+        found = { col: j, label: c, parsed: full };
+        break;
+      }
+      const day = dayNum(c);
+      if (day) {
+        // the month: the nearest month heading above, at this column or to its left (merged cell)
+        for (const r2 of band.slice(0, bi).reverse()) {
+          const row = get(r2);
+          let k = j;
+          while (k > nameCol && !row[k]) k--;
+          const mt = k > nameCol ? monthTitle(row[k]) : null;
+          if (mt) {
+            found = { col: j, label: `${MONTH_NAMES[mt.month - 1].slice(0, 3)}. ${day}`, parsed: { year: mt.year, month: mt.month, day } };
+            break;
+          }
+        }
+        if (found) break;
+      }
+    }
+    if (found) cols.push(found);
+  }
+  return { cols, skip: below.length, rowsRead: band };
+}
+
 function readGrid(rows, year) {
   const entries = [];
   const ignored = new Set();
   const problems = [];
   let head = null;
+  let skip = 0;
   rows.forEach((raw, i) => {
+    if (skip > 0) return void skip--; // the day-number rows of a two-row heading
     const cells = (Array.isArray(raw) ? raw : []).map((v) => String(v ?? '').trim());
     const nameCol = cells.findIndex((c) => NAME_TITLE.test(title(c)));
     if (nameCol >= 0) {
-      const dateCols = [];
+      const band = headerColumns(rows, i, nameCol);
+      const dateAt = new Set(band.cols.map((c) => c.col));
       let noCol = null;
       cells.forEach((c, j) => {
-        if (j === nameCol || !c) return;
+        if (j === nameCol || !c || dateAt.has(j)) return;
         const t = title(c);
         if (NO_TITLE.test(t)) noCol = j;
-        else if (KNOWN_TITLE.test(t)) return;
-        else {
-          const parsed = headerDate(c);
-          if (parsed) dateCols.push({ col: j, label: c, parsed });
-          else ignored.add(c);
-        }
+        else if (!KNOWN_TITLE.test(t) && !monthTitle(c)) ignored.add(c);
       });
-      head = { nameCol, noCol, dates: resolveDates(dateCols, year), line: i + 1 };
+      head = { nameCol, noCol, dates: resolveDates(band.cols, year), line: i + 1 };
+      skip = band.skip;
       for (const d of head.dates) if (!d.date) problems.push(`Row ${i + 1}: “${d.label}” is not a valid date.`);
-      if (!head.dates.length) problems.push(`Row ${i + 1}: no date columns were found next to the name column.`);
+      if (!head.dates.length) {
+        const seen = band.rowsRead.flatMap((r) => (rows[r] || []).map((v) => String(v ?? '').trim()).filter((v, j) => v && j > nameCol)).slice(0, 12);
+        problems.push(
+          `Row ${i + 1}: no ceremony dates were found in the columns after “${cells[nameCol]}”` +
+            (seen.length ? ` (titles read there: ${seen.map((v) => `“${v}”`).join(', ')})` : ' (those title cells are empty)') +
+            '. Put the dates in the column titles, e.g. Jan. 2, 1/2/2026 or an Excel date, or day numbers (2, 9, 16…) under a month row (JANUARY).',
+        );
+      }
       return;
     }
     if (!head) return;
