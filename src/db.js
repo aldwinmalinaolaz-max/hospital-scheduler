@@ -442,8 +442,15 @@ const SCHEMA = `
     created_by TEXT,
     UNIQUE (ceremony_id, employee_id)
   );
-  -- Kind of excuse, printed as the code on the attendance sheet (LEAVE, OB, RD, PS, AM, PM, OTHER)
+  -- Kind of excuse: its code (flag_excuse_types) is printed on the attendance sheet
   ALTER TABLE flag_checkins ADD COLUMN IF NOT EXISTS excuse_type TEXT;
+  -- The excuse codes HR use (LEAVE, OB, RD, PS, AM, PM, EXC...), editable in the Ceremonies tab
+  CREATE TABLE IF NOT EXISTS flag_excuse_types (
+    code TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    needs_remarks BOOLEAN NOT NULL DEFAULT FALSE, -- e.g. EXC (other): the reason must be given
+    sort_order INTEGER NOT NULL DEFAULT 0
+  );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_flag_checkins_device ON flag_checkins(ceremony_id, device_hash) WHERE device_hash IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_flag_checkins_emp ON flag_checkins(employee_id);
   CREATE TABLE IF NOT EXISTS flag_checkin_photos (
@@ -487,6 +494,7 @@ const SCHEMA = `
   ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
   ALTER TABLE flag_settings ENABLE ROW LEVEL SECURITY;
   ALTER TABLE flag_divisions ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE flag_excuse_types ENABLE ROW LEVEL SECURITY;
   ALTER TABLE flag_ceremonies ENABLE ROW LEVEL SECURITY;
   ALTER TABLE flag_checkins ENABLE ROW LEVEL SECURITY;
   ALTER TABLE flag_checkin_photos ENABLE ROW LEVEL SECURITY;
@@ -653,6 +661,17 @@ const MIGRATIONS = [
            session_version = session_version + 1, updated_by = 'system', updated_at = now()`,
         [hashPassword(require('./config').flag.defaultPin)],
       );
+    },
+  },
+  {
+    // Excuse codes become an editable list; "other" excuses are stored as EXC (the printed code)
+    id: '2026-11-17-flag-excuse-types',
+    async run(t) {
+      const { DEFAULT_EXCUSE_TYPES } = require('./flag');
+      for (const [i, [code, label, needsRemarks]] of DEFAULT_EXCUSE_TYPES.entries()) {
+        await t.query('INSERT INTO flag_excuse_types (code, label, needs_remarks, sort_order) VALUES ($1, $2, $3, $4) ON CONFLICT (code) DO NOTHING', [code, label, !!needsRemarks, (i + 1) * 10]);
+      }
+      await t.query("UPDATE flag_checkins SET excuse_type = 'EXC' WHERE status = 'EXCUSED' AND (excuse_type IS NULL OR excuse_type = 'OTHER')");
     },
   },
 ];

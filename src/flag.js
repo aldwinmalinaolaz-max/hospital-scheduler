@@ -70,17 +70,30 @@ const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 // Check-in results. ABSENT is never stored: it is an employee with no row for a ceremony that has closed.
 // There is no "late": anyone who checks in while check-in is open is present.
 const STATUSES = { ON_TIME: 'Present', EXCUSED: 'Excused', ABSENT: 'Absent' };
-// Kinds of excuse; the key is the code printed on the attendance sheet (OTHER prints EXC)
-const EXCUSE_TYPES = {
-  LEAVE: 'Leave',
-  OB: 'Official business (OB)',
-  RD: 'Rest day / day off (RD)',
-  PS: 'Pass slip (PS)',
-  AM: 'Half day – AM',
-  PM: 'Half day – PM',
-  OTHER: 'Other (see remarks)',
-};
-const sheetCode = (k) => (k.status === 'ON_TIME' ? 'P' : k.status === 'EXCUSED' ? (k.excuse_type && k.excuse_type !== 'OTHER' ? k.excuse_type : 'EXC') : 'X');
+// Kinds of excuse, as first set up: [code printed on the attendance sheet, description, reason
+// required]. HR can rename, add and remove them (table flag_excuse_types).
+const DEFAULT_EXCUSE_TYPES = [
+  ['LEAVE', 'Leave'],
+  ['OB', 'Official business'],
+  ['RD', 'Rest day / day off'],
+  ['PS', 'Pass slip'],
+  ['AM', 'Half day – AM'],
+  ['PM', 'Half day – PM'],
+  ['EXC', 'Other excuse (see remarks)', true],
+];
+// Codes that mean present or absent on the sheet, so they cannot be excuse codes
+const RESERVED_CODES = ['P', 'X', 'A', 'PRESENT', 'ABSENT', 'ABS', 'OTHER'];
+async function getExcuseTypes(db) {
+  return db.query('SELECT code, label, needs_remarks FROM flag_excuse_types ORDER BY sort_order, code');
+}
+// A code as typed: letters, numbers and dashes, up to 10 (dots and spaces dropped: "O.B." → OB)
+function cleanExcuseCode(v) {
+  const s = String(v || '').toUpperCase().replace(/[\s.]/g, '');
+  if (!/^[A-Z0-9][A-Z0-9-]{0,9}$/.test(s)) return [null, 'The code must be 1 to 10 letters or numbers, e.g. SL or TO.'];
+  if (RESERVED_CODES.includes(s)) return [null, `${s} is used on the sheet for present / absent; choose another code.`];
+  return [s, null];
+}
+const sheetCode = (k) => (k.status === 'ON_TIME' ? 'P' : k.status === 'EXCUSED' ? k.excuse_type || 'EXC' : 'X');
 
 const DEFAULT_SETTINGS = {
   venue: 'ZRMC FLAGPOLE / MAIN GROUNDS',
@@ -383,7 +396,9 @@ module.exports = {
   EMPLOYEE_COOKIE,
   DEVICE_COOKIE,
   STATUSES,
-  EXCUSE_TYPES,
+  DEFAULT_EXCUSE_TYPES,
+  getExcuseTypes,
+  cleanExcuseCode,
   sheetCode,
   DEFAULT_DIVISIONS,
   OLD_DIVISION_NAMES,

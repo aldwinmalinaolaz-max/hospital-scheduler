@@ -5,6 +5,7 @@
 const config = require('../config');
 const auth = require('../auth');
 const flag = require('../flag');
+const sheetImport = require('../flagSheetImport');
 const u = require('../util');
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -42,18 +43,20 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
 
   router.get('/flag/options', can, async (req, res) => {
     const divisionList = await flag.getDivisions(db);
-    const [deps, units, settings, saved] = await Promise.all([
+    const [deps, units, settings, saved, excuses] = await Promise.all([
       db.query("SELECT DISTINCT department FROM employees WHERE department IS NOT NULL AND department <> '' ORDER BY 1"),
       db.query("SELECT DISTINCT unit FROM employees WHERE unit IS NOT NULL AND unit <> '' ORDER BY 1"),
       flag.getSettings(db),
       db.one('SELECT updated_by, updated_at FROM flag_settings WHERE id = 1'),
+      flag.getExcuseTypes(db),
     ]);
     res.json({
       // The fixed divisions, plus any older values still in use (for filtering)
       divisions: [...divisionList, ...deps.map((d) => d.department).filter((d) => !divisionList.includes(d))],
       division_choices: divisionList,
       employment_types: flag.EMPLOYMENT_TYPES,
-      excuse_types: flag.EXCUSE_TYPES,
+      excuse_types: Object.fromEntries(excuses.map((x) => [x.code, x.label])),
+      excuse_type_list: excuses,
       units: units.map((d) => d.unit),
       today: u.todayStr(), // hospital date (the browser's clock or time zone may differ)
       settings,
@@ -283,11 +286,15 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const ph = flag.phase(c);
     if (ph === 'UPCOMING' && status !== 'EXCUSED') throw new ValidationError('Before the ceremony, employees can only be excused (e.g. approved leave).');
     const remarks = String(b.remarks || '').trim().toUpperCase().slice(0, 300);
-    // Excuses have a type (printed on the attendance sheet); the remarks are then optional
-    // (without a type but with a reason, the excuse counts as "other")
-    const excuseType = status === 'EXCUSED' ? (flag.EXCUSE_TYPES[b.excuse_type] ? b.excuse_type : remarks ? 'OTHER' : null) : null;
-    if (status === 'EXCUSED' && !excuseType) throw new ValidationError('Choose the kind of excuse: leave, OB, rest day, pass slip, AM, PM or other.');
-    if (status !== 'CLEAR' && !remarks && (status !== 'EXCUSED' || excuseType === 'OTHER')) {
+    // Excuses have a type (its code is printed on the attendance sheet); the remarks are then
+    // optional, except for types such as EXC (other). Without a type but with a reason, the
+    // excuse counts as the first type that needs a reason ("other").
+    const types = status === 'EXCUSED' ? await flag.getExcuseTypes(db) : [];
+    const wanted = b.excuse_type === 'OTHER' ? 'EXC' : b.excuse_type;
+    const excuse = types.find((x) => x.code === wanted) || (remarks ? types.find((x) => x.needs_remarks) : null) || null;
+    const excuseType = excuse ? excuse.code : null;
+    if (status === 'EXCUSED' && !excuse) throw new ValidationError(`Choose the kind of excuse: ${types.map((x) => x.code).join(', ')}.`);
+    if (status !== 'CLEAR' && !remarks && (status !== 'EXCUSED' || excuse.needs_remarks)) {
       throw new ValidationError('Please give the reason, e.g. ON APPROVED LEAVE, ON DUTY AT ER, GPS NOT WORKING.');
     }
     const emp = await db.one('SELECT * FROM employees WHERE id = $1', [idParam(b.employee_id)]);
@@ -468,7 +475,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       former_name: config.hospitalFormerName || '',
       ceremonies: held.map((c) => ({ id: c.id, date: c.ceremony_date, title: c.title })),
       divisions: [...divisions.values()].map((d) => ({ ...d, present_per_ceremony: held.map((_, i) => d.rows.filter((r) => r.cells[i] === 'P').length) })),
-      codes: { P: 'Present', X: 'Absent', ...Object.fromEntries(Object.entries(flag.EXCUSE_TYPES).map(([k, v]) => [k === 'OTHER' ? 'EXC' : k, v.replace(/ \(.*\)$/, '')])) },
+      codes: { P: 'Present', X: 'Absent', ...Object.fromEntries((await flag.getExcuseTypes(db)).map((x) => [x.code, x.label])) },
     };
   }
   router.get('/flag/sheet', can, async (req, res) => res.json(await sheet(req.query)));
@@ -493,6 +500,205 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="ZRMC-flag-ceremony-${from}-to-${to}.csv"`);
     res.end(csv);
+  });
+
+  // ---------- Excuse codes (LEAVE, OB, AM, PM...: the tags printed on the attendance sheet) ----------
+
+  router.get('/flag/excuse-types', can, async (req, res) => {
+    const rows = await db.query(
+      `SELECT t.code, t.label, t.needs_remarks, (SELECT COUNT(*)::int FROM flag_checkins k WHERE k.status = 'EXCUSED' AND k.excuse_type = t.code) AS uses
+       FROM flag_excuse_types t ORDER BY t.sort_order, t.code`,
+    );
+    res.json({ rows });
+  });
+
+  const cleanExcuse = (b, current = {}) => {
+    const [code, err] = b.code === undefined && current.code ? [current.code, null] : flag.cleanExcuseCode(b.code);
+    if (err) throw new ValidationError(err);
+    const label = String(b.label ?? current.label ?? '').trim().replace(/\s+/g, ' ').slice(0, 80);
+    if (!label) throw new ValidationError('Give a description, e.g. Sick leave.');
+    return { code, label, needs_remarks: b.needs_remarks === undefined ? !!current.needs_remarks : !!b.needs_remarks };
+  };
+
+  router.post('/flag/excuse-types', can, async (req, res) => {
+    const x = cleanExcuse(req.body || {});
+    if (await db.one('SELECT 1 FROM flag_excuse_types WHERE code = $1', [x.code])) throw fail(409, `The code ${x.code} already exists.`);
+    const last = await db.one('SELECT COALESCE(MAX(sort_order), 0) AS n FROM flag_excuse_types');
+    await db.query('INSERT INTO flag_excuse_types (code, label, needs_remarks, sort_order) VALUES ($1, $2, $3, $4)', [x.code, x.label, x.needs_remarks, Number(last.n) + 10]);
+    res.status(201).json(x);
+  });
+
+  // Renaming a code changes it on every excuse already recorded (and so on past attendance sheets)
+  router.patch('/flag/excuse-types/:code', can, async (req, res) => {
+    const cur = await db.one('SELECT * FROM flag_excuse_types WHERE code = $1', [String(req.params.code)]);
+    if (!cur) throw fail(404, 'Excuse code not found.');
+    const x = cleanExcuse(req.body || {}, cur);
+    const moved = await db.tx(async (t) => {
+      if (x.code !== cur.code) {
+        if (await t.one('SELECT 1 FROM flag_excuse_types WHERE code = $1', [x.code])) throw fail(409, `The code ${x.code} already exists.`);
+        await t.query('UPDATE flag_excuse_types SET code = $1 WHERE code = $2', [x.code, cur.code]);
+      }
+      await t.query('UPDATE flag_excuse_types SET label = $1, needs_remarks = $2 WHERE code = $3', [x.label, x.needs_remarks, x.code]);
+      if (x.code === cur.code) return 0;
+      return (await t.query("UPDATE flag_checkins SET excuse_type = $1 WHERE status = 'EXCUSED' AND excuse_type = $2 RETURNING id", [x.code, cur.code])).length;
+    });
+    res.json({ ...x, records_changed: moved });
+  });
+
+  router.delete('/flag/excuse-types/:code', can, async (req, res) => {
+    const code = String(req.params.code);
+    if (!(await db.one('SELECT 1 FROM flag_excuse_types WHERE code = $1', [code]))) throw fail(404, 'Excuse code not found.');
+    const used = await db.one("SELECT COUNT(*)::int AS n FROM flag_checkins WHERE status = 'EXCUSED' AND excuse_type = $1", [code]);
+    if (used.n) throw fail(409, `${code} is used on ${used.n} recorded excuse${used.n === 1 ? '' : 's'}; rename it instead, or change those excuses first.`);
+    if ((await db.one('SELECT COUNT(*)::int AS n FROM flag_excuse_types')).n <= 1) throw new ValidationError('Keep at least one kind of excuse.');
+    await db.query('DELETE FROM flag_excuse_types WHERE code = $1', [code]);
+    res.json({ ok: true });
+  });
+
+  // ---------- Import past attendance sheets (the paper / Excel grid kept before the system) ----------
+  // Body: rows (the sheet's cells, row by row), kind LOWERING | RAISING, year (for dates such as
+  // "Jan. 2"), dry_run. P is saved as present, excuse codes as excused, X stays absent; anything
+  // already recorded is left as it is.
+  router.post('/flag/attendance-import', can, async (req, res) => {
+    const b = req.body || {};
+    const rows = Array.isArray(b.rows) ? b.rows.slice(0, 3000) : [];
+    if (!rows.length) throw new ValidationError('No rows found. Choose the Excel file of the attendance sheet.');
+    const kind = b.kind === 'RAISING' ? 'RAISING' : b.kind === 'LOWERING' ? 'LOWERING' : null;
+    if (!kind) throw new ValidationError('Choose whether this is a flag retreat (lowering) or flag raising sheet.');
+    const today = u.todayStr();
+    const year = Number(b.year);
+    if (!Number.isInteger(year) || year < 2000 || year > Number(today.slice(0, 4))) throw new ValidationError('Choose the year of the sheet.');
+
+    const grid = sheetImport.readGrid(rows, year);
+    if (!grid.found) throw new ValidationError('No “NAME OF EMPLOYEE” column title was found. The sheet needs a title row with the name column and one column per date.');
+    const errors = [...grid.problems];
+    const types = await flag.getExcuseTypes(db);
+    const excuseCodes = types.map((x) => x.code);
+    const employees = await db.query('SELECT id, employee_no, last_name, first_name, middle_name, department, created_at FROM employees');
+    const match = sheetImport.makeMatcher(employees, flag.cleanEmployeeNo);
+
+    const unmatched = [];
+    const ambiguous = [];
+    const seen = new Map();
+    const marks = []; // { employee, date, kind: P | X | EXCUSED, code }
+    const dates = new Set();
+    for (const en of grid.entries) {
+      const m = match(en);
+      if (!m.employee) {
+        if (m.candidates) ambiguous.push({ line: en.line, name: en.name, candidates: m.candidates.map((e) => `${flag.fullName(e)} (${e.employee_no})`) });
+        else unmatched.push({ line: en.line, name: en.name || en.employee_no });
+        continue;
+      }
+      if (seen.has(m.employee.id)) {
+        errors.push(`Row ${en.line}: ${en.name} is also on row ${seen.get(m.employee.id)}.`);
+        continue;
+      }
+      seen.set(m.employee.id, en.line);
+      for (const c of en.codes) {
+        if (!c.date) continue;
+        const r = sheetImport.readCode(c.code, excuseCodes);
+        if (!r) {
+          if (errors.length < 200) errors.push(`Row ${en.line} (${en.name}), ${c.label}: “${c.code}” is not a code. Use P, X or ${excuseCodes.join(', ')} (add new codes under Excuse codes).`);
+          continue;
+        }
+        if (r.kind === 'BLANK') continue;
+        if (c.date >= today) {
+          if (errors.length < 200) errors.push(`${c.label} (${c.date}) is not in the past; only past ceremonies can be imported.`);
+          continue;
+        }
+        dates.add(c.date);
+        marks.push({ employee: m.employee, date: c.date, kind: r.kind, code: r.code || null });
+      }
+    }
+    const errorList = [...new Set(errors)];
+    if (!marks.length && !errorList.length) errorList.push('No attendance codes were read for employees in the list.');
+
+    // The ceremonies: weekly ones are created first (as the reports do), then the dates are matched
+    const sorted = [...dates].sort();
+    const isLowering = (t) => /LOWERING|RETREAT/i.test(t);
+    const settings = await flag.getSettings(db);
+    if (sorted.length && settings.active_from) await flag.ensureCeremonies(db, settings, sorted[0], sorted[sorted.length - 1]);
+    const existing = sorted.length ? await db.query('SELECT * FROM flag_ceremonies WHERE ceremony_date = ANY($1::text[]) ORDER BY cancelled, id', [sorted]) : [];
+    const ceremonyOf = new Map();
+    for (const d of sorted) {
+      const same = existing.filter((c) => c.ceremony_date === d && (kind === 'LOWERING') === isLowering(c.title));
+      const held = same.find((c) => !c.cancelled);
+      if (held) ceremonyOf.set(d, held);
+      else if (same.length) errorList.push(`${d}: that ceremony is marked cancelled in the system${same[0].cancel_reason ? ` (${same[0].cancel_reason})` : ''}; restore it in the Ceremonies tab first.`);
+    }
+    const ids = [...ceremonyOf.values()].map((c) => c.id);
+    const recorded = ids.length && seen.size
+      ? new Set((await db.query('SELECT ceremony_id, employee_id FROM flag_checkins WHERE ceremony_id = ANY($1::int[]) AND employee_id = ANY($2::int[])', [ids, [...seen.keys()]])).map((k) => `${k.ceremony_id}:${k.employee_id}`))
+      : new Set();
+    const counts = {};
+    let already = 0;
+    const toSave = [];
+    for (const mk of marks) {
+      const c = ceremonyOf.get(mk.date);
+      if (c && mk.kind !== 'X' && recorded.has(`${c.id}:${mk.employee.id}`)) {
+        already++;
+        continue;
+      }
+      const label = mk.kind === 'EXCUSED' ? mk.code : mk.kind;
+      counts[label] = (counts[label] || 0) + 1;
+      if (mk.kind !== 'X') toSave.push(mk);
+    }
+    const report = {
+      kind,
+      employees: seen.size,
+      unmatched,
+      ambiguous,
+      ignored_columns: grid.ignored,
+      dates: sorted.map((d) => ({ date: d, exists: ceremonyOf.has(d) })),
+      counts,
+      already_recorded: already,
+    };
+    if (errorList.length) {
+      return res.status(400).json({ error: `${errorList.length} problem${errorList.length === 1 ? '' : 's'} found. Nothing was imported.`, errors: errorList.slice(0, 200), report });
+    }
+    if (b.dry_run) return res.json({ ok: true, ...report });
+
+    // Save: missing ceremonies, the check-ins, and employees count as on the list from their first date
+    const pick = settings.schedule.find((x) => (kind === 'LOWERING') === isLowering(x.title));
+    const times = pick || (kind === 'LOWERING'
+      ? { title: 'FLAG LOWERING CEREMONY', opens: '16:30', starts: '17:00', closes: '17:30' }
+      : { title: 'FLAG RAISING CEREMONY', opens: '07:00', starts: '08:00', closes: '09:00' });
+    const out = await db.tx(async (t) => {
+      let created = 0;
+      for (const d of sorted) {
+        if (ceremonyOf.has(d)) continue;
+        const c = await t.one(
+          `INSERT INTO flag_ceremonies (ceremony_date, slot, title, opens_at, starts_at, closes_at, source, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, 'MANUAL', $7) RETURNING *`,
+          [d, `M-${flag.newToken().slice(0, 10)}`, times.title, times.opens, times.starts, times.closes, req.user.username],
+        );
+        ceremonyOf.set(d, c);
+        created++;
+      }
+      let saved = 0;
+      for (let i = 0; i < toSave.length; i += 500) {
+        const params = [];
+        const values = toSave.slice(i, i + 500).map((mk) => {
+          const c = ceremonyOf.get(mk.date);
+          params.push(c.id, mk.employee.id, mk.kind === 'P' ? 'ON_TIME' : 'EXCUSED', u.localDateTime(c.ceremony_date, c.starts_at).toISOString(), req.user.username, mk.code);
+          const n = params.length;
+          return `($${n - 5}, $${n - 4}, $${n - 3}, $${n - 2}, 'IMPORT', 'FROM ATTENDANCE SHEET', $${n - 1}, $${n})`;
+        });
+        const r = await t.query(
+          `INSERT INTO flag_checkins (ceremony_id, employee_id, status, checked_at, source, remarks, created_by, excuse_type)
+           VALUES ${values.join(', ')} ON CONFLICT (ceremony_id, employee_id) DO NOTHING RETURNING id`,
+          params,
+        );
+        saved += r.length;
+      }
+      const first = new Map();
+      for (const mk of marks) if (!first.has(mk.employee.id) || mk.date < first.get(mk.employee.id)) first.set(mk.employee.id, mk.date);
+      for (const [id, d] of first) {
+        await t.query('UPDATE employees SET created_at = $2 WHERE id = $1 AND created_at > $2', [id, u.localDateTime(d, '00:00').toISOString()]);
+      }
+      return { created, saved };
+    });
+    res.status(201).json({ ok: true, ...report, ceremonies_created: out.created, saved: out.saved });
   });
 
   // ---------- Divisions and units (names) ----------

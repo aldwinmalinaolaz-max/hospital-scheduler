@@ -1917,6 +1917,7 @@ ${cat.hospitalName}`;
       sheetForm.to.value = flagOpts.today;
     }
     if (!sumF.to.value) sumF.to.value = flagOpts.today;
+    $('#flagExcuseCodes').textContent = Object.keys(flagOpts.excuse_types || {}).join(', ');
     $$('[data-flag-dept]').forEach((sel) => {
       const v = sel.value;
       sel.innerHTML = '<option value="">All divisions</option>' + flagOpts.divisions.map((d) => `<option${d === v ? ' selected' : ''}>${esc(d)}</option>`).join('');
@@ -2103,7 +2104,7 @@ ${cat.hospitalName}`;
         <td class="small">${esc(r.unit || '')}</td>
         <td>${flagPill(r.status)}</td>
         <td class="nowrap">${r.time && r.status !== 'EXCUSED' ? fmtTime(r.time) : ''}</td>
-        <td class="small">${r.source === 'GPS' ? `Phone GPS<div class="sub">${r.distance_m} m from venue (±${r.accuracy_m} m)</div>` : r.source === 'MANUAL' ? `By ${esc(r.marked_by)}` : r.source === 'QR' ? `QR scan<div class="sub">by ${esc(r.marked_by)}</div>` : ''}${r.source === 'GPS' && r.marked_by ? `<div class="sub">changed by ${esc(r.marked_by)}</div>` : ''}</td>
+        <td class="small">${r.source === 'GPS' ? `Phone GPS<div class="sub">${r.distance_m} m from venue (±${r.accuracy_m} m)</div>` : r.source === 'MANUAL' ? `By ${esc(r.marked_by)}` : r.source === 'QR' ? `QR scan<div class="sub">by ${esc(r.marked_by)}</div>` : r.source === 'IMPORT' ? `Imported sheet<div class="sub">by ${esc(r.marked_by)}</div>` : ''}${r.source === 'GPS' && r.marked_by ? `<div class="sub">changed by ${esc(r.marked_by)}</div>` : ''}</td>
         <td class="no-print">${r.has_photo ? `<img class="att-thumb" loading="lazy" src="/api/admin/flag/checkins/${r.checkin_id}/photo" alt="Selfie" data-flag-photo>` : ''}</td>
         <td class="small">${r.status === 'EXCUSED' && r.excuse_type ? `<b>${esc(r.excuse_type === 'OTHER' ? 'EXC' : r.excuse_type)}</b> ` : ''}${esc(r.remarks || '')}</td>
         <td class="no-print">${detail.ceremony.phase === 'CANCELLED' ? '' : `<button class="btn sm secondary" data-flag-mark="${r.id}">${r.checkin_id ? 'Change' : closed || detail.ceremony.phase === 'OPEN' ? 'Mark' : 'Excuse'}</button>`}</td>
@@ -2120,7 +2121,7 @@ ${cat.hospitalName}`;
     if (!b) return;
     const r = detail.rows.find((x) => x.id === Number(b.dataset.flagMark));
     const c = detail.ceremony;
-    const choices = (c.phase === 'UPCOMING' ? ['EXCUSED'] : ['ON_TIME', 'EXCUSED']).concat(r.checkin_id && ['MANUAL', 'QR'].includes(r.source) ? ['CLEAR'] : []);
+    const choices = (c.phase === 'UPCOMING' ? ['EXCUSED'] : ['ON_TIME', 'EXCUSED']).concat(r.checkin_id && ['MANUAL', 'QR', 'IMPORT'].includes(r.source) ? ['CLEAR'] : []);
     const label = { ...FLAG_LABEL, ON_TIME: 'Present', CLEAR: r.status === 'EXCUSED' ? 'Remove excuse' : 'Remove (back to absent)' };
     openDialog(
       `<h2>${esc(r.name)}</h2>
@@ -2128,7 +2129,7 @@ ${cat.hospitalName}`;
        <div class="grid">
          <label class="field"><span class="req">Set to</span><select name="status">${choices.map((s) => `<option value="${s}"${s === r.status ? ' selected' : ''}>${esc(label[s])}</option>`).join('')}</select></label>
          <label class="field" id="excuseField"><span class="req">Kind of excuse</span><select name="excuse_type"><option value="">Choose…</option>${Object.entries(flagOpts?.excuse_types || {})
-           .map(([k, l]) => `<option value="${k}"${k === r.excuse_type ? ' selected' : ''}>${esc(l)}</option>`)
+           .map(([k, l]) => `<option value="${esc(k)}"${k === r.excuse_type ? ' selected' : ''}>${esc(k)} – ${esc(l)}</option>`)
            .join('')}</select></label>
          <label class="field"><span id="remarksLabel">Reason</span><input name="remarks" value="${esc(r.remarks || '')}" placeholder="E.G. ON APPROVED LEAVE, ON DUTY AT ER, GPS NOT WORKING (SEEN BY HR)"></label>
        </div>
@@ -2145,7 +2146,8 @@ ${cat.hospitalName}`;
       const excused = st.value === 'EXCUSED';
       $('#excuseField').classList.toggle('hidden', !excused);
       ex.required = excused;
-      $('#remarksLabel').textContent = excused && ex.value && ex.value !== 'OTHER' ? 'Remarks (optional)' : st.value === 'CLEAR' ? 'Remarks' : 'Reason';
+      const needs = (flagOpts?.excuse_type_list || []).find((x) => x.code === ex.value)?.needs_remarks;
+      $('#remarksLabel').textContent = excused && ex.value && !needs ? 'Remarks (optional)' : st.value === 'CLEAR' ? 'Remarks' : 'Reason';
     };
     st.addEventListener('change', syncExcuse);
     ex.addEventListener('change', syncExcuse);
@@ -2255,6 +2257,123 @@ ${cat.hospitalName}`;
     }
   });
   $('#flagSheetCsv').addEventListener('click', () => sheetF.reportValidity() && (window.location.href = `/api/admin/flag/sheet.csv?${sheetQuery()}`));
+
+  // ---------- Excuse codes (the tags printed on the attendance sheet: LEAVE, OB, AM, PM...) ----------
+  async function excuseDialog() {
+    const { rows } = await api('/admin/flag/excuse-types');
+    const cells = (x = {}) => `<td><input data-f="code" value="${esc(x.code || '')}" maxlength="10" aria-label="Code" placeholder="e.g. SL" style="width:7em"></td>
+      <td><input data-f="label" value="${esc(x.label || '')}" maxlength="80" aria-label="Description" placeholder="e.g. Sick leave" data-nocaps></td>
+      <td style="text-align:center"><input type="checkbox" data-f="needs_remarks"${x.needs_remarks ? ' checked' : ''} aria-label="Reason required"></td>`;
+    openDialog(
+      `<h2>Excuse codes</h2>
+       <p class="muted small">The tags used when an employee is excused, printed as the code on the attendance sheet. Renaming a code (e.g. LEAVE → VL)
+       also changes it on every excuse already recorded. <b>P</b> (present) and <b>X</b> (absent) are fixed. A code in use cannot be removed.</p>
+       <div class="table-wrap"><table class="excuse-table"><thead><tr><th>Code</th><th>Description</th><th>Reason required</th><th>Used</th><th></th></tr></thead><tbody>
+         ${rows.map((x) => `<tr data-code="${esc(x.code)}">${cells(x)}<td class="small nowrap">${x.uses}×</td>
+           <td class="nowrap"><button type="button" class="btn sm secondary" data-exc-save>Save</button>${x.uses ? '' : ' <button type="button" class="btn sm danger" data-exc-del>Remove</button>'}</td></tr>`).join('')}
+         <tr data-new>${cells()}<td></td><td><button type="button" class="btn sm" data-exc-add>+ Add</button></td></tr>
+       </tbody></table></div>
+       <div class="alert error hidden" id="excError"></div>`,
+      async () => {},
+      { wide: true, saveLabel: 'Done' },
+    );
+    $('#dlgForm').onclick = async (e) => {
+      const b = e.target.closest('button[type=button]');
+      if (!b) return;
+      const tr = b.closest('tr');
+      const f = (k) => tr.querySelector(`[data-f=${k}]`);
+      const body = { code: f('code').value, label: f('label').value, needs_remarks: f('needs_remarks').checked };
+      try {
+        if (b.hasAttribute('data-exc-add')) await api('/admin/flag/excuse-types', { method: 'POST', body });
+        else if (b.hasAttribute('data-exc-save')) {
+          const r = await api(`/admin/flag/excuse-types/${encodeURIComponent(tr.dataset.code)}`, { method: 'PATCH', body });
+          if (r.records_changed) alert(`${tr.dataset.code} is now ${r.code} on ${r.records_changed} recorded excuse${r.records_changed === 1 ? '' : 's'}.`);
+        } else if (b.hasAttribute('data-exc-del')) {
+          if (!confirm(`Remove the code ${tr.dataset.code}?`)) return;
+          await api(`/admin/flag/excuse-types/${encodeURIComponent(tr.dataset.code)}`, { method: 'DELETE' });
+        } else return;
+        await loadFlagOptions(true);
+        await excuseDialog();
+      } catch (err) {
+        showError($('#excError'), err.message);
+      }
+    };
+  }
+  $('#flagExcuseBtn').addEventListener('click', guard(excuseDialog));
+
+  // ---------- Import past attendance sheets (kept on paper / in Excel before the system) ----------
+  $('#flagSheetImportBtn').addEventListener('click', () => {
+    let grid = [];
+    let checked = null;
+    const year = Number(flagOpts?.today?.slice(0, 4)) || new Date().getFullYear();
+    const codes = Object.keys(flagOpts?.excuse_types || {});
+    openDialog(
+      `<h2>Import past attendance sheet</h2>
+       <p class="muted small">For attendance kept before the system, typed in Excel like the printed form: a <b>NAME OF EMPLOYEE</b> column
+       (e.g. ROJAS-TURCO, HANNAH M.) and one column per ceremony date (e.g. <i>Jan. 2</i>) with <b>P</b>, <b>X</b> or an excuse code
+       (${esc(codes.join(', '))}). An <i>Employee No.</i> column is used when there is one; No., Designation and TOTAL are ignored.
+       Several divisions on one sheet are fine. Employees must already be in the employee list.</p>
+       <div class="grid">
+         <label class="field"><span class="req">Ceremony</span><select id="shKind"><option value="LOWERING">Flag retreat (lowering)</option><option value="RAISING">Flag raising</option></select></label>
+         <label class="field"><span class="req">Year of the sheet</span><input type="number" id="shYear" min="2000" max="${year}" value="${year}"></label>
+       </div>
+       <p class="muted small" style="margin-top:0">Dates without a year (Jan. 2) take this year; a sheet running from December into January moves to the next year by itself.</p>
+       <label class="field">Excel or CSV file<input type="file" id="shFile" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"></label>
+       <div id="shResult" class="small" aria-live="polite" style="margin-top:8px"></div>`,
+      async () => {
+        if (!grid.length) throw new Error('Choose the Excel file of the attendance sheet first.');
+        if (!checked) throw new Error('Wait for the check to finish.');
+        const r = await api('/admin/flag/attendance-import', { method: 'POST', body: { rows: grid, ...params() } });
+        alert(`Imported: ${r.saved} entr${r.saved === 1 ? 'y' : 'ies'} for ${r.employees} employees${r.ceremonies_created ? `, ${r.ceremonies_created} past ceremon${r.ceremonies_created === 1 ? 'y' : 'ies'} added` : ''}.${r.already_recorded ? ` ${r.already_recorded} were already recorded and were left as they were.` : ''}`);
+        flagLoaders.summary();
+      },
+      { wide: true, saveLabel: 'Import' },
+    );
+    const params = () => ({ kind: $('#shKind').value, year: Number($('#shYear').value) });
+    const btn = $('#dlgForm [value=save]');
+    btn.disabled = true;
+    const list = (items) => `<ul class="list-tight">${items.map((x) => `<li>${x}</li>`).join('')}</ul>`;
+    const describe = (r) => {
+      const nice = (d) => fmtDate(d, { month: 'short', day: 'numeric', year: 'numeric' });
+      const made = r.dates.filter((d) => !d.exists);
+      return `<p><b>${r.employees} employee${r.employees === 1 ? '' : 's'} matched</b> · ${r.dates.length} ceremony date${r.dates.length === 1 ? '' : 's'} (${esc(nice(r.dates[0]?.date || ''))}${r.dates.length > 1 ? ` to ${esc(nice(r.dates[r.dates.length - 1].date))}` : ''})${made.length ? `, ${made.length} not yet in the system (they will be added)` : ''}.</p>
+        <p>To record: ${Object.entries(r.counts).map(([k, n]) => `<b>${esc(k)}</b> ${n}`).join(' · ') || 'nothing new'}${r.already_recorded ? ` · ${r.already_recorded} already recorded (left as they are)` : ''}.
+        X is absent: nothing is saved for it, and the employee counts as on the list from their first date.</p>
+        ${r.unmatched.length ? `<div class="alert warn small"><b>${r.unmatched.length} name${r.unmatched.length === 1 ? '' : 's'} not in the employee list</b> (skipped; add them under Employees first if they should be included):${list(r.unmatched.slice(0, 30).map((x) => `Row ${x.line}: ${esc(x.name)}`))}${r.unmatched.length > 30 ? `…and ${r.unmatched.length - 30} more` : ''}</div>` : ''}
+        ${r.ambiguous.length ? `<div class="alert warn small"><b>${r.ambiguous.length} name${r.ambiguous.length === 1 ? " matches" : "s match"} more than one employee</b> (skipped; write the full first name or add an Employee No. column):${list(r.ambiguous.map((x) => `Row ${x.line}: ${esc(x.name)} → ${esc(x.candidates.join(' / '))}`))}</div>` : ''}
+        ${r.ignored_columns.length ? `<p class="muted">Columns ignored: ${esc(r.ignored_columns.join(', '))}.</p>` : ''}`;
+    };
+    const check = async () => {
+      checked = null;
+      btn.disabled = true;
+      const out = $('#shResult');
+      if (!grid.length) return;
+      out.textContent = 'Checking the sheet…';
+      try {
+        const r = await api('/admin/flag/attendance-import', { method: 'POST', body: { rows: grid, ...params(), dry_run: true } });
+        checked = r;
+        out.innerHTML = describe(r);
+        btn.disabled = !r.employees;
+      } catch (err) {
+        const data = err.data || {};
+        out.innerHTML = `<div class="alert error"><b>${esc(err.message)}</b>${data.errors ? list(data.errors.map(esc)) : ''}</div>${data.report?.employees ? describe(data.report) : ''}`;
+      }
+    };
+    $('#shFile').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      $('#shResult').textContent = 'Reading the file…';
+      try {
+        grid = (await SheetRead.readFile(file)).rows;
+        await check();
+      } catch (err) {
+        grid = [];
+        $('#shResult').innerHTML = `<span style="color:var(--danger)">${esc(err.message)}</span>`;
+      }
+    });
+    $('#shKind').addEventListener('change', check);
+    $('#shYear').addEventListener('change', check);
+  });
 
   // Summary
   const sumF = $('#flagSumForm');

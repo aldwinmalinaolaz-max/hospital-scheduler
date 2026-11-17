@@ -208,7 +208,7 @@
       <div data-flagview="summary" class="hidden">
         <div class="card no-print">
           <h3>Attendance sheet (for printing)</h3>
-          <p class="muted small">The monthly attendance form: one column per ceremony date with <b>P</b> (present), <b>X</b> (absent) or the excuse (LEAVE, OB, RD, PS, AM, PM), and the total present. One page per division.</p>
+          <p class="muted small">The monthly attendance form: one column per ceremony date with <b>P</b> (present), <b>X</b> (absent) or the excuse code (<span id="flagExcuseCodes">LEAVE, OB, RD, PS, AM, PM</span>), and the total present. One page per division.</p>
           <form class="filters" id="flagSheetForm" style="margin:0">
             <label class="field">From<input type="date" name="from" required></label>
             <label class="field">To<input type="date" name="to" required></label>
@@ -219,6 +219,10 @@
             <button class="btn" type="button" id="flagSheetPrint">Print attendance sheet</button>
             <button class="btn secondary" type="button" id="flagSheetCsv">Download (CSV)</button>
           </form>
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn secondary" type="button" id="flagSheetImportBtn" title="Add attendance kept on paper or in Excel before the system">Import past attendance sheet</button>
+            <button class="btn secondary" type="button" id="flagExcuseBtn" title="Rename, add or remove the excuse tags (LEAVE, OB, AM, PM...)">Excuse codes</button>
+          </div>
         </div>
         <h3 class="no-print" style="margin:16px 0 8px">Summary per employee</h3>
         <form class="filters no-print" id="flagSumForm">

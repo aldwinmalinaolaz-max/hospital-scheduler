@@ -1923,6 +1923,137 @@ test('attendance sheet includes weekly ceremonies of months nobody opened', asyn
   await db.query('UPDATE flag_settings SET data = $1 WHERE id = 1', [row.data]);
 });
 
+test('flag ceremony excuse codes can be renamed, added and removed', async () => {
+  const admin = await login();
+  const list = async () => (await call('/admin/flag/excuse-types', { cookie: admin })).data.rows;
+  assert.deepEqual((await list()).map((x) => x.code).slice(0, 7), ['LEAVE', 'OB', 'RD', 'PS', 'AM', 'PM', 'EXC']);
+  const add = (body) => call('/admin/flag/excuse-types', { method: 'POST', cookie: admin, body });
+  assert.equal((await add({ code: 's.l.', label: 'Sick leave' })).status, 201);
+  assert.equal((await add({ code: 'SL', label: 'Again' })).status, 409);
+  assert.equal((await add({ code: 'P', label: 'Present?' })).status, 400);
+  assert.equal((await add({ code: 'TO', label: '' })).status, 400);
+  assert.equal((await add({ code: 'TO', label: 'Travel order' })).status, 201);
+  const opts = (await call('/admin/flag/options', { cookie: admin })).data;
+  assert.equal(opts.excuse_types.SL, 'Sick leave');
+
+  await call('/admin/flag/employees/import', { method: 'POST', cookie: admin, body: { rows: [{ employee_no: 'XC-1', last_name: 'tagger', first_name: 'tess', division: 'Nursing' }] } });
+  const emp = await db.one("SELECT id FROM employees WHERE employee_no = 'XC-1'");
+  await db.query("UPDATE employees SET created_at = '2024-01-01' WHERE id = $1", [emp.id]);
+  const c = await db.one("INSERT INTO flag_ceremonies (ceremony_date, slot, title, opens_at, starts_at, closes_at, source) VALUES ('2024-03-01', 'M-xc', 'FLAG LOWERING CEREMONY', '16:30', '17:00', '17:30', 'MANUAL') RETURNING id");
+  const mark = (body) => call(`/admin/flag/ceremonies/${c.id}/mark`, { method: 'POST', cookie: admin, body: { employee_id: emp.id, status: 'EXCUSED', ...body } });
+  assert.equal((await mark({ excuse_type: 'SL' })).status, 200);
+  assert.equal((await mark({ excuse_type: 'EXC' })).status, 400); // "other" needs the reason
+  assert.equal((await mark({ excuse_type: 'OTHER', remarks: 'seminar' })).status, 200); // old name still read
+  assert.equal((await db.one('SELECT excuse_type FROM flag_checkins WHERE ceremony_id = $1', [c.id])).excuse_type, 'EXC');
+  assert.equal((await mark({ excuse_type: 'LEAVE' })).status, 200);
+
+  // Rename LEAVE to VL: the recorded excuse follows, and the sheet prints VL
+  const patch = (code, body) => call(`/admin/flag/excuse-types/${code}`, { method: 'PATCH', cookie: admin, body });
+  assert.equal((await patch('LEAVE', { code: 'SL' })).status, 409);
+  const r = await patch('LEAVE', { code: 'VL', label: 'Vacation leave' });
+  assert.equal(r.status, 200);
+  assert.ok(r.data.records_changed >= 1);
+  const sheet = (await call('/admin/flag/sheet?from=2024-03-01&to=2024-03-01&kind=LOWERING', { cookie: admin })).data;
+  assert.deepEqual(sheet.divisions.flatMap((d) => d.rows).find((x) => x.employee_no === 'XC-1').cells, ['VL']);
+  assert.equal(sheet.codes.VL, 'Vacation leave');
+  assert.ok((await list()).find((x) => x.code === 'VL').uses >= 1);
+  // Description only; a code in use cannot be removed, an unused one can
+  assert.equal((await patch('VL', { label: 'Vacation leave (VL)' })).data.code, 'VL');
+  assert.equal((await call('/admin/flag/excuse-types/VL', { method: 'DELETE', cookie: admin })).status, 409);
+  assert.equal((await call('/admin/flag/excuse-types/TO', { method: 'DELETE', cookie: admin })).status, 200);
+  assert.ok(!(await list()).some((x) => x.code === 'TO'));
+  // Put the default back for the other tests
+  await patch('VL', { code: 'LEAVE', label: 'Leave' });
+  assert.equal((await call('/admin/flag/excuse-types', { method: 'POST', cookie: (await loginAs('opd.only', 'password123')).cookie, body: { code: 'ZZ', label: 'x' } })).status, 403);
+});
+
+test('past attendance sheets can be imported from the Excel grid', async () => {
+  const admin = await login();
+  const rows = [['IM-1', 'rojas-turco', 'hannah', 'mae'], ['IM-2', 'abagat', 'reymart', ''], ['IM-3', 'santos', 'juan', 'a'], ['IM-4', 'santos', 'juana', 'b'], ['2019-P-0777', 'abiera', 'nicca', '']]
+    .map(([no, l, f, m]) => ({ employee_no: no, last_name: l, first_name: f, middle_name: m, division: 'Finance' }));
+  const made = await call('/admin/flag/employees/import', { method: 'POST', cookie: admin, body: { rows } });
+  assert.equal(made.status, 201, JSON.stringify(made.data));
+  await db.query("UPDATE employees SET created_at = '2025-06-01' WHERE employee_no LIKE 'IM-%' OR employee_no = '2019-P-0777'");
+  // A raising ceremony already in the system on one of the dates, with Abaga recorded present
+  const own = await db.one("INSERT INTO flag_ceremonies (ceremony_date, slot, title, opens_at, starts_at, closes_at, source) VALUES ('2025-01-10', 'M-im', 'FLAG LOWERING CEREMONY', '16:30', '17:00', '17:30', 'MANUAL') RETURNING id");
+  const abaga = await db.one("SELECT id FROM employees WHERE employee_no = 'IM-2'");
+  await db.query("INSERT INTO flag_checkins (ceremony_id, employee_id, status, source) VALUES ($1, $2, 'ON_TIME', 'QR')", [own.id, abaga.id]);
+
+  const grid = [
+    ['ZAMBOANGA REGIONAL MEDICAL CENTER'],
+    ['FLAG RETREAT ATTENDANCE'],
+    ['FINANCE SERVICE DIVISION'],
+    ['No.', 'NAME OF EMPLOYEE', 'DESIGNATION', 'Jan. 3', 'Jan. 10', '17-Jan', 'Remarks?', 'TOTAL'],
+    ['1', 'ROJAS-TURCO, HANNAH M.', 'ADMIN AIDE', 'P', 'o.b.', 'X', '', '1'],
+    ['2', 'Abagat, Reymart', 'CLERK', 'leave', 'X', 'P', '', '1'],
+    ['3', 'SANTOS, J.', 'CLERK', 'P', 'P', 'P', '', '3'],
+    ['4', 'DELA CRUZ, PEDRO', 'CLERK', 'P', 'P', 'P', '', '3'],
+    ['', 'TOTAL', '', '2', '1', '2'],
+    [],
+    ['MEDICAL SERVICE DIVISION'],
+    ['No.', 'Employee No.', 'Name of Employee', 'Jan. 3', 'Jan. 10', '17-Jan'],
+    ['1', '2019 - P - 0777', 'ABIERA, N.', 'AM', 'ZZ', 'PS'],
+  ];
+  const imp = (body) => call('/admin/flag/attendance-import', { method: 'POST', cookie: admin, body: { rows: grid, kind: 'LOWERING', year: 2025, ...body } });
+  // Unknown codes stop the import
+  let r = await imp({ dry_run: true });
+  assert.equal(r.status, 400);
+  assert.ok(r.data.errors.some((e) => /“ZZ” is not a code/.test(e)), r.data.errors.join('\n'));
+  grid[12][4] = 'pm';
+  assert.equal((await imp({ dry_run: true, year: 2099 })).status, 400);
+  assert.equal((await imp({ dry_run: true, kind: '' })).status, 400);
+  r = await imp({ dry_run: true });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.employees, 3);
+  assert.deepEqual(r.data.unmatched.map((x) => x.name), ['DELA CRUZ, PEDRO']);
+  assert.equal(r.data.ambiguous.length, 1); // SANTOS, J. could be Juan or Juana
+  assert.equal(r.data.ambiguous[0].candidates.length, 2);
+  assert.deepEqual(r.data.ignored_columns, ['Remarks?']);
+  assert.deepEqual(r.data.dates, [{ date: '2025-01-03', exists: false }, { date: '2025-01-10', exists: true }, { date: '2025-01-17', exists: false }]);
+  assert.deepEqual(r.data.counts, { P: 2, OB: 1, X: 2, LEAVE: 1, AM: 1, PM: 1, PS: 1 });
+  assert.equal(r.data.already_recorded, 0); // Abaga's X on Jan 10 leaves the QR check-in alone
+  assert.equal((await db.one("SELECT COUNT(*)::int AS n FROM flag_ceremonies WHERE ceremony_date IN ('2025-01-03', '2025-01-17')")).n, 0);
+
+  r = await imp({});
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.ceremonies_created, 2);
+  assert.equal(r.data.saved, 7);
+  const sheet = (await call('/admin/flag/sheet?from=2025-01-01&to=2025-01-31&kind=LOWERING&division=FINANCE%20SERVICE%20DIVISION', { cookie: admin })).data;
+  assert.deepEqual(sheet.ceremonies.map((c) => c.date), ['2025-01-03', '2025-01-10', '2025-01-17']);
+  const by = Object.fromEntries(sheet.divisions[0].rows.map((x) => [x.employee_no, x.cells]));
+  assert.deepEqual(by['IM-1'], ['P', 'OB', 'X']);
+  assert.deepEqual(by['IM-2'], ['LEAVE', 'P', 'P']); // the QR check-in on Jan 10 stays
+  assert.deepEqual(by['2019-P-0777'], ['AM', 'PM', 'PS']);
+  assert.deepEqual(by['IM-3'], ['', '', '']); // not matched (ambiguous): not on the list then
+  const k = await db.one("SELECT k.source, k.checked_at, k.created_by FROM flag_checkins k JOIN employees e ON e.id = k.employee_id JOIN flag_ceremonies c ON c.id = k.ceremony_id WHERE e.employee_no = 'IM-1' AND c.ceremony_date = '2025-01-03'");
+  assert.equal(k.source, 'IMPORT');
+  assert.equal(k.created_by, 'admin');
+  // Importing again changes nothing
+  r = await imp({});
+  assert.equal(r.status, 201);
+  assert.equal(r.data.saved, 0);
+  assert.equal(r.data.ceremonies_created, 0);
+  assert.equal(r.data.already_recorded, 7);
+  // Not a sheet
+  assert.equal((await call('/admin/flag/attendance-import', { method: 'POST', cookie: admin, body: { rows: [['a', 'b']], kind: 'LOWERING', year: 2025 } })).status, 400);
+});
+
+test('attendance sheet import reads dates and names', () => {
+  const si = require('../src/flagSheetImport');
+  assert.deepEqual(si.headerDate('Jan. 2'), { year: null, month: 1, day: 2 });
+  assert.deepEqual(si.headerDate('Sept. 13, 2025'), { year: 2025, month: 9, day: 13 });
+  assert.deepEqual(si.headerDate('2-Feb'), { year: null, month: 2, day: 2 });
+  assert.deepEqual(si.headerDate('2026-01-02'), { year: 2026, month: 1, day: 2 });
+  assert.deepEqual(si.headerDate('46024'), { year: 2026, month: 1, day: 2 }); // Excel date
+  assert.deepEqual(si.headerDate('3/14'), { year: null, month: 3, day: 14 });
+  assert.equal(si.headerDate('Designation'), null);
+  const cols = si.resolveDates(['Dec. 5', 'Dec. 19', 'Jan. 2'].map((label, col) => ({ col, label, parsed: si.headerDate(label) })), 2025);
+  assert.deepEqual(cols.map((c) => c.date), ['2025-12-05', '2025-12-19', '2026-01-02']);
+  assert.deepEqual(si.splitName('ROJAS-TURCO, HANNAH M.'), { last: 'ROJASTURCO', first: 'HANNAH' });
+  assert.deepEqual(si.splitName('Dela Cruz Jr., Ma. Cristina DC.'), { last: 'DELACRUZ', first: 'MACRISTINA' });
+  assert.deepEqual(si.splitName('Hannah M. Rojas-Turco'), { last: 'ROJASTURCO', first: 'HANNAH' });
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');
