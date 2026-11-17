@@ -30,7 +30,7 @@ const fullYear = (y) => (y < 100 ? 2000 + y : y);
 
 // A column title read as a date: { month, day, year } (year null when the title has none)
 function headerDate(text) {
-  const s = String(text ?? '').trim().replace(/\s+/g, ' ');
+  const s = String(text ?? '').trim().replace(/\s+/g, ' ').replace(/^DATE\s*:?\s*/i, '');
   if (!s) return null;
   let m;
   if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ].*)?$/.exec(s))) return { year: +m[1], month: +m[2], day: +m[3] };
@@ -68,7 +68,9 @@ function resolveDates(cols, year) {
     lastMonth = c.parsed.month;
     const yy = c.parsed.year || y;
     const ok = validDay(yy, c.parsed.month, c.parsed.day);
-    return { ...c, date: ok ? `${yy}-${pad(c.parsed.month)}-${pad(c.parsed.day)}` : null };
+    // Excel dates read as numbers (46129) are shown as "Apr. 17" in messages
+    const label = /^\d{5}(\.\d+)?$/.test(String(c.label).trim()) ? `${MONTH_NAMES[c.parsed.month - 1].slice(0, 3)}. ${c.parsed.day}` : c.label;
+    return { ...c, label, date: ok ? `${yy}-${pad(c.parsed.month)}-${pad(c.parsed.day)}` : null };
   });
 }
 
@@ -83,19 +85,20 @@ const title = (v) => String(v ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
 // The date columns of a table whose name title is on row i. Dates can be on that row ("Jan. 2"),
 // or split over two rows: a month heading (often a merged cell, so it covers the blank cells to
 // its right) with day numbers on the row below; up to two rows above and below are read.
-function headerColumns(rows, i, nameCol) {
+function headerColumns(rows, i, nameCol, endCol = Infinity) {
   const get = (r) => (Array.isArray(rows[r]) ? rows[r] : []).map((v) => String(v ?? '').trim());
   const isDateish = (c) => headerDate(c) || monthTitle(c) || dayNum(c);
-  const above = [i - 2, i - 1].filter((r) => r >= 0 && !get(r)[nameCol] && get(r).some((c, j) => j > nameCol && (monthTitle(c) || headerDate(c))));
+  const inside = (j) => j > nameCol && j < endCol;
+  const above = [i - 2, i - 1].filter((r) => r >= 0 && !get(r)[nameCol] && get(r).some((c, j) => inside(j) && (monthTitle(c) || headerDate(c))));
   const below = [];
   for (const r of [i + 1, i + 2]) {
     const c = get(r);
-    if (c[nameCol] || !c.some((x, j) => j > nameCol && isDateish(x))) break;
-    if (c.some((x, j) => j > nameCol && x && !isDateish(x) && !KNOWN_TITLE.test(title(x)))) break; // a data row
+    if (c[nameCol] || !c.some((x, j) => inside(j) && isDateish(x))) break;
+    if (c.some((x, j) => inside(j) && x && !isDateish(x) && !KNOWN_TITLE.test(title(x)))) break; // a data row
     below.push(r);
   }
   const band = [...above, i, ...below];
-  const width = Math.max(...band.map((r) => get(r).length));
+  const width = Math.min(endCol, Math.max(...band.map((r) => get(r).length)));
   const cols = [];
   for (let j = nameCol + 1; j < width; j++) {
     let found = null;
@@ -128,56 +131,79 @@ function headerColumns(rows, i, nameCol) {
   return { cols, skip: below.length, rowsRead: band };
 }
 
-function readGrid(rows, year) {
+// The rows of one sheet (arrays of cell text) → { entries, ignored, problems, found }. A row with a
+// NAME OF EMPLOYEE title starts a table (the printout repeats it for each division; some sheets
+// have several tables side by side, each with its own name column); rows without any code
+// (division titles, totals, blank rows) are skipped. `sheet` names the sheet in messages.
+function readGrid(rows, year, sheet = '') {
   const entries = [];
   const ignored = new Set();
   const problems = [];
-  let head = null;
+  const at = (i) => (sheet ? `${sheet}, row ${i + 1}` : `Row ${i + 1}`);
+  let heads = null;
+  let found = false;
   let skip = 0;
   rows.forEach((raw, i) => {
     if (skip > 0) return void skip--; // the day-number rows of a two-row heading
     const cells = (Array.isArray(raw) ? raw : []).map((v) => String(v ?? '').trim());
-    const nameCol = cells.findIndex((c) => NAME_TITLE.test(title(c)));
-    if (nameCol >= 0) {
-      const band = headerColumns(rows, i, nameCol);
-      const dateAt = new Set(band.cols.map((c) => c.col));
-      let noCol = null;
-      cells.forEach((c, j) => {
-        if (j === nameCol || !c || dateAt.has(j)) return;
-        const t = title(c);
-        if (NO_TITLE.test(t)) noCol = j;
-        else if (!KNOWN_TITLE.test(t) && !monthTitle(c)) ignored.add(c);
+    const nameCols = cells.map((c, j) => (NAME_TITLE.test(title(c)) ? j : -1)).filter((j) => j >= 0);
+    if (nameCols.length) {
+      found = true;
+      heads = nameCols.map((nameCol, k) => {
+        const end = nameCols[k + 1] ?? Infinity;
+        const start = k ? nameCols[k - 1] + 1 : 0;
+        const band = headerColumns(rows, i, nameCol, end);
+        const dateAt = new Set(band.cols.map((c) => c.col));
+        let noCol = null;
+        cells.forEach((c, j) => {
+          if (j < start || j >= end || j === nameCol || !c || dateAt.has(j)) return;
+          const t = title(c);
+          if (NO_TITLE.test(t)) noCol = j;
+          else if (j > nameCol && !KNOWN_TITLE.test(t) && !monthTitle(c)) ignored.add(c);
+        });
+        skip = Math.max(skip, band.skip);
+        const dates = resolveDates(band.cols, year);
+        for (const d of dates) if (!d.date) problems.push(`${at(i)}: “${d.label}” is not a valid date.`);
+        if (!dates.length) {
+          const seen = band.rowsRead.flatMap((r) => (rows[r] || []).map((v) => String(v ?? '').trim()).filter((v, j) => v && j > nameCol && j < end)).slice(0, 12);
+          problems.push(
+            `${at(i)}: no ceremony dates were found in the columns after “${cells[nameCol]}”` +
+              (seen.length ? ` (titles read there: ${seen.map((v) => `“${v}”`).join(', ')})` : ' (those title cells are empty)') +
+              '. Put the dates in the column titles, e.g. Jan. 2, 1/2/2026 or an Excel date, or day numbers (2, 9, 16…) under a month row (JANUARY).',
+          );
+        }
+        return { nameCol, noCol, dates };
       });
-      head = { nameCol, noCol, dates: resolveDates(band.cols, year), line: i + 1 };
-      skip = band.skip;
-      for (const d of head.dates) if (!d.date) problems.push(`Row ${i + 1}: “${d.label}” is not a valid date.`);
-      if (!head.dates.length) {
-        const seen = band.rowsRead.flatMap((r) => (rows[r] || []).map((v) => String(v ?? '').trim()).filter((v, j) => v && j > nameCol)).slice(0, 12);
-        problems.push(
-          `Row ${i + 1}: no ceremony dates were found in the columns after “${cells[nameCol]}”` +
-            (seen.length ? ` (titles read there: ${seen.map((v) => `“${v}”`).join(', ')})` : ' (those title cells are empty)') +
-            '. Put the dates in the column titles, e.g. Jan. 2, 1/2/2026 or an Excel date, or day numbers (2, 9, 16…) under a month row (JANUARY).',
-        );
-      }
       return;
     }
-    if (!head) return;
-    const name = cells[head.nameCol] || '';
-    const employeeNo = head.noCol == null ? '' : cells[head.noCol] || '';
-    if (!name && !employeeNo) return;
-    if (/^(TOTAL|PREPARED|NOTED|CERTIFIED|APPROVED)/i.test(name)) return;
-    const codes = head.dates.map((d) => ({ date: d.date, label: d.label, code: cells[d.col] || '' }));
-    if (!codes.some((c) => c.code)) return;
-    entries.push({ line: i + 1, name, employee_no: employeeNo, codes });
+    if (!heads) return;
+    // The signature block ("Prepared by:", "Reviewed by:") ends the table: the names under it are signatories
+    if (cells.some((c) => /^(PREPARED|REVIEWED|NOTED|CERTIFIED|APPROVED|CHECKED|VERIFIED|SUBMITTED|ATTESTED)\b.*\bBY\b|^CERTIFIED CORRECT/i.test(c))) {
+      heads = null;
+      return;
+    }
+    for (const head of heads) {
+      const name = cells[head.nameCol] || '';
+      const employeeNo = head.noCol == null ? '' : cells[head.noCol] || '';
+      if (!name && !employeeNo) continue;
+      if (/^(TOTAL|PREPARED|NOTED|CERTIFIED|APPROVED)/i.test(name)) continue;
+      // the legend under a table ("Legend:", "X – On duty but did not attend"); employees may follow it
+      if (/^LEGEND\b/i.test(name) || (/^[A-Z]{1,8}\s*[–—=:-]\s+\S/i.test(name) && !name.includes(','))) continue;
+      const codes = head.dates.map((d) => ({ date: d.date, label: d.label, code: cells[d.col] || '' }));
+      if (!codes.some((c) => c.code)) continue;
+      entries.push({ line: i + 1, where: at(i), name, employee_no: employeeNo, codes });
+    }
   });
-  return { entries, ignored: [...ignored], problems, found: !!head };
+  return { entries, ignored: [...ignored], problems, found };
 }
 
 // P / X / an excuse code, as typed on the sheet ("O.B.", "leave", "✓")
+// How a code is compared: capitals, without spaces and dots ("o.b." = OB, "P M" = PM)
+const normCode = (v) => String(v ?? '').toUpperCase().replace(/[\s.]/g, '');
 function readCode(v, excuseCodes) {
-  const s = String(v ?? '').toUpperCase().replace(/[\s.]/g, '');
+  const s = normCode(v);
   if (!s) return { kind: 'BLANK' };
-  if (['P', 'PRESENT', '/', '✓', '✔', '√'].includes(s)) return { kind: 'P' };
+  if (['P', 'PRESENT', '1', '/', '✓', '✔', '√'].includes(s)) return { kind: 'P' };
   if (['X', 'A', 'ABSENT', 'ABS'].includes(s)) return { kind: 'X' };
   if (excuseCodes.includes(s)) return { kind: 'EXCUSED', code: s };
   if (s === 'OTHER' && excuseCodes.includes('EXC')) return { kind: 'EXCUSED', code: 'EXC' };
@@ -188,8 +214,10 @@ function readCode(v, excuseCodes) {
 const key = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z]/g, '');
 const SUFFIX = /^(JR|SR|II|III|IV|V)\.?$/i;
 function splitName(text) {
-  const s = String(text || '').trim().replace(/\s+/g, ' ');
+  let s = String(text || '').trim().replace(/\s+/g, ' ');
   if (!s) return null;
+  // "Barandino. Oliver Paolo G." (a dot typed for the comma)
+  if (!s.includes(',')) s = s.replace(/^([^\s.]{3,})\.\s+/, '$1, ');
   const strip = (tokens) => tokens.filter((t) => !SUFFIX.test(t.replace(/,$/, '')));
   if (s.includes(',')) {
     const [last, ...rest] = s.split(',');
@@ -205,10 +233,29 @@ function splitName(text) {
   while (tokens.length > 1 && /^[A-Za-z]{1,2}\.?$/.test(tokens[tokens.length - 1])) tokens = tokens.slice(0, -1);
   return { last: key(last), first: key(tokens.join(' ')) };
 }
-const employeeKey = (e) => ({
-  last: key(String(e.last_name || '').split(' ').filter((t) => !SUFFIX.test(t)).join(' ')),
-  first: key(String(e.first_name || '').split(' ').filter((t) => !SUFFIX.test(t)).join(' ')),
-});
+// Without a comma the order is unknown ("Hannah M. Rojas-Turco" or "Esperat Benzeth H."): every
+// way of splitting the words into first and last name is tried
+function nameReadings(text) {
+  const main = splitName(text);
+  if (!main) return [];
+  let s = String(text || '').trim().replace(/\s+/g, ' ');
+  if (!s.includes(',')) s = s.replace(/^([^\s.]{3,})\.\s+/, '$1, ');
+  if (s.includes(',')) return [main];
+  let tokens = s.split(' ').filter((t) => !SUFFIX.test(t));
+  while (tokens.length > 2 && /^[A-Za-z]{1,2}\.?$/.test(tokens[tokens.length - 1])) tokens = tokens.slice(0, -1);
+  const out = [main];
+  for (let k = 1; k < tokens.length; k++) {
+    const a = tokens.slice(0, k).filter((t, i, arr) => !(i === arr.length - 1 && arr.length > 1 && /^[A-Za-z]{1,2}\.$/.test(t)));
+    const b = tokens.slice(k);
+    out.push({ first: key(a.join(' ')), last: key(b.join(' ')) }, { last: key(a.join(' ')), first: key(b.join(' ')) });
+  }
+  return out;
+}
+const employeeKey = (e) => {
+  let first = String(e.first_name || '').split(' ').filter((t) => t && !SUFFIX.test(t));
+  while (first.length > 1 && /^[A-Za-z]{1,2}\.?$/.test(first[first.length - 1])) first = first.slice(0, -1);
+  return { last: key(String(e.last_name || '').split(' ').filter((t) => !SUFFIX.test(t)).join(' ')), first: key(first.join(' ')) };
+};
 
 // Finds the employee for a sheet row → { employee } | { candidates } (several) | {} (none)
 function makeMatcher(employees, cleanNo) {
@@ -224,15 +271,16 @@ function makeMatcher(employees, cleanNo) {
       const e = byNo.get(cleanNo(entry.employee_no) || entry.employee_no);
       if (e) return { employee: e };
     }
-    const n = splitName(entry.name);
-    if (!n || !n.last) return {};
-    const same = byLast.get(n.last) || [];
-    let hits = same.filter((x) => x.first === n.first);
-    if (!hits.length && n.first) hits = same.filter((x) => x.first && (x.first.startsWith(n.first) || n.first.startsWith(x.first)));
-    if (!hits.length && !n.first && same.length === 1) hits = same;
+    const readings = nameReadings(entry.name).filter((n) => n.last);
+    if (!readings.length) return {};
+    const uniq = (xs) => [...new Map(xs.map((x) => [x.e.id, x])).values()];
+    // exact first names first, then a first name that starts the other ("RENE" / "RENE BOY")
+    let hits = uniq(readings.flatMap((n) => (byLast.get(n.last) || []).filter((x) => x.first === n.first)));
+    if (!hits.length) hits = uniq(readings.flatMap((n) => (n.first ? (byLast.get(n.last) || []).filter((x) => x.first && (x.first.startsWith(n.first) || n.first.startsWith(x.first))) : [])));
+    if (!hits.length && !readings[0].first && (byLast.get(readings[0].last) || []).length === 1) hits = byLast.get(readings[0].last);
     if (hits.length === 1) return { employee: hits[0].e };
     return hits.length ? { candidates: hits.map((x) => x.e) } : {};
   };
 }
 
-module.exports = { headerDate, resolveDates, readGrid, readCode, splitName, makeMatcher };
+module.exports = { normCode, headerDate, resolveDates, readGrid, readCode, splitName, makeMatcher };

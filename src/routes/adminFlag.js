@@ -562,44 +562,80 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
   // already recorded is left as it is.
   router.post('/flag/attendance-import', can, async (req, res) => {
     const b = req.body || {};
-    const rows = Array.isArray(b.rows) ? b.rows.slice(0, 3000) : [];
-    if (!rows.length) throw new ValidationError('No rows found. Choose the Excel file of the attendance sheet.');
+    // One sheet (rows) or several (sheets: [{ name, rows }], e.g. one per division)
+    const sheets = (Array.isArray(b.sheets) ? b.sheets : Array.isArray(b.rows) ? [{ name: '', rows: b.rows }] : [])
+      .filter((x) => Array.isArray(x?.rows))
+      .slice(0, 30)
+      .map((x) => ({ name: String(x.name || '').trim().slice(0, 60), rows: x.rows.slice(0, 3000) }));
+    if (!sheets.some((x) => x.rows.length)) throw new ValidationError('No rows found. Choose the Excel file of the attendance sheet.');
     const kind = b.kind === 'RAISING' ? 'RAISING' : b.kind === 'LOWERING' ? 'LOWERING' : null;
     if (!kind) throw new ValidationError('Choose whether this is a flag retreat (lowering) or flag raising sheet.');
     const today = u.todayStr();
     const year = Number(b.year);
     if (!Number.isInteger(year) || year < 2000 || year > Number(today.slice(0, 4))) throw new ValidationError('Choose the year of the sheet.');
 
-    const grid = sheetImport.readGrid(rows, year);
-    if (!grid.found) throw new ValidationError('No “NAME OF EMPLOYEE” column title was found. The sheet needs a title row with the name column and one column per date.');
-    const errors = [...grid.problems];
+    const grids = sheets.map((x) => ({ name: x.name, ...sheetImport.readGrid(x.rows, year, sheets.length > 1 ? x.name : '') }));
+    const missing = grids.filter((g) => !g.found);
+    if (missing.length === grids.length) throw new ValidationError('No “NAME OF EMPLOYEE” column title was found. The sheet needs a title row with the name column and one column per date.');
+    const grid = { entries: grids.flatMap((g) => g.entries), ignored: [...new Set(grids.flatMap((g) => g.ignored))], problems: grids.flatMap((g) => g.problems) };
+    const errors = [...grid.problems, ...missing.map((g) => `Sheet “${g.name}”: no “NAME OF EMPLOYEE” column title was found (untick it if it is not an attendance sheet).`)];
     const types = await flag.getExcuseTypes(db);
     const excuseCodes = types.map((x) => x.code);
+    // What the staff chose for codes that are not in the list: add as a new excuse code, count
+    // as P / X / an existing code, or leave blank. { "U": { action: 'ADD', code: 'U', label: 'Undertime' } }
+    const codeMap = new Map();
+    const newTypes = new Map();
+    for (const [raw, m] of Object.entries(b.code_map && typeof b.code_map === 'object' ? b.code_map : {})) {
+      const k = sheetImport.normCode(raw);
+      if (!k || !m) continue;
+      if (m.action === 'SKIP') codeMap.set(k, { kind: 'BLANK' });
+      else if (m.action === 'MAP') {
+        const r = sheetImport.readCode(m.to, excuseCodes);
+        if (!r || r.kind === 'BLANK') errors.push(`“${raw}”: choose what it means.`);
+        else codeMap.set(k, r);
+      } else if (m.action === 'ADD') {
+        const [code, err] = flag.cleanExcuseCode(m.code || raw);
+        const label = String(m.label || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+        if (err) errors.push(`New code for “${raw}”: ${err}`);
+        else if (!label) errors.push(`New code ${code}: give a description (e.g. Undertime).`);
+        else {
+          if (!excuseCodes.includes(code)) newTypes.set(code, label);
+          codeMap.set(k, { kind: 'EXCUSED', code });
+        }
+      }
+    }
+    const unknown = new Map(); // code → { count, examples }
     const employees = await db.query('SELECT id, employee_no, last_name, first_name, middle_name, department, created_at FROM employees');
     const match = sheetImport.makeMatcher(employees, flag.cleanEmployeeNo);
 
     const unmatched = [];
     const ambiguous = [];
     const seen = new Map();
-    const marks = []; // { employee, date, kind: P | X | EXCUSED, code }
+    const byKey = new Map(); // employee:date → { employee, date, kind: P | X | EXCUSED, code }
+    const repeated = new Map(); // employees on more than one row (e.g. listed under two divisions)
     const dates = new Set();
     for (const en of grid.entries) {
       const m = match(en);
       if (!m.employee) {
-        if (m.candidates) ambiguous.push({ line: en.line, name: en.name, candidates: m.candidates.map((e) => `${flag.fullName(e)} (${e.employee_no})`) });
-        else unmatched.push({ line: en.line, name: en.name || en.employee_no });
+        if (m.candidates) ambiguous.push({ line: en.line, where: en.where, name: en.name, candidates: m.candidates.map((e) => `${flag.fullName(e)} (${e.employee_no})`) });
+        else unmatched.push({ line: en.line, where: en.where, name: en.name || en.employee_no });
         continue;
       }
+      // The same employee on several rows: the rows are merged (a code wins over a blank, and
+      // P or an excuse over X; when two different codes remain, the first row's is kept)
       if (seen.has(m.employee.id)) {
-        errors.push(`Row ${en.line}: ${en.name} is also on row ${seen.get(m.employee.id)}.`);
-        continue;
-      }
-      seen.set(m.employee.id, en.line);
+        if (!repeated.has(m.employee.id)) repeated.set(m.employee.id, { name: flag.fullName(m.employee), rows: [seen.get(m.employee.id)], conflicts: 0 });
+        repeated.get(m.employee.id).rows.push(en.where);
+      } else seen.set(m.employee.id, en.where);
       for (const c of en.codes) {
         if (!c.date) continue;
-        const r = sheetImport.readCode(c.code, excuseCodes);
+        const r = sheetImport.readCode(c.code, excuseCodes) || codeMap.get(sheetImport.normCode(c.code));
         if (!r) {
-          if (errors.length < 200) errors.push(`Row ${en.line} (${en.name}), ${c.label}: “${c.code}” is not a code. Use P, X or ${excuseCodes.join(', ')} (add new codes under Excuse codes).`);
+          const k = sheetImport.normCode(c.code);
+          if (!unknown.has(k)) unknown.set(k, { code: String(c.code).trim(), count: 0, examples: [] });
+          const u2 = unknown.get(k);
+          u2.count++;
+          if (u2.examples.length < 3) u2.examples.push(`${en.where} (${en.name}), ${c.label}`);
           continue;
         }
         if (r.kind === 'BLANK') continue;
@@ -608,8 +644,19 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
           continue;
         }
         dates.add(c.date);
-        marks.push({ employee: m.employee, date: c.date, kind: r.kind, code: r.code || null });
+        const key = `${m.employee.id}:${c.date}`;
+        const mk = { employee: m.employee, date: c.date, kind: r.kind, code: r.code || null };
+        const had = byKey.get(key);
+        if (!had) byKey.set(key, mk);
+        else if (had.kind !== mk.kind || had.code !== mk.code) {
+          if (had.kind === 'X') byKey.set(key, mk);
+          else if (mk.kind !== 'X') repeated.get(m.employee.id).conflicts++;
+        }
       }
+    }
+    const marks = [...byKey.values()];
+    if (unknown.size) {
+      errors.push(`${unknown.size} code${unknown.size === 1 ? ' is' : 's are'} not in the list: ${[...unknown.values()].map((x) => x.code).join(', ')}. Choose what ${unknown.size === 1 ? 'it means' : 'each means'} (add as a new excuse code, P, X, an existing code, or leave blank).`);
     }
     const errorList = [...new Set(errors)];
     if (!marks.length && !errorList.length) errorList.push('No attendance codes were read for employees in the list.');
@@ -653,6 +700,10 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       dates: sorted.map((d) => ({ date: d, exists: ceremonyOf.has(d) })),
       counts,
       already_recorded: already,
+      unknown_codes: [...unknown.values()].sort((a, c) => c.count - a.count),
+      repeated: [...repeated.values()],
+      new_codes: [...newTypes].map(([code, label]) => ({ code, label })),
+      excuse_codes: excuseCodes,
     };
     if (errorList.length) {
       return res.status(400).json({ error: `${errorList.length} problem${errorList.length === 1 ? '' : 's'} found. Nothing was imported.`, errors: errorList.slice(0, 200), report });
@@ -665,6 +716,14 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       ? { title: 'FLAG LOWERING CEREMONY', opens: '16:30', starts: '17:00', closes: '17:30' }
       : { title: 'FLAG RAISING CEREMONY', opens: '07:00', starts: '08:00', closes: '09:00' });
     const out = await db.tx(async (t) => {
+      if (newTypes.size) {
+        const last = await t.one('SELECT COALESCE(MAX(sort_order), 0) AS n FROM flag_excuse_types');
+        let order = Number(last.n);
+        for (const [code, label] of newTypes) {
+          order += 10;
+          await t.query('INSERT INTO flag_excuse_types (code, label, needs_remarks, sort_order) VALUES ($1, $2, FALSE, $3) ON CONFLICT (code) DO NOTHING', [code, label, order]);
+        }
+      }
       let created = 0;
       for (const d of sorted) {
         if (ceremonyOf.has(d)) continue;

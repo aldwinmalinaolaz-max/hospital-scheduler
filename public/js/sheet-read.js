@@ -61,20 +61,27 @@ const SheetRead = (() => {
     const read = async (path) => (zip.file(path) ? zip.file(path).async('string') : null);
     const wb = await read('xl/workbook.xml');
     if (!wb) throw new Error('This file is not an Excel workbook (.xlsx).');
-    // The first sheet, found through the workbook's relationships
-    const firstSheet = xml(wb).getElementsByTagName('sheet')[0];
-    const relId = firstSheet?.getAttribute('r:id') || firstSheet?.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
-    let path = 'xl/worksheets/sheet1.xml';
-    const rels = await read('xl/_rels/workbook.xml.rels');
-    if (rels && relId) {
-      const rel = Array.from(xml(rels).getElementsByTagName('Relationship')).find((r) => r.getAttribute('Id') === relId);
-      const target = rel?.getAttribute('Target');
-      if (target) path = target.startsWith('/') ? target.slice(1) : `xl/${target.replace(/^\.\//, '')}`;
-    }
-    const sheetXml = await read(path);
-    if (!sheetXml) throw new Error('The first sheet of this workbook could not be read.');
+    // Every sheet, found through the workbook's relationships (hidden sheets are marked)
+    const relsXml = await read('xl/_rels/workbook.xml.rels');
+    const rels = relsXml ? Array.from(xml(relsXml).getElementsByTagName('Relationship')) : [];
     const sst = await read('xl/sharedStrings.xml');
     const shared = sst ? Array.from(xml(sst).getElementsByTagName('si')).map(texts) : [];
+    const sheets = [];
+    for (const [n, el] of Array.from(xml(wb).getElementsByTagName('sheet')).entries()) {
+      const relId = el.getAttribute('r:id') || el.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+      let path = `xl/worksheets/sheet${n + 1}.xml`;
+      const target = rels.find((r) => r.getAttribute('Id') === relId)?.getAttribute('Target');
+      if (target) path = target.startsWith('/') ? target.slice(1) : `xl/${target.replace(/^\.\//, '')}`;
+      const sheetXml = await read(path);
+      if (!sheetXml) continue;
+      sheets.push({ name: el.getAttribute('name') || `Sheet${n + 1}`, hidden: !!el.getAttribute('state') && el.getAttribute('state') !== 'visible', rows: sheetRows(sheetXml, shared) });
+    }
+    if (!sheets.length) throw new Error('The sheets of this workbook could not be read.');
+    const first = sheets.find((x) => !x.hidden) || sheets[0];
+    return { sheet: first.name, rows: first.rows, sheets };
+  }
+
+  function sheetRows(sheetXml, shared) {
     const rows = [];
     for (const r of Array.from(xml(sheetXml).getElementsByTagName('row'))) {
       const rowNo = Number(r.getAttribute('r')) || rows.length + 1;
@@ -89,16 +96,20 @@ const SheetRead = (() => {
         else value = v;
         cells[colIndex(c.getAttribute('r'))] = String(value).trim();
       }
-      rows[rowNo - 1] = Array.from(cells, (x) => x ?? '');
+      // trailing empty cells are dropped (keeps large sheets small)
+      let end = cells.length;
+      while (end > 0 && !cells[end - 1]) end--;
+      rows[rowNo - 1] = Array.from(cells.slice(0, end), (x) => x ?? '');
     }
-    return { sheet: firstSheet?.getAttribute('name') || 'Sheet1', rows: Array.from(rows, (x) => x || []) };
+    return Array.from(rows, (x) => x || []);
   }
 
   async function readFile(file) {
     const name = (file.name || '').toLowerCase();
     if (name.endsWith('.xls')) throw new Error('Old Excel files (.xls) cannot be read. In Excel choose File → Save As → Excel Workbook (.xlsx), then choose that file.');
     if (name.endsWith('.xlsx') || /spreadsheetml/.test(file.type)) return readXlsx(file);
-    return { sheet: null, rows: parseDelimited(await file.text()) };
+    const rows = parseDelimited(await file.text());
+    return { sheet: null, rows, sheets: [{ name: file.name || 'CSV', hidden: false, rows }] };
   }
 
   return { readFile, parseDelimited };

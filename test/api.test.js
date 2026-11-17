@@ -1998,7 +1998,17 @@ test('past attendance sheets can be imported from the Excel grid', async () => {
   // Unknown codes stop the import
   let r = await imp({ dry_run: true });
   assert.equal(r.status, 400);
-  assert.ok(r.data.errors.some((e) => /“ZZ” is not a code/.test(e)), r.data.errors.join('\n'));
+  assert.deepEqual(r.data.report.unknown_codes.map((x) => [x.code, x.count]), [['ZZ', 1]]);
+  assert.match(r.data.report.unknown_codes[0].examples[0], /Row 13 \(ABIERA, N\.\), Jan\. 10/);
+  // Choosing what an unknown code means: a new excuse code (created only on import), or P / X / skip
+  r = await imp({ dry_run: true, code_map: { ZZ: { action: 'ADD', code: 'zz', label: 'Test code' } } });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.deepEqual(r.data.new_codes, [{ code: 'ZZ', label: 'Test code' }]);
+  assert.equal(r.data.counts.ZZ, 1);
+  assert.equal((await imp({ dry_run: true, code_map: { ZZ: { action: 'ADD', code: 'P', label: 'x' } } })).status, 400);
+  assert.equal((await imp({ dry_run: true, code_map: { ZZ: { action: 'MAP', to: 'X' } } })).data.counts.X, 3);
+  assert.equal((await imp({ dry_run: true, code_map: { ZZ: { action: 'SKIP' } } })).status, 200);
+  assert.ok(!(await db.one("SELECT 1 FROM flag_excuse_types WHERE code = 'ZZ'")));
   grid[12][4] = 'pm';
   assert.equal((await imp({ dry_run: true, year: 2099 })).status, 400);
   assert.equal((await imp({ dry_run: true, kind: '' })).status, 400);
@@ -2034,6 +2044,14 @@ test('past attendance sheets can be imported from the Excel grid', async () => {
   assert.equal(r.data.saved, 0);
   assert.equal(r.data.ceremonies_created, 0);
   assert.equal(r.data.already_recorded, 7);
+  // The same employee on two sheets (two divisions): rows are combined, P or an excuse beats X
+  const two = await call('/admin/flag/attendance-import', { method: 'POST', cookie: admin, body: { kind: 'LOWERING', year: 2024, dry_run: true, sheets: [
+    { name: 'Medical', rows: [['NAME OF EMPLOYEE', 'Mar. 1', 'Mar. 8', 'Mar. 15'], ['Rojas-Turco, Hannah', 'X', '', 'P']] },
+    { name: 'Admin', rows: [['NAME OF EMPLOYEE', 'Mar. 1', 'Mar. 8', 'Mar. 15'], ['HANNAH M. ROJAS-TURCO', 'OB', 'P', 'LEAVE']] },
+  ] } });
+  assert.equal(two.status, 200, JSON.stringify(two.data));
+  assert.deepEqual(two.data.counts, { OB: 1, P: 2 });
+  assert.deepEqual(two.data.repeated, [{ name: 'ROJAS-TURCO, HANNAH M.', rows: ['Medical, row 2', 'Admin, row 2'], conflicts: 1 }]);
   // Not a sheet
   assert.equal((await call('/admin/flag/attendance-import', { method: 'POST', cookie: admin, body: { rows: [['a', 'b']], kind: 'LOWERING', year: 2025 } })).status, 400);
 });
@@ -2057,6 +2075,15 @@ test('attendance sheet import reads dates and names', () => {
   assert.deepEqual(above.entries[0].codes.map((c) => c.date), ['2025-01-03', '2025-01-10', '2025-02-07']);
   assert.deepEqual(si.readGrid([['NAME OF EMPLOYEE', '46024.70833', 'Jan-09', '1-16-2026'], ['A, B', 'P', 'P', 'X']], 2026).entries[0].codes.map((c) => c.date), ['2026-01-02', '2026-01-09', '2026-01-16']);
   assert.match(si.readGrid([['NAME OF EMPLOYEE', 'DESIGNATION', 'Remarks'], ['A, B', 'x', 'P']], 2026).problems[0], /no ceremony dates were found.*“Remarks”/);
+  // "Date: 5-06-24" titles, and tables side by side (one per division)
+  const side = si.readGrid([['NURSING', '', '', '', 'MEDICAL'], ['No.', 'NAME OF EMPLOYEE', 'Designation', 'Date: 5-06-24', 'NAME OF EMPLOYEE', 'Designation', 'Date: 5-06-24', 'Date:'], [1, 'A, B', 'RN', '1', 'C, D', 'MD', 'OB', '']], 2024, 'May');
+  assert.deepEqual(side.entries.map((e) => [e.where, e.name, e.codes.map((c) => `${c.date}=${c.code}`).join()]), [['May, row 3', 'A, B', '2024-05-06=1'], ['May, row 3', 'C, D', '2024-05-06=OB']]);
+  // Names written last-name-first without a comma, or with a dot for the comma; legend lines skipped
+  const people = [{ id: 1, employee_no: '1', last_name: 'ESPERAT', first_name: 'BENZETH' }, { id: 2, employee_no: '2', last_name: 'BARANDINO', first_name: 'OLIVER PAOLO' }, { id: 3, employee_no: '3', last_name: 'YASA', first_name: 'RENE L.' }, { id: 4, employee_no: '4', last_name: 'YASA', first_name: 'RENESON' }];
+  const find = si.makeMatcher(people, (x) => x);
+  assert.deepEqual(['Esperat Benzeth H.', 'Barandino. Oliver Paolo G.', 'Yasa, Rene L. IV'].map((name) => find({ name }).employee?.id), [1, 2, 3]);
+  assert.equal(si.readGrid([['NAME OF EMPLOYEE', 'Jan. 2'], ['A, B', 'P'], ['Legend:'], ['X – On duty but did not attend', 'X'], ['C, D', 'P'], ['Prepared by:', '', 'Reviewed by:'], ['', 'ALYSSA A. ALMONTE', 'ANNA M. VENTURA'], ['', 'HRMO', 'AO V']], 2026).entries.length, 2);
+  assert.equal(si.readGrid([['NAME OF EMPLOYEE', 'Jan. 2'], ['A, B', 'P'], ['Legend:']], 2026).found, true);
   assert.deepEqual(si.splitName('ROJAS-TURCO, HANNAH M.'), { last: 'ROJASTURCO', first: 'HANNAH' });
   assert.deepEqual(si.splitName('Dela Cruz Jr., Ma. Cristina DC.'), { last: 'DELACRUZ', first: 'MACRISTINA' });
   assert.deepEqual(si.splitName('Hannah M. Rojas-Turco'), { last: 'ROJASTURCO', first: 'HANNAH' });

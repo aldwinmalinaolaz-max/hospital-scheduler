@@ -2378,71 +2378,163 @@ ${cat.hospitalName}`;
 
   // ---------- Import past attendance sheets (kept on paper / in Excel before the system) ----------
   $('#flagSheetImportBtn').addEventListener('click', () => {
-    let grid = [];
+    let book = []; // the workbook's sheets: { name, hidden, rows }
+    let picked = new Set();
     let checked = null;
+    const codeRows = new Map(); // codes not in the list, as found on the sheets
+    const codeMap = {}; // what staff chose for each: { action: ADD | MAP | SKIP, ... }
     const year = Number(flagOpts?.today?.slice(0, 4)) || new Date().getFullYear();
     const codes = Object.keys(flagOpts?.excuse_types || {});
     openDialog(
       `<h2>Import past attendance sheet</h2>
        <p class="muted small">For attendance kept before the system, typed in Excel like the printed form: a <b>NAME OF EMPLOYEE</b> column
-       (e.g. ROJAS-TURCO, HANNAH M.) and one column per ceremony date (e.g. <i>Jan. 2</i>) with <b>P</b>, <b>X</b> or an excuse code
+       (e.g. ROJAS-TURCO, HANNAH M.) and one column per ceremony date (e.g. <i>Jan. 2</i>, an Excel date, or <i>Date: 5-06-24</i>) with <b>P</b>, <b>X</b> or an excuse code
        (${esc(codes.join(', '))}). An <i>Employee No.</i> column is used when there is one; No., Designation and TOTAL are ignored.
-       Several divisions on one sheet are fine. Employees must already be in the employee list.</p>
+       Several divisions on one sheet (or side by side) and several sheets are fine. Employees must already be in the employee list.</p>
        <div class="grid">
          <label class="field"><span class="req">Ceremony</span><select id="shKind"><option value="LOWERING">Flag retreat (lowering)</option><option value="RAISING">Flag raising</option></select></label>
          <label class="field"><span class="req">Year of the sheet</span><input type="number" id="shYear" min="2000" max="${year}" value="${year}"></label>
        </div>
        <p class="muted small" style="margin-top:0">Dates without a year (Jan. 2) take this year; a sheet running from December into January moves to the next year by itself.</p>
        <label class="field">Excel or CSV file<input type="file" id="shFile" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"></label>
+       <div id="shSheets" class="small"></div>
+       <div id="shCodes" class="small"></div>
        <div id="shResult" class="small" aria-live="polite" style="margin-top:8px"></div>`,
       async () => {
-        if (!grid.length) throw new Error('Choose the Excel file of the attendance sheet first.');
-        if (!checked) throw new Error('Wait for the check to finish.');
-        const r = await api('/admin/flag/attendance-import', { method: 'POST', body: { rows: grid, ...params() } });
-        alert(`Imported: ${r.saved} entr${r.saved === 1 ? 'y' : 'ies'} for ${r.employees} employees${r.ceremonies_created ? `, ${r.ceremonies_created} past ceremon${r.ceremonies_created === 1 ? 'y' : 'ies'} added` : ''}.${r.already_recorded ? ` ${r.already_recorded} were already recorded and were left as they were.` : ''}`);
+        if (!picked.size) throw new Error('Choose the Excel file of the attendance sheet first.');
+        if (!checked) throw new Error('Wait for the check to finish, and fix the problems listed.');
+        const r = await api('/admin/flag/attendance-import', { method: 'POST', body: body() });
+        alert(
+          `Imported: ${r.saved} entr${r.saved === 1 ? 'y' : 'ies'} for ${r.employees} employees` +
+            `${r.ceremonies_created ? `, ${r.ceremonies_created} past ceremon${r.ceremonies_created === 1 ? 'y' : 'ies'} added` : ''}` +
+            `${r.new_codes?.length ? `, new excuse code${r.new_codes.length === 1 ? '' : 's'} ${r.new_codes.map((x) => x.code).join(', ')}` : ''}.` +
+            `${r.already_recorded ? ` ${r.already_recorded} were already recorded and were left as they were.` : ''}`,
+        );
+        await loadFlagOptions(true);
         flagLoaders.summary();
       },
       { wide: true, saveLabel: 'Import' },
     );
-    const params = () => ({ kind: $('#shKind').value, year: Number($('#shYear').value) });
+    const body = (extra = {}) => ({
+      kind: $('#shKind').value,
+      year: Number($('#shYear').value),
+      sheets: book.filter((x) => picked.has(x.name)).map((x) => ({ name: x.name, rows: x.rows })),
+      code_map: codeMap,
+      ...extra,
+    });
     const btn = $('#dlgForm [value=save]');
     btn.disabled = true;
     const list = (items) => `<ul class="list-tight">${items.map((x) => `<li>${x}</li>`).join('')}</ul>`;
+    const where = (x) => esc(x.where || `Row ${x.line}`);
     const describe = (r) => {
       const nice = (d) => fmtDate(d, { month: 'short', day: 'numeric', year: 'numeric' });
       const made = r.dates.filter((d) => !d.exists);
-      return `<p><b>${r.employees} employee${r.employees === 1 ? '' : 's'} matched</b> · ${r.dates.length} ceremony date${r.dates.length === 1 ? '' : 's'} (${esc(nice(r.dates[0]?.date || ''))}${r.dates.length > 1 ? ` to ${esc(nice(r.dates[r.dates.length - 1].date))}` : ''})${made.length ? `, ${made.length} not yet in the system (they will be added)` : ''}.</p>
+      return `<p><b>${r.employees} employee${r.employees === 1 ? '' : 's'} matched</b> · ${r.dates.length} ceremony date${r.dates.length === 1 ? '' : 's'}${r.dates.length ? ` (${esc(nice(r.dates[0].date))}${r.dates.length > 1 ? ` to ${esc(nice(r.dates[r.dates.length - 1].date))}` : ''})` : ''}${made.length ? `, ${made.length} not yet in the system (they will be added)` : ''}.</p>
         <p>To record: ${Object.entries(r.counts).map(([k, n]) => `<b>${esc(k)}</b> ${n}`).join(' · ') || 'nothing new'}${r.already_recorded ? ` · ${r.already_recorded} already recorded (left as they are)` : ''}.
-        X is absent: nothing is saved for it, and the employee counts as on the list from their first date.</p>
-        ${r.unmatched.length ? `<div class="alert warn small"><b>${r.unmatched.length} name${r.unmatched.length === 1 ? '' : 's'} not in the employee list</b> (skipped; add them under Employees first if they should be included):${list(r.unmatched.slice(0, 30).map((x) => `Row ${x.line}: ${esc(x.name)}`))}${r.unmatched.length > 30 ? `…and ${r.unmatched.length - 30} more` : ''}</div>` : ''}
-        ${r.ambiguous.length ? `<div class="alert warn small"><b>${r.ambiguous.length} name${r.ambiguous.length === 1 ? " matches" : "s match"} more than one employee</b> (skipped; write the full first name or add an Employee No. column):${list(r.ambiguous.map((x) => `Row ${x.line}: ${esc(x.name)} → ${esc(x.candidates.join(' / '))}`))}</div>` : ''}
+        X is absent: nothing is saved for it, and the employee counts as on the list from their first date.${r.new_codes?.length ? ` New excuse code${r.new_codes.length === 1 ? '' : 's'} to add: ${r.new_codes.map((x) => `<b>${esc(x.code)}</b> ${esc(x.label)}`).join(', ')}.` : ''}</p>
+        ${r.unmatched.length ? `<div class="alert warn small"><b>${r.unmatched.length} name${r.unmatched.length === 1 ? '' : 's'} not in the employee list</b> (skipped; add them under Employees first if they should be included):${list(r.unmatched.slice(0, 40).map((x) => `${where(x)}: ${esc(x.name)}`))}${r.unmatched.length > 40 ? `…and ${r.unmatched.length - 40} more` : ''}</div>` : ''}
+        ${r.ambiguous.length ? `<div class="alert warn small"><b>${r.ambiguous.length} name${r.ambiguous.length === 1 ? ' matches' : 's match'} more than one employee</b> (skipped; write the full first name or add an Employee No. column):${list(r.ambiguous.map((x) => `${where(x)}: ${esc(x.name)} → ${esc(x.candidates.join(' / '))}`))}</div>` : ''}
+        ${r.repeated?.length ? `<div class="alert info small"><b>${r.repeated.length} employee${r.repeated.length === 1 ? ' is' : 's are'} on more than one row</b> (e.g. listed under two divisions); their rows are combined: a code fills a blank, and P or an excuse replaces an X${r.repeated.some((x) => x.conflicts) ? '; where two different codes are on the same date, the first row’s is kept' : ''}.${list(r.repeated.slice(0, 20).map((x) => `${esc(x.name)}: ${esc(x.rows.join(' · '))}${x.conflicts ? ` <b>(${x.conflicts} date${x.conflicts === 1 ? '' : 's'} with two different codes)</b>` : ''}`))}</div>` : ''}
         ${r.ignored_columns.length ? `<p class="muted">Columns ignored: ${esc(r.ignored_columns.join(', '))}.</p>` : ''}`;
+    };
+
+    // Sheets of the workbook: visible ones are ticked, hidden ones are not
+    const renderSheets = () => {
+      $('#shSheets').innerHTML =
+        book.length > 1
+          ? `<p style="margin:10px 0 4px"><b>Sheets to import</b> (${book.length} in this file):</p>
+             <div style="display:flex;flex-wrap:wrap;gap:4px 16px">${book.map((x, i) => `<label class="check"><input type="checkbox" data-sheet="${i}"${picked.has(x.name) ? ' checked' : ''}> ${esc(x.name)}${x.hidden ? ' <span class="muted">(hidden)</span>' : ''}</label>`).join('')}</div>`
+          : '';
+    };
+    // Codes on the sheet that are not in the list: staff choose what each means
+    const shortCode = (c) => String(c).toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 10);
+    const choice = (c) => {
+      const m = codeMap[c];
+      return !m ? '' : m.action === 'MAP' ? `MAP:${m.to}` : m.action;
+    };
+    const renderCodes = () => {
+      if (!codeRows.size) return ($('#shCodes').innerHTML = '');
+      const opts = [['', 'Choose…'], ['ADD', 'Add as a new excuse code'], ['MAP:P', 'P – Present'], ['MAP:X', 'X – Absent'], ...codes.map((k) => [`MAP:${k}`, `${k} – ${flagOpts.excuse_types[k]}`]), ['SKIP', 'Leave blank (not recorded)']];
+      $('#shCodes').innerHTML = `<p style="margin:12px 0 4px"><b>Codes on the sheet that are not in the list</b> – choose what each one means:</p>
+        <div class="table-wrap"><table><thead><tr><th>Code</th><th>Cells</th><th>Means</th><th>New code &amp; description</th></tr></thead><tbody>
+        ${[...codeRows.values()].map((u) => {
+          const m = codeMap[u.code] || {};
+          return `<tr data-ucode="${esc(u.code)}"><td><b>${esc(u.code)}</b><div class="sub">${esc(u.examples[0] || '')}</div></td><td>${u.count}</td>
+            <td><select data-u="act" aria-label="What ${esc(u.code)} means">${opts.map(([v, l]) => `<option value="${esc(v)}"${v === choice(u.code) ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></td>
+            <td class="nowrap">${m.action === 'ADD' ? `<input data-u="code" value="${esc(m.code)}" maxlength="10" style="width:7em" aria-label="New code"> <input data-u="label" value="${esc(m.label || '')}" data-nocaps placeholder="e.g. Undertime" maxlength="80" aria-label="Description" style="width:12em">` : ''}</td></tr>`;
+        }).join('')}</tbody></table></div>`;
     };
     const check = async () => {
       checked = null;
       btn.disabled = true;
       const out = $('#shResult');
-      if (!grid.length) return;
+      if (!picked.size) return (out.innerHTML = book.length ? '<span style="color:var(--danger)">Tick at least one sheet.</span>' : '');
       out.textContent = 'Checking the sheet…';
+      let report = null;
       try {
-        const r = await api('/admin/flag/attendance-import', { method: 'POST', body: { rows: grid, ...params(), dry_run: true } });
+        const r = await api('/admin/flag/attendance-import', { method: 'POST', body: body({ dry_run: true }) });
         checked = r;
+        report = r;
         out.innerHTML = describe(r);
         btn.disabled = !r.employees;
       } catch (err) {
         const data = err.data || {};
+        report = data.report || null;
         out.innerHTML = `<div class="alert error"><b>${esc(err.message)}</b>${data.errors ? list(data.errors.map(esc)) : ''}</div>${data.report?.employees ? describe(data.report) : ''}`;
       }
+      let added = false;
+      for (const u of report?.unknown_codes || []) {
+        if (!codeRows.has(u.code)) (added = true), codeRows.set(u.code, u);
+      }
+      if (added) renderCodes();
     };
+    const recheck = debounce(check, 600);
+    $('#shSheets').addEventListener('change', (e) => {
+      const i = e.target.dataset.sheet;
+      if (i === undefined) return;
+      if (e.target.checked) picked.add(book[i].name);
+      else picked.delete(book[i].name);
+      check();
+    });
+    $('#shCodes').addEventListener('change', (e) => {
+      const tr = e.target.closest('[data-ucode]');
+      if (!tr || e.target.dataset.u !== 'act') return;
+      const c = tr.dataset.ucode;
+      const v = e.target.value;
+      if (!v) delete codeMap[c];
+      else if (v === 'ADD') codeMap[c] = { action: 'ADD', code: shortCode(c), label: '' };
+      else if (v === 'SKIP') codeMap[c] = { action: 'SKIP' };
+      else codeMap[c] = { action: 'MAP', to: v.slice(4) };
+      renderCodes();
+      if (v === 'ADD') $(`[data-ucode="${CSS.escape(c)}"] [data-u=label]`)?.focus();
+      check();
+    });
+    $('#shCodes').addEventListener('input', (e) => {
+      const tr = e.target.closest('[data-ucode]');
+      const m = tr && codeMap[tr.dataset.ucode];
+      if (!m || m.action !== 'ADD') return;
+      if (e.target.dataset.u === 'code') m.code = e.target.value;
+      if (e.target.dataset.u === 'label') m.label = e.target.value;
+      checked = null;
+      btn.disabled = true;
+      recheck();
+    });
     $('#shFile').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
       $('#shResult').textContent = 'Reading the file…';
       try {
-        grid = (await SheetRead.readFile(file)).rows;
+        book = (await SheetRead.readFile(file)).sheets;
+        picked = new Set(book.filter((x) => !x.hidden).map((x) => x.name));
+        if (!picked.size) picked = new Set(book.map((x) => x.name));
+        codeRows.clear();
+        renderSheets();
+        renderCodes();
         await check();
       } catch (err) {
-        grid = [];
+        book = [];
+        picked = new Set();
+        renderSheets();
         $('#shResult').innerHTML = `<span style="color:var(--danger)">${esc(err.message)}</span>`;
       }
     });
