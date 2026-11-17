@@ -1843,6 +1843,61 @@ test("dashboard: last week's flag ceremonies and attendance per division", async
   assert.equal((await call('/admin/dashboard', { cookie: (await loginAs('opd.only', 'password123')).cookie })).data.flag, undefined);
 });
 
+test('flag ceremony attendance sheet (printed report)', async () => {
+  const admin = await login();
+  await call('/admin/flag/divisions', { method: 'POST', cookie: admin, body: { name: 'sheet test division' } });
+  const rows = [['SH-1', 'abaga', 'reymar'], ['SH-2', 'abiera', 'nicca'], ['SH-3', 'acorin', 'michael']].map(([no, l, f]) => ({ employee_no: no, last_name: l, first_name: f, position: 'admin aide', division: 'sheet test division' }));
+  await call('/admin/flag/employees/import', { method: 'POST', cookie: admin, body: { rows } });
+  await db.query("UPDATE employees SET created_at = '2025-12-01' WHERE employee_no IN ('SH-1','SH-2')");
+  await db.query("UPDATE employees SET created_at = '2026-01-20' WHERE employee_no = 'SH-3'"); // joined after Jan 2
+  const id = async (no) => (await db.one('SELECT id FROM employees WHERE employee_no = $1', [no])).id;
+  const cer = async (date, title) =>
+    (await db.one("INSERT INTO flag_ceremonies (ceremony_date, slot, title, opens_at, starts_at, closes_at, source) VALUES ($1, $2, $3, '16:30', '17:00', '17:30', 'MANUAL') RETURNING id", [date, `M-sh-${date}-${title.length}`, title])).id;
+  const r1 = await cer('2026-01-02', 'FLAG LOWERING CEREMONY');
+  const r2 = await cer('2026-01-23', 'FLAG LOWERING CEREMONY');
+  const raising = await cer('2026-01-05', 'FLAG RAISING CEREMONY');
+  const mark = (c, emp, status, extra = {}) => call(`/admin/flag/ceremonies/${c}/mark`, { method: 'POST', cookie: admin, body: { employee_id: emp, status, remarks: 'from the form', ...extra } });
+  // Excuses need a kind; with a kind the reason is optional
+  assert.equal((await mark(r1, await id('SH-2'), 'EXCUSED', { excuse_type: 'NOPE', remarks: '' })).status, 400);
+  assert.equal((await mark(r1, await id('SH-2'), 'EXCUSED', { excuse_type: 'LEAVE', remarks: '' })).status, 200);
+  assert.equal((await mark(r1, await id('SH-1'), 'ON_TIME')).status, 200);
+  assert.equal((await mark(r2, await id('SH-1'), 'EXCUSED', { excuse_type: 'OB' })).status, 200);
+  assert.equal((await mark(r2, await id('SH-2'), 'ON_TIME')).status, 200);
+  assert.equal((await mark(r2, await id('SH-3'), 'EXCUSED', { excuse_type: 'PM' })).status, 200);
+  assert.equal((await mark(raising, await id('SH-3'), 'ON_TIME')).status, 200);
+  const roster = (await call(`/admin/flag/ceremonies/${r1}`, { cookie: admin })).data.rows;
+  assert.equal(roster.find((x) => x.employee_no === 'SH-2').excuse_type, 'LEAVE');
+
+  const get = async (q) => (await call(`/admin/flag/sheet?from=2026-01-01&to=2026-06-30&division=SHEET%20TEST%20DIVISION&${q}`, { cookie: admin })).data;
+  const retreat = await get('kind=LOWERING');
+  assert.deepEqual(retreat.ceremonies.map((c) => c.date), ['2026-01-02', '2026-01-23']);
+  assert.equal(retreat.divisions.length, 1);
+  const dv = retreat.divisions[0];
+  assert.equal(dv.name, 'SHEET TEST DIVISION');
+  const by = Object.fromEntries(dv.rows.map((r) => [r.employee_no, r]));
+  assert.deepEqual(by['SH-1'].cells, ['P', 'OB']);
+  assert.deepEqual(by['SH-2'].cells, ['LEAVE', 'P']);
+  assert.deepEqual(by['SH-3'].cells, ['', 'PM']); // not yet employed on Jan 2
+  assert.deepEqual([by['SH-1'].total, by['SH-2'].total, by['SH-3'].total], [1, 1, 0]);
+  assert.deepEqual(dv.present_per_ceremony, [1, 1]);
+  assert.equal(by['SH-1'].name, 'ABAGA, REYMAR');
+  assert.deepEqual(dv.rows.map((r) => r.employee_no), ['SH-1', 'SH-2', 'SH-3']); // alphabetical
+  assert.equal(retreat.codes.OB, 'Official business');
+  // Flag raising only, and both kinds
+  const rais = await get('kind=RAISING');
+  assert.deepEqual(rais.ceremonies.map((c) => c.date), ['2026-01-05']);
+  assert.deepEqual(rais.divisions[0].rows.find((r) => r.employee_no === 'SH-3').cells, ['P']);
+  assert.deepEqual(rais.divisions[0].rows.find((r) => r.employee_no === 'SH-1').cells, ['X']);
+  assert.equal((await get('kind=ALL')).ceremonies.length, 3);
+  // CSV
+  const csv = await (await fetch(`${base}/admin/flag/sheet.csv?from=2026-01-01&to=2026-06-30&kind=LOWERING&division=SHEET%20TEST%20DIVISION`, { headers: { Cookie: admin } })).text();
+  assert.match(csv, /Division,No\.,Employee No\.,Name of Employee,Designation,Unit,2026-01-02,2026-01-23,Total Present \(2\)/);
+  assert.match(csv, /SHEET TEST DIVISION,2,SH-2,"ABIERA, NICCA",ADMIN AIDE,,LEAVE,P,1/);
+  // Bad range and access
+  assert.equal((await call('/admin/flag/sheet?from=2026-06-30&to=2026-01-01', { cookie: admin })).status, 400);
+  assert.equal((await call('/admin/flag/sheet', { cookie: (await loginAs('opd.only', 'password123')).cookie })).status, 403);
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');

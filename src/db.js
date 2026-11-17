@@ -442,6 +442,8 @@ const SCHEMA = `
     created_by TEXT,
     UNIQUE (ceremony_id, employee_id)
   );
+  -- Kind of excuse, printed as the code on the attendance sheet (LEAVE, OB, RD, PS, AM, PM, OTHER)
+  ALTER TABLE flag_checkins ADD COLUMN IF NOT EXISTS excuse_type TEXT;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_flag_checkins_device ON flag_checkins(ceremony_id, device_hash) WHERE device_hash IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_flag_checkins_emp ON flag_checkins(employee_id);
   CREATE TABLE IF NOT EXISTS flag_checkin_photos (

@@ -1910,6 +1910,12 @@ ${cat.hospitalName}`;
     $('#flagNotReady').classList.toggle('hidden', flagOpts.ready);
     if (!monthF.month.value) monthF.month.value = flagOpts.today.slice(0, 7);
     if (!sumF.from.value) sumF.from.value = `${flagOpts.today.slice(0, 7)}-01`;
+    const sheetForm = $('#flagSheetForm');
+    if (!sheetForm.from.value) {
+      const [y, m] = [flagOpts.today.slice(0, 4), Number(flagOpts.today.slice(5, 7))];
+      sheetForm.from.value = m <= 6 ? `${y}-01-01` : `${y}-07-01`; // this half-year, like the HR form
+      sheetForm.to.value = flagOpts.today;
+    }
     if (!sumF.to.value) sumF.to.value = flagOpts.today;
     $$('[data-flag-dept]').forEach((sel) => {
       const v = sel.value;
@@ -2099,7 +2105,7 @@ ${cat.hospitalName}`;
         <td class="nowrap">${r.time && r.status !== 'EXCUSED' ? fmtTime(r.time) : ''}</td>
         <td class="small">${r.source === 'GPS' ? `Phone GPS<div class="sub">${r.distance_m} m from venue (±${r.accuracy_m} m)</div>` : r.source === 'MANUAL' ? `By ${esc(r.marked_by)}` : r.source === 'QR' ? `QR scan<div class="sub">by ${esc(r.marked_by)}</div>` : ''}${r.source === 'GPS' && r.marked_by ? `<div class="sub">changed by ${esc(r.marked_by)}</div>` : ''}</td>
         <td class="no-print">${r.has_photo ? `<img class="att-thumb" loading="lazy" src="/api/admin/flag/checkins/${r.checkin_id}/photo" alt="Selfie" data-flag-photo>` : ''}</td>
-        <td class="small">${esc(r.remarks || '')}</td>
+        <td class="small">${r.status === 'EXCUSED' && r.excuse_type ? `<b>${esc(r.excuse_type === 'OTHER' ? 'EXC' : r.excuse_type)}</b> ` : ''}${esc(r.remarks || '')}</td>
         <td class="no-print">${detail.ceremony.phase === 'CANCELLED' ? '' : `<button class="btn sm secondary" data-flag-mark="${r.id}">${r.checkin_id ? 'Change' : closed || detail.ceremony.phase === 'OPEN' ? 'Mark' : 'Excuse'}</button>`}</td>
       </tr>`,
         )
@@ -2121,15 +2127,122 @@ ${cat.hospitalName}`;
        <p class="muted small">${esc(c.title)} · ${esc(fmtDate(c.date))}. Now: ${flagPill(r.status)}${r.source === 'GPS' ? ' (checked in by phone)' : ''}</p>
        <div class="grid">
          <label class="field"><span class="req">Set to</span><select name="status">${choices.map((s) => `<option value="${s}"${s === r.status ? ' selected' : ''}>${esc(label[s])}</option>`).join('')}</select></label>
-         <label class="field"><span class="req">Reason</span><input name="remarks" value="${esc(r.remarks || '')}" placeholder="E.G. ON APPROVED LEAVE, ON DUTY AT ER, GPS NOT WORKING (SEEN BY HR)"></label>
+         <label class="field" id="excuseField"><span class="req">Kind of excuse</span><select name="excuse_type"><option value="">Choose…</option>${Object.entries(flagOpts?.excuse_types || {})
+           .map(([k, l]) => `<option value="${k}"${k === r.excuse_type ? ' selected' : ''}>${esc(l)}</option>`)
+           .join('')}</select></label>
+         <label class="field"><span id="remarksLabel">Reason</span><input name="remarks" value="${esc(r.remarks || '')}" placeholder="E.G. ON APPROVED LEAVE, ON DUTY AT ER, GPS NOT WORKING (SEEN BY HR)"></label>
        </div>
-       <p class="muted small">Your username and the reason are recorded.</p>`,
+       <p class="muted small">Your username and the reason are recorded. The kind of excuse is printed as its code on the attendance sheet.</p>`,
       async (d) => {
         await api(`/admin/flag/ceremonies/${c.id}/mark`, { method: 'POST', body: { employee_id: r.id, ...d } });
         await openCeremony(c.id);
       },
     );
+    // The kind of excuse only applies to "Excused"; then the reason is optional (except for "other")
+    const st = $('#dlgForm [name=status]');
+    const ex = $('#dlgForm [name=excuse_type]');
+    const syncExcuse = () => {
+      const excused = st.value === 'EXCUSED';
+      $('#excuseField').classList.toggle('hidden', !excused);
+      ex.required = excused;
+      $('#remarksLabel').textContent = excused && ex.value && ex.value !== 'OTHER' ? 'Remarks (optional)' : st.value === 'CLEAR' ? 'Remarks' : 'Reason';
+    };
+    st.addEventListener('change', syncExcuse);
+    ex.addEventListener('change', syncExcuse);
+    syncExcuse();
   });
+
+  // ---------- Attendance sheet (printed report like the HR form) ----------
+  const sheetF = $('#flagSheetForm');
+  const sheetQuery = () => new URLSearchParams(Object.entries(formData(sheetF)).filter(([, v]) => v));
+  const MONTHS = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+  const SHORT = ['Jan.', 'Feb.', 'Mar.', 'Apr.', 'May', 'June', 'July', 'Aug.', 'Sept.', 'Oct.', 'Nov.', 'Dec.'];
+  const colDate = (d) => `${SHORT[Number(d.slice(5, 7)) - 1]} ${Number(d.slice(8))}`;
+  function periodTitle(from, to) {
+    const [fy, fm] = [from.slice(0, 4), Number(from.slice(5, 7)) - 1];
+    const [ty, tm] = [to.slice(0, 4), Number(to.slice(5, 7)) - 1];
+    if (fy === ty && fm === tm) return `${MONTHS[fm]} ${fy}`;
+    return fy === ty ? `${MONTHS[fm]} TO ${MONTHS[tm]} ${ty}` : `${MONTHS[fm]} ${fy} TO ${MONTHS[tm]} ${ty}`;
+  }
+  async function printSheet(w) {
+    const d = await api(`/admin/flag/sheet?${sheetQuery()}`);
+    if (!d.ceremonies.length) {
+      w.close();
+      return alert('No flag ceremonies were held in this period (cancelled ones and ceremonies still open are not included).');
+    }
+    if (!d.divisions.length) {
+      w.close();
+      return alert('No employees match these filters.');
+    }
+    const kindTitle = { LOWERING: 'FLAG RETREAT', RAISING: 'FLAG RAISING', ALL: 'FLAG CEREMONY' }[d.kind];
+    const n = d.ceremonies.length;
+    const wide = n > 14;
+    const cellClass = (v) => (v === 'P' ? 'p' : v === 'X' ? 'x' : v ? 'e' : '');
+    const pages = d.divisions
+      .map(
+        (dv) => `<section class="page">
+        <header class="lh">
+          <img src="${location.origin}/img/logo.png" alt="">
+          <div><div class="rp">Republic of the Philippines</div><div class="doh">DEPARTMENT OF HEALTH</div>
+            <div class="hn">${esc(d.hospital.toUpperCase())}</div>${d.former_name ? `<div class="fn">(FORMERLY ${esc(d.former_name.toUpperCase())})</div>` : ''}</div>
+        </header>
+        <h1><u>${kindTitle} Attendance</u> for the month of <u>${esc(periodTitle(d.from, d.to))}</u></h1>
+        <h2><u>${esc(dv.name)}</u></h2>
+        <table>
+          <thead><tr><th>No.</th><th class="nm">NAME OF EMPLOYEE</th><th class="ds">Designation</th>
+            ${d.ceremonies.map((c) => `<th class="dt" title="${esc(c.title)}">${esc(colDate(c.date))}${d.kind === 'ALL' ? `<br><small>${/LOWERING|RETREAT/i.test(c.title) ? 'Ret.' : 'Rais.'}</small>` : ''}</th>`).join('')}
+            <th class="tt">TOTAL (${n})</th></tr></thead>
+          <tbody>${dv.rows
+            .map(
+              (r, i) => `<tr><td class="no">${i + 1}</td><td class="nm">${esc(r.name)}</td><td class="ds">${esc(r.position)}</td>
+              ${r.cells.map((v) => `<td class="${cellClass(v)}">${esc(v)}</td>`).join('')}<td class="tt">${r.total}</td></tr>`,
+            )
+            .join('')}</tbody>
+          <tfoot><tr><td></td><td class="nm" colspan="2">Present</td>${dv.present_per_ceremony.map((p) => `<td>${p}</td>`).join('')}<td class="tt">${dv.rows.length} emp.</td></tr></tfoot>
+        </table>
+        <p class="legend">${Object.entries(d.codes).map(([k, v]) => `<b>${esc(k)}</b> – ${esc(v)}`).join(' &nbsp;·&nbsp; ')}. TOTAL = number of P.</p>
+        <div class="sign"><div>Prepared by:<span></span>Human Resource Management Office</div><div>Noted by:<span></span>Division Chief</div></div>
+      </section>`,
+      )
+      .join('');
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${kindTitle} attendance ${esc(periodTitle(d.from, d.to))}</title><style>
+      body { font-family: Arial, sans-serif; margin: 0; color: #000; }
+      .bar { padding: 10px; font-size: 14px; } .bar button { font-size: 14px; padding: 6px 14px; }
+      .page { padding: 8mm 6mm; break-after: page; }
+      .lh { display: flex; align-items: center; justify-content: center; gap: 10px; text-align: center; border-bottom: 2px solid #0f4d26; padding-bottom: 4px; }
+      .lh img { width: 46px; height: 46px; }
+      .rp { font-size: 8pt; } .doh { font-size: 8pt; font-weight: bold; } .hn { font-size: 12pt; font-weight: bold; color: #0f4d26; letter-spacing: .02em; } .fn { font-size: 7.5pt; }
+      h1 { font-size: 12.5pt; text-align: center; margin: 8px 0 2px; } h2 { font-size: 10.5pt; text-align: center; margin: 0 0 6px; }
+      table { width: 100%; border-collapse: collapse; font-size: ${wide ? '7pt' : '8.5pt'}; }
+      th, td { border: 1px solid #000; padding: 2px 3px; text-align: center; }
+      th { font-size: ${wide ? '6.5pt' : '7.5pt'}; background: #f1f1f1; } th small { font-weight: normal; }
+      td.nm, th.nm { text-align: left; white-space: nowrap; font-weight: bold; }
+      td.ds { font-size: ${wide ? '5.5pt' : '6.5pt'}; white-space: nowrap; }
+      td.p { font-weight: bold; } td.x { font-weight: bold; } td.e { font-size: ${wide ? '5.5pt' : '6.5pt'}; font-weight: bold; }
+      td.tt, th.tt { font-weight: bold; background: #f1f1f1; } td.no { width: 1.6em; }
+      tfoot td { font-weight: bold; background: #fafafa; }
+      .legend { font-size: 7pt; margin: 6px 0 0; }
+      .sign { display: flex; gap: 30mm; margin-top: 12mm; font-size: 8.5pt; } .sign div { display: flex; flex-direction: column; } .sign span { display: block; border-bottom: 1px solid #000; width: 60mm; height: 9mm; margin-bottom: 2px; }
+      @media print { .bar { display: none; } @page { size: ${wide ? 'landscape' : 'portrait'}; margin: 8mm; } .page { padding: 0; } }
+    </style></head><body><div class="bar"><b>${d.divisions.length} division${d.divisions.length === 1 ? '' : 's'}</b>, ${n} ceremon${n === 1 ? 'y' : 'ies'} — one page per division. <button onclick="print()">Print</button></div>${pages}</body></html>`);
+    w.document.close();
+    w.focus();
+  }
+  $('#flagSheetPrint').addEventListener('click', async () => {
+    if (!sheetF.reportValidity()) return;
+    // Open the window now (pop-up blockers allow it only straight after the click), fill it after loading
+    const w = window.open('', '_blank');
+    if (!w) return alert('Allow pop-ups for this site to print the attendance sheet.');
+    w.document.write('<p style="font-family:Arial;padding:12px">Preparing the attendance sheet…</p>');
+    try {
+      await printSheet(w);
+    } catch (err) {
+      w.close();
+      if (err.status === 401) return start();
+      alert(err.message);
+    }
+  });
+  $('#flagSheetCsv').addEventListener('click', () => sheetF.reportValidity() && (window.location.href = `/api/admin/flag/sheet.csv?${sheetQuery()}`));
 
   // Summary
   const sumF = $('#flagSumForm');

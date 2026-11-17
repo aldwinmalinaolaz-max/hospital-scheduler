@@ -70,6 +70,17 @@ const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 // Check-in results. ABSENT is never stored: it is an employee with no row for a ceremony that has closed.
 // There is no "late": anyone who checks in while check-in is open is present.
 const STATUSES = { ON_TIME: 'Present', EXCUSED: 'Excused', ABSENT: 'Absent' };
+// Kinds of excuse; the key is the code printed on the attendance sheet (OTHER prints EXC)
+const EXCUSE_TYPES = {
+  LEAVE: 'Leave',
+  OB: 'Official business (OB)',
+  RD: 'Rest day / day off (RD)',
+  PS: 'Pass slip (PS)',
+  AM: 'Half day – AM',
+  PM: 'Half day – PM',
+  OTHER: 'Other (see remarks)',
+};
+const sheetCode = (k) => (k.status === 'ON_TIME' ? 'P' : k.status === 'EXCUSED' ? (k.excuse_type && k.excuse_type !== 'OTHER' ? k.excuse_type : 'EXC') : 'X');
 
 const DEFAULT_SETTINGS = {
   venue: 'ZRMC FLAGPOLE / MAIN GROUNDS',
@@ -372,6 +383,8 @@ module.exports = {
   EMPLOYEE_COOKIE,
   DEVICE_COOKIE,
   STATUSES,
+  EXCUSE_TYPES,
+  sheetCode,
   DEFAULT_DIVISIONS,
   OLD_DIVISION_NAMES,
   getDivisions,

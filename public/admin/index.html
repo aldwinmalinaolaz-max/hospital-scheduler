@@ -206,6 +206,21 @@
       </div>
 
       <div data-flagview="summary" class="hidden">
+        <div class="card no-print">
+          <h3>Attendance sheet (for printing)</h3>
+          <p class="muted small">The monthly attendance form: one column per ceremony date with <b>P</b> (present), <b>X</b> (absent) or the excuse (LEAVE, OB, RD, PS, AM, PM), and the total present. One page per division.</p>
+          <form class="filters" id="flagSheetForm" style="margin:0">
+            <label class="field">From<input type="date" name="from" required></label>
+            <label class="field">To<input type="date" name="to" required></label>
+            <label class="field">Ceremony<select name="kind"><option value="LOWERING">Flag retreat (lowering)</option><option value="RAISING">Flag raising</option><option value="ALL">Both</option></select></label>
+            <label class="field">Division<select name="division" data-flag-dept><option value="">All divisions</option></select></label>
+            <label class="field">Unit<select name="unit" data-flag-unit><option value="">All units</option></select></label>
+            <label class="field">Employment<select name="employment_type"><option value="">Plantilla &amp; Job Order</option><option value="PLANTILLA">Plantilla</option><option value="JOB_ORDER">Job Order</option></select></label>
+            <button class="btn" type="button" id="flagSheetPrint">Print attendance sheet</button>
+            <button class="btn secondary" type="button" id="flagSheetCsv">Download (CSV)</button>
+          </form>
+        </div>
+        <h3 class="no-print" style="margin:16px 0 8px">Summary per employee</h3>
         <form class="filters no-print" id="flagSumForm">
           <label class="field">From<input type="date" name="from" required></label>
           <label class="field">To<input type="date" name="to" required></label>

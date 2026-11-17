@@ -21,6 +21,8 @@ module.exports = {
   // Shared secret for the /api/cron/reminders endpoint (sent as "Authorization: Bearer …" or ?key=)
   cronSecret: env.CRON_SECRET || '',
   hospitalName: env.HOSPITAL_NAME || 'Zamboanga Regional Medical Center',
+  // Shown as "(FORMERLY …)" under the hospital name on printed reports; blank to leave out
+  hospitalFormerName: env.HOSPITAL_FORMER_NAME ?? 'Mindanao Central Sanitarium',
   // Name of this system, shown in page headers and titles
   systemName: env.SYSTEM_NAME || 'ZRMC ONE Hospital System',
   sessionSecret: env.SESSION_SECRET || 'change-me-in-production',

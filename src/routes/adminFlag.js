@@ -53,6 +53,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       divisions: [...divisionList, ...deps.map((d) => d.department).filter((d) => !divisionList.includes(d))],
       division_choices: divisionList,
       employment_types: flag.EMPLOYMENT_TYPES,
+      excuse_types: flag.EXCUSE_TYPES,
       units: units.map((d) => d.unit),
       today: u.todayStr(), // hospital date (the browser's clock or time zone may differ)
       settings,
@@ -222,7 +223,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     if (!c) throw fail(404, 'Ceremony not found.');
     const ceremony = flag.presentCeremony(c);
     const rows = await db.query(
-      `SELECT e.*, k.id AS checkin_id, k.status, k.checked_at, k.source, k.accuracy_m, k.distance_m, k.remarks, k.created_by,
+      `SELECT e.*, k.id AS checkin_id, k.status, k.checked_at, k.source, k.accuracy_m, k.distance_m, k.remarks, k.created_by, k.excuse_type,
          EXISTS (SELECT 1 FROM flag_checkin_photos p WHERE p.checkin_id = k.id) AS has_photo
        FROM employees e LEFT JOIN flag_checkins k ON k.employee_id = e.id AND k.ceremony_id = $1
        WHERE (e.active AND e.flag_required) OR k.id IS NOT NULL
@@ -241,6 +242,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
         accuracy_m: r.accuracy_m,
         distance_m: r.distance_m,
         remarks: r.remarks,
+        excuse_type: r.excuse_type,
         marked_by: r.created_by,
         has_photo: !!r.has_photo,
       })),
@@ -281,7 +283,13 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const ph = flag.phase(c);
     if (ph === 'UPCOMING' && status !== 'EXCUSED') throw new ValidationError('Before the ceremony, employees can only be excused (e.g. approved leave).');
     const remarks = String(b.remarks || '').trim().toUpperCase().slice(0, 300);
-    if (status !== 'CLEAR' && !remarks) throw new ValidationError('Please give the reason, e.g. ON APPROVED LEAVE, ON DUTY AT ER, GPS NOT WORKING.');
+    // Excuses have a type (printed on the attendance sheet); the remarks are then optional
+    // (without a type but with a reason, the excuse counts as "other")
+    const excuseType = status === 'EXCUSED' ? (flag.EXCUSE_TYPES[b.excuse_type] ? b.excuse_type : remarks ? 'OTHER' : null) : null;
+    if (status === 'EXCUSED' && !excuseType) throw new ValidationError('Choose the kind of excuse: leave, OB, rest day, pass slip, AM, PM or other.');
+    if (status !== 'CLEAR' && !remarks && (status !== 'EXCUSED' || excuseType === 'OTHER')) {
+      throw new ValidationError('Please give the reason, e.g. ON APPROVED LEAVE, ON DUTY AT ER, GPS NOT WORKING.');
+    }
     const emp = await db.one('SELECT * FROM employees WHERE id = $1', [idParam(b.employee_id)]);
     if (!emp) throw fail(404, 'Employee not found.');
     const existing = await db.one('SELECT * FROM flag_checkins WHERE ceremony_id = $1 AND employee_id = $2', [c.id, emp.id]);
@@ -291,13 +299,13 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       return res.json({ ok: true });
     }
     if (existing) {
-      await db.query('UPDATE flag_checkins SET status = $1, remarks = $2, created_by = $3 WHERE id = $4', [status, remarks, req.user.username, existing.id]);
+      await db.query('UPDATE flag_checkins SET status = $1, remarks = $2, created_by = $3, excuse_type = $5 WHERE id = $4', [status, remarks || null, req.user.username, existing.id, excuseType]);
     } else {
       // Present entries by staff are timed at the ceremony start, not when staff typed them
       const at = status === 'EXCUSED' ? new Date() : u.localDateTime(c.ceremony_date, c.starts_at);
       await db.query(
-        `INSERT INTO flag_checkins (ceremony_id, employee_id, status, checked_at, source, remarks, created_by) VALUES ($1, $2, $3, $4, 'MANUAL', $5, $6)`,
-        [c.id, emp.id, status, at.toISOString(), remarks, req.user.username],
+        `INSERT INTO flag_checkins (ceremony_id, employee_id, status, checked_at, source, remarks, created_by, excuse_type) VALUES ($1, $2, $3, $4, 'MANUAL', $5, $6, $7)`,
+        [c.id, emp.id, status, at.toISOString(), remarks || null, req.user.username, excuseType],
       );
     }
     res.json({ ok: true });
@@ -392,6 +400,72 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
   }
 
   router.get('/flag/summary', can, async (req, res) => res.json(await summary(req.query)));
+
+  // ---------- Attendance sheet (printed report: one column per ceremony, a code per employee) ----------
+  // kind: LOWERING (flag retreat) | RAISING | ALL. Codes: P present, X absent, the excuse type
+  // (LEAVE, OB, RD, PS, AM, PM; EXC for other excuses), blank when not expected (e.g. not yet on the list).
+  async function sheet(q) {
+    const today = u.todayStr();
+    const from = u.parseDate(q.from) ? q.from : `${today.slice(0, 4)}-01-01`;
+    const to = u.parseDate(q.to) ? q.to : today;
+    if (from > to) throw new ValidationError('The start date is after the end date.');
+    const kind = ['RAISING', 'LOWERING', 'ALL'].includes(q.kind) ? q.kind : 'ALL';
+    const isLowering = (t) => /LOWERING|RETREAT/i.test(t);
+    const held = (await db.query('SELECT * FROM flag_ceremonies WHERE ceremony_date BETWEEN $1 AND $2 AND NOT cancelled ORDER BY ceremony_date, starts_at', [from, to]))
+      .filter((c) => flag.phase(c) === 'CLOSED')
+      .filter((c) => kind === 'ALL' || (kind === 'LOWERING' ? isLowering(c.title) : !isLowering(c.title)));
+    if (held.length > 60) throw new ValidationError(`${held.length} ceremonies in this period; choose at most 60 (e.g. six months of one kind).`);
+    const ids = held.map((c) => c.id);
+    const conds = [['(e.active AND e.flag_required OR EXISTS (SELECT 1 FROM flag_checkins k WHERE k.employee_id = e.id AND k.ceremony_id = ANY(?::int[])))', ids]];
+    if (q.division) conds.push(['e.department = ?', String(q.division)]);
+    if (q.unit) conds.push(['e.unit = ?', String(q.unit)]);
+    if (q.employment_type) conds.push(['e.employment_type = ?', String(q.employment_type)]);
+    const { where, params } = whereClause(conds);
+    const emps = await db.query(`SELECT e.* FROM employees e ${where} ORDER BY e.department NULLS LAST, e.last_name, e.first_name`, params);
+    const checks = ids.length && emps.length
+      ? await db.query('SELECT ceremony_id, employee_id, status, excuse_type FROM flag_checkins WHERE ceremony_id = ANY($1::int[]) AND employee_id = ANY($2::int[])', [ids, emps.map((e) => e.id)])
+      : [];
+    const byKey = new Map(checks.map((k) => [`${k.ceremony_id}:${k.employee_id}`, k]));
+    const divisions = new Map();
+    for (const e of emps) {
+      const since = u.toDateStr(new Date(e.created_at));
+      const cells = held.map((c) => {
+        const k = byKey.get(`${c.id}:${e.id}`);
+        if (k) return flag.sheetCode(k);
+        return e.active && e.flag_required && c.ceremony_date >= since ? 'X' : '';
+      });
+      const name = e.department || 'NO DIVISION';
+      if (!divisions.has(name)) divisions.set(name, { name, rows: [] });
+      divisions.get(name).rows.push({
+        employee_no: e.employee_no,
+        name: `${e.last_name}, ${e.first_name}${e.middle_name ? ` ${e.middle_name[0]}.` : ''}`,
+        position: e.position || '',
+        unit: e.unit || '',
+        employment_type: e.employment_type,
+        cells,
+        total: cells.filter((x) => x === 'P').length,
+      });
+    }
+    return {
+      from,
+      to,
+      kind,
+      hospital: config.hospitalName,
+      former_name: config.hospitalFormerName || '',
+      ceremonies: held.map((c) => ({ id: c.id, date: c.ceremony_date, title: c.title })),
+      divisions: [...divisions.values()].map((d) => ({ ...d, present_per_ceremony: held.map((_, i) => d.rows.filter((r) => r.cells[i] === 'P').length) })),
+      codes: { P: 'Present', X: 'Absent', ...Object.fromEntries(Object.entries(flag.EXCUSE_TYPES).map(([k, v]) => [k === 'OTHER' ? 'EXC' : k, v.replace(/ \(.*\)$/, '')])) },
+    };
+  }
+  router.get('/flag/sheet', can, async (req, res) => res.json(await sheet(req.query)));
+  router.get('/flag/sheet.csv', can, async (req, res) => {
+    const d = await sheet(req.query);
+    const head = ['Division', 'No.', 'Employee No.', 'Name of Employee', 'Designation', 'Unit', ...d.ceremonies.map((c) => c.date), `Total Present (${d.ceremonies.length})`];
+    const lines = d.divisions.flatMap((dv) => dv.rows.map((r, i) => [dv.name, i + 1, r.employee_no, r.name, r.position, r.unit, ...r.cells, r.total]));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="ZRMC-flag-attendance-sheet-${d.from}-to-${d.to}.csv"`);
+    res.end(flag.toCsv([head, ...lines]));
+  });
 
   router.get('/flag/summary.csv', can, async (req, res) => {
     const { from, to, rows } = await summary(req.query);
