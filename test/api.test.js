@@ -1753,6 +1753,44 @@ test('SMS log: Records requests and OPD appointments only', async () => {
   assert.equal(typeof (await call('/admin/stats', { cookie: admin })).data.smsFailed, 'number');
 });
 
+test('dashboard: a panel per module the user can access', async () => {
+  const admin = await login();
+  const panels = (d) => ['records', 'opd', 'referrals', 'flag', 'sms', 'admin'].filter((k) => d[k] !== undefined);
+  const userWith = async (username, access) => {
+    await call('/admin/users', { method: 'POST', cookie: admin, body: { username, full_name: username, password: 'password123', role: 'STAFF', can_records: false, can_opd: false, ...access } });
+    return (await loginAs(username, 'password123')).cookie;
+  };
+  // Administrators see everything
+  const all = (await call('/admin/dashboard', { cookie: admin })).data;
+  assert.deepEqual(panels(all), ['records', 'opd', 'referrals', 'flag', 'sms', 'admin']);
+  assert.equal(all.user.role, 'ADMIN');
+  assert.equal(all.opd.next7.length, 7);
+  assert.ok(all.admin.users.active >= 1);
+  // Staff only get their own modules (and the SMS summary with Records or OPD)
+  const cases = [
+    ['dash.rec', { can_records: true }, ['records', 'sms']],
+    ['dash.opd', { can_opd: true }, ['opd', 'sms']],
+    ['dash.ref', { can_referrals: true }, ['referrals']],
+    ['dash.hr', { can_attendance: true }, ['flag']],
+  ];
+  for (const [name, acc, expected] of cases) {
+    const d = (await call('/admin/dashboard', { cookie: await userWith(name, acc) })).data;
+    assert.deepEqual(panels(d), expected, name);
+  }
+  // Counts follow the data: a records request submitted now is "submitted today"
+  const rec = await userWith('dash.rec2', { can_records: true });
+  const before = (await call('/admin/dashboard', { cookie: rec })).data.records.counts;
+  const r = await call('/records', { method: 'POST', body: { ...patient, requester_name: 'Juan Dela Cruz', requester_relation: 'Self (patient)', email: 'j@example.com', purpose: 'Insurance', items: [{ record_type: 'MEDICAL_CERTIFICATE' }], copy_type: 'HARDCOPY' } });
+  assert.equal(r.status, 201);
+  const after = (await call('/admin/dashboard', { cookie: rec })).data.records.counts;
+  assert.equal(after.submitted_today, before.submitted_today + 1);
+  assert.equal(after.pending, before.pending + 1);
+  // Assigned to me
+  const { id } = await db.one('SELECT id FROM record_requests WHERE ref_no = $1', [r.data.ref_no]);
+  await call(`/admin/records/${id}`, { method: 'PATCH', cookie: admin, body: { assigned_to: 'dash.rec2' } });
+  assert.equal((await call('/admin/dashboard', { cookie: rec })).data.records.counts.mine, before.mine + 1);
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');

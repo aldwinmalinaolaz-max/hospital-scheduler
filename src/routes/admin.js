@@ -958,6 +958,8 @@ module.exports = function adminRoutes(db) {
   });
 
   // Referrals from RHUs, barangay health centers and other hospitals (routes/adminReferrals.js)
+  // Dashboard: a panel per module the user can access (routes/adminDashboard.js)
+  require('./adminDashboard')(router, { db, access });
   registerReferralRoutes(router, { db, requireAccess, ValidationError, whereClause });
   registerFlagRoutes(router, { db, requireAccess, ValidationError, whereClause });
 

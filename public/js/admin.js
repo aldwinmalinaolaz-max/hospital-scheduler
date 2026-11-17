@@ -77,35 +77,138 @@
 
   const updatedBy = (row) => (row.updated_by ? `<div class="sub">by ${esc(row.updated_by)} · ${esc(row.updated_at)}</div>` : '');
 
-  // ---------- Dashboard ----------
+  // ---------- Dashboard: a panel per module the user can access ----------
+  // Opens a tab with its filters set (only fields that exist on that tab's filter form)
+  const FILTER_FORMS = { records: '#recFilters', appointments: '#apptFilters', referrals: '#refFilters', flag: null };
+  function go(tab, filters = {}) {
+    const form = FILTER_FORMS[tab] && $(FILTER_FORMS[tab]);
+    if (form) {
+      form.reset();
+      for (const [k, v] of Object.entries(filters)) if (form.elements[k]) form.elements[k].value = v;
+    }
+    showTab(tab);
+  }
+  const tile = (n, label, { go: target, f, tone } = {}) =>
+    `<button type="button" class="stat dash-tile${tone ? ` ${tone}` : ''}"${target ? ` data-go="${target}" data-f='${esc(JSON.stringify(f || {}))}'` : ' disabled'}>
+      <div class="n">${n}</div><div class="l">${label}</div></button>`;
+  const panel = (title, tab, body, icon = '') => `<section class="card dash-panel">
+      <div class="dash-panel-head"><h3>${icon}${esc(title)}</h3>${tab ? `<button type="button" class="btn sm secondary" data-go="${tab}" data-f="{}">Open</button>` : ''}</div>${body}</section>`;
+  const SECTION = { records: 'Records Requests', opd: 'OPD Appointments', referrals: 'Referrals', attendance: 'Flag Ceremony' };
+
   loaders.dashboard = guard(async () => {
-    const s = await api('/admin/stats');
-    const stat = (n, l) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`;
-    $('#stats').innerHTML = [
-      me.access.opd && stat(s.appointmentsToday, 'OPD appointments today'),
-      me.access.opd && stat(s.checkedInToday, 'Checked in / seen today'),
-      me.access.opd && stat(s.upcomingAppointments, 'Upcoming appointments'),
-      me.access.records && stat(s.recordsPending, 'Records pending / processing'),
-      me.access.records && stat(s.recordsReady, 'Records ready for claiming'),
-      me.access.records && stat(s.idsToCheck, 'Digital copies: IDs to check'),
-      me.access.referrals && stat(s.referralsOpen, `Referrals waiting${s.referralsEmergency ? ` (${s.referralsEmergency} emergency)` : ''}`),
-      s.smsFailed !== undefined && stat(s.smsFailed, `Failed SMS (7 days) · ${esc(s.smsProvider)}`),
-    ]
-      .filter(Boolean)
+    const d = await api('/admin/dashboard');
+    const hour = new Date().getHours();
+    const greet = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+    const mine = Object.keys(SECTION).filter((k) => d.access[k]).map((k) => SECTION[k]);
+    $('#dashHead').innerHTML = `<h2 style="margin:0">${greet}, ${esc(d.user.name)}</h2>
+      <p class="muted small" style="margin:2px 0 0">${esc(fmtDate(d.today, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }))} ·
+      ${d.user.role === 'ADMIN' ? 'Administrator (all modules)' : mine.length ? `Your access: ${esc(mine.join(', '))}` : 'No module access yet; ask an administrator.'}</p>`;
+
+    // Things that need attention, across the user's modules
+    const alerts = [];
+    const r = d.records?.counts;
+    if (d.referrals?.counts.emergency) alerts.push(['danger', `${d.referrals.counts.emergency} emergency referral${d.referrals.counts.emergency === 1 ? '' : 's'} waiting for a reply`, 'referrals', { urgency: 'EMERGENCY' }]);
+    if (r?.ids_to_check) alerts.push(['warn', `${r.ids_to_check} digital-copy ID${r.ids_to_check === 1 ? '' : 's'} & payment${r.ids_to_check === 1 ? '' : 's'} to check`, 'records', { id_status: 'PENDING' }]);
+    if (r?.to_email) alerts.push(['warn', `${r.to_email} verified digital cop${r.to_email === 1 ? 'y' : 'ies'} to email`, 'records', { copy_type: 'DIGITAL', id_status: 'VERIFIED' }]);
+    if (r?.not_claimed) alerts.push(['info', `${r.not_claimed} ready document${r.not_claimed === 1 ? '' : 's'} not yet claimed after the claiming date`, 'records', { status: 'READY' }]);
+    if (d.sms?.failed) alerts.push(['danger', `${d.sms.failed} SMS failed in the last 7 days`, 'sms']);
+    if (d.sms?.test_mode && d.user.role === 'ADMIN') alerts.push(['warn', 'SMS is in test mode: no texts are sent to phones (SMS_PROVIDER is not set)', 'sms']);
+    if (d.flag && !d.flag.ready) alerts.push(['warn', 'Flag ceremony check-in is off until the venue is pinned', 'flag']);
+    if (d.admin?.modules_off.length) alerts.push(['info', `Turned off on the public site: ${d.admin.modules_off.join(', ')}`, 'settings']);
+    $('#dashAlerts').innerHTML = alerts
+      .map(([tone, text, tab, f]) => `<button type="button" class="dash-alert ${tone}" data-go="${tab}" data-f='${esc(JSON.stringify(f || {}))}'>${esc(text)} <span aria-hidden="true">→</span></button>`)
       .join('');
-    const none = { rows: [] };
-    const [{ rows: appts }, { rows: recs }] = await Promise.all([
-      me.access.opd ? api(`/admin/appointments?date=${s.today}`) : none,
-      me.access.records ? api(`/admin/records?pickup_date=${s.today}`) : none,
-    ]);
-    const active = appts.filter((a) => a.status !== 'CANCELLED');
-    $('#dashAppts').innerHTML = active.length
-      ? `<table><tbody>${active.map((a) => `<tr><td class="nowrap">${fmtTime(a.appt_time)}</td><td>${esc(a.patient_last)}, ${esc(a.patient_first)}<div class="sub">${esc(a.department_name)}</div></td><td>${badge(a.status)}</td></tr>`).join('')}</tbody></table>`
-      : '<p class="muted">No appointments today.</p>';
-    const pick = recs.filter((r) => !['CANCELLED', 'REJECTED'].includes(r.status));
-    $('#dashPickups').innerHTML = pick.length
-      ? `<table><tbody>${pick.map((r) => `<tr><td class="mono">${esc(r.ref_no)}</td><td>${esc(r.patient_last)}, ${esc(r.patient_first)}<div class="sub">${r.items.map((i) => esc(i.name)).join(', ')}</div></td><td>${badge(r.status)}</td></tr>`).join('')}</tbody></table>`
-      : '<p class="muted">No records to be claimed today.</p>';
+
+    const panels = [];
+    if (d.records) {
+      const p = d.records.pickups_today;
+      panels.push(panel('Records Requests', 'records', `
+        <div class="stats mini">
+          ${tile(r.pending, 'Pending', { go: 'records', f: { status: 'PENDING' } })}
+          ${tile(r.processing, 'Processing', { go: 'records', f: { status: 'PROCESSING' } })}
+          ${tile(r.ready, 'Ready for claiming', { go: 'records', f: { status: 'READY' } })}
+          ${tile(r.mine, 'Assigned to me', { go: 'records', f: { assigned: 'me' } })}
+          ${tile(r.submitted_today, 'Submitted today')}
+          ${tile(r.released_today, 'Released today')}
+        </div>
+        <h4>For claiming today (${p.length})</h4>
+        ${p.length
+          ? `<table class="dash-list"><tbody>${p.map((x) => `<tr><td class="mono small">${esc(x.ref_no)}</td><td>${esc(x.patient_last)}, ${esc(x.patient_first)}<div class="sub">${x.types.split(',').filter(Boolean).map((t) => esc(typeName(t))).join(', ')}${x.copy_type === 'DIGITAL' ? ' · digital' : ''}</div></td><td>${badge(x.status)}</td></tr>`).join('')}</tbody></table>`
+          : '<p class="muted small">No records to be claimed today.</p>'}`));
+    }
+    if (d.opd) {
+      const t = d.opd.today;
+      const max = Math.max(1, ...d.opd.next7.map((x) => x.total));
+      panels.push(panel('OPD Appointments', 'appointments', `
+        <div class="stats mini">
+          ${tile(t.total, 'Today', { go: 'appointments', f: { date: d.today } })}
+          ${tile(t.booked, 'Not yet arrived', { go: 'appointments', f: { date: d.today, status: 'BOOKED' } })}
+          ${tile(t.checked_in, 'Checked in', { go: 'appointments', f: { date: d.today, status: 'CHECKED_IN' } })}
+          ${tile(t.completed, 'Completed', { go: 'appointments', f: { date: d.today, status: 'COMPLETED' } })}
+          ${tile(t.no_show, 'No show', { go: 'appointments', f: { date: d.today, status: 'NO_SHOW' }, tone: t.no_show ? 'warn' : '' })}
+        </div>
+        ${d.opd.by_clinic.length ? `<h4>Today by clinic</h4><table class="dash-list"><tbody>${d.opd.by_clinic.map((c) => `<tr><td>${esc(c.name)}</td><td class="nowrap small">${c.seen} of ${c.total} seen</td></tr>`).join('')}</tbody></table>` : ''}
+        <h4>Booked for the next 7 days</h4>
+        <div class="dash-bars">${d.opd.next7.map((x) => `<button type="button" data-go="appointments" data-f='${esc(JSON.stringify({ date: x.date }))}' title="${x.total} booked">
+          <span class="bar" style="height:${Math.round((x.total / max) * 100)}%"></span><b>${x.total}</b><small>${esc(fmtDate(x.date, { weekday: 'short' }))}</small></button>`).join('')}</div>
+        <h4>Today's schedule (${d.opd.list.length})</h4>
+        ${d.opd.list.length
+          ? `<table class="dash-list"><tbody>${d.opd.list.map((a) => `<tr><td class="nowrap">${fmtTime(a.appt_time)}</td><td>${esc(a.patient_last)}, ${esc(a.patient_first)}<div class="sub">${esc(a.department_name)}</div></td><td>${badge(a.status)}</td></tr>`).join('')}</tbody></table>`
+          : '<p class="muted small">No appointments today.</p>'}`));
+    }
+    if (d.referrals) {
+      const c = d.referrals.counts;
+      panels.push(panel('Referrals', 'referrals', `
+        <div class="stats mini">
+          ${tile(c.emergency, 'Emergency waiting', { go: 'referrals', f: { urgency: 'EMERGENCY' }, tone: c.emergency ? 'danger' : '' })}
+          ${tile(c.urgent, 'Urgent waiting', { go: 'referrals', f: { urgency: 'URGENT' } })}
+          ${tile(c.routine, 'Routine waiting', { go: 'referrals', f: { urgency: 'ROUTINE' } })}
+          ${tile(c.awaiting_arrival, 'Accepted, not yet arrived', { go: 'referrals', f: { status: 'ACCEPTED' } })}
+          ${tile(c.month_received, 'Received this month')}
+          ${tile(c.month_seen, 'Seen this month')}
+        </div>
+        <h4>Waiting for a reply</h4>
+        ${d.referrals.waiting.length
+          ? `<table class="dash-list"><tbody>${d.referrals.waiting.map((x) => `<tr class="${x.urgency === 'EMERGENCY' ? 'urgent-row' : ''}"><td><span class="badge ${x.urgency === 'EMERGENCY' ? 'FAILED' : x.urgency === 'URGENT' ? 'PENDING' : ''}">${esc(x.urgency_label)}</span></td><td>${esc(x.patient_last)}, ${esc(x.patient_first)}<div class="sub">${esc(x.facility)} · ${esc(x.created_at)}</div></td></tr>`).join('')}</tbody></table>`
+          : '<p class="muted small">No referrals waiting.</p>'}`));
+    }
+    if (d.flag) {
+      const f = d.flag;
+      const cer = (c) => `<div class="dash-cer"><b>${esc(c.title)}</b> <span class="muted small">${esc(fmtDate(c.date, { weekday: 'short', month: 'short', day: 'numeric' }))} · ${fmtTime(c.starts)}${c.phase === 'OPEN' ? ' · <b style="color:var(--ok)">check-in open</b>' : ''}</span></div>`;
+      const today = f.today.filter((c) => !c.cancelled);
+      panels.push(panel('Flag Ceremony', 'flag', `
+        ${today.length
+          ? today.map((c) => `${cer(c)}<div class="stats mini">${tile(c.present, 'Present')}${tile(c.excused, 'Excused')}${tile(c.not_yet, c.phase === 'CLOSED' ? 'Absent' : 'Not yet', { tone: c.phase === 'CLOSED' && c.not_yet ? 'warn' : '' })}${tile(c.rate === null ? '—' : `${c.rate}%`, 'Attendance')}</div>`).join('')
+          : `<p class="small">No flag ceremony today.${f.next ? ` Next: ${cer(f.next)}` : ''}</p>`}
+        ${f.today.filter((c) => c.cancelled).map((c) => `<p class="small muted">${esc(c.title)} today: ${c.moved_to_date ? `moved to ${esc(fmtDate(c.moved_to_date))}` : 'cancelled'}${c.cancel_reason ? ` (${esc(c.cancel_reason)})` : ''}.</p>`).join('')}
+        <div class="stats mini">
+          ${tile(f.expected, 'Employees expected')}
+          ${tile(f.default_pin, 'Still on the default PIN', { tone: f.default_pin ? 'warn' : '' })}
+          ${f.last && !today.some((c) => c.id === f.last.id) ? tile(f.last.rate === null ? '—' : `${f.last.rate}%`, `Last ceremony (${esc(fmtDate(f.last.date, { month: 'short', day: 'numeric' }))})`) : ''}
+        </div>`));
+    }
+    if (d.admin) {
+      panels.push(panel('System', null, `
+        <div class="stats mini">
+          ${tile(d.admin.users.active, 'Active staff accounts', { go: 'users' })}
+          ${tile(d.admin.users.admins, 'Administrators', { go: 'users' })}
+          ${tile(d.sms ? d.sms.sent : '—', 'SMS in the last 7 days', { go: 'sms' })}
+          ${tile(d.admin.modules_off.length, 'Public services off', { go: 'settings', tone: d.admin.modules_off.length ? 'warn' : '' })}
+        </div>
+        <p class="muted small" style="margin-bottom:0">SMS provider: <b>${esc(d.sms?.provider || '')}</b>${d.sms?.test_mode ? ' (test mode)' : ''}.</p>`));
+    }
+    $('#dashPanels').innerHTML = panels.join('') || '<div class="card"><p class="muted">You don\'t have access to any module yet. Please ask an administrator.</p></div>';
+  });
+  $('[data-view="dashboard"]').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-go]');
+    if (!b) return;
+    let f = {};
+    try {
+      f = JSON.parse(b.dataset.f || '{}');
+    } catch {
+      f = {};
+    }
+    go(b.dataset.go, f);
   });
 
   // ---------- Records ----------

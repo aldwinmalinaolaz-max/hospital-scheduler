@@ -223,7 +223,14 @@ The first administrator is created from `ADMIN_USERNAME` / `ADMIN_PASSWORD` the 
 Everything typed into the forms is converted to capital letters, both in the browser and when it's saved. Passwords, usernames and email addresses are kept exactly as typed.
 
 ### Staff panel
-- **Dashboard:** today's counts, today's OPD list and today's pickups.
+- **Dashboard:** a greeting with the user's access, alerts that need attention (emergency referrals waiting, digital-copy IDs to check or copies to email, documents not claimed after the claiming date, failed SMS, SMS test mode, flag check-in not set up, public services turned off), and **one panel per module the user can access**:
+  - *Records Requests:* pending, processing, ready, assigned to me, submitted and released today; today's pickups.
+  - *OPD Appointments:* today's total, not yet arrived, checked in, completed, no-shows; today by clinic; bookings for the next 7 days (bar chart); today's schedule.
+  - *Referrals:* waiting by urgency (emergency highlighted), accepted but not yet arrived, received and seen this month; the referrals waiting for a reply.
+  - *Flag Ceremony:* today's ceremony (present, excused, not yet / absent, attendance %) or the next one; employees expected; employees still on the default PIN; the last ceremony's attendance.
+  - *System* (Administrators): active staff accounts, administrators, SMS in the last 7 days, public services off.
+
+  Clicking a number or an alert opens that tab with the matching filter.
 - **Records and Appointments:** search and filter, one-click status buttons, an edit dialog for rescheduling and remarks (with an option to notify the patient), and a printable daily list.
 - **SMS Log:** texts of **Records Requests and OPD Appointments only**, for Administrators and staff with access to those sections (others don't see the tab); filter by section; failures shown with a **Resend** button. Texts of other modules (e.g. referrals) are still sent but not listed here. Administrators also see their gateway test messages.
 - **Users** (administrators only): add users, change roles, deactivate, reset passwords.
