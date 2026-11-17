@@ -95,6 +95,28 @@
       <div class="dash-panel-head"><h3>${icon}${esc(title)}</h3>${tab ? `<button type="button" class="btn sm secondary" data-go="${tab}" data-f="{}">Open</button>` : ''}</div>${body}</section>`;
   const SECTION = { records: 'Records Requests', opd: 'OPD Appointments', referrals: 'Referrals', attendance: 'Flag Ceremony' };
 
+  // Flag ceremony: last week's ceremonies and attendance per division
+  const pctBar = (rate) => `<span class="pct-bar" aria-hidden="true"><span style="width:${rate ?? 0}%" class="${rate === null ? '' : rate >= 90 ? 'ok' : rate >= 75 ? 'mid' : 'low'}"></span></span>`;
+  function lastWeekHtml(w) {
+    if (!w) return '';
+    const range = `${fmtDate(w.from, { month: 'short', day: 'numeric' })} – ${fmtDate(w.to, { month: 'short', day: 'numeric' })}`;
+    if (!w.ceremonies.length) return `<h4>Last week (${esc(range)})</h4><p class="muted small">No flag ceremonies were held last week.</p>`;
+    return `<h4>Last week (${esc(range)})${w.overall !== null ? ` · ${w.overall}% overall` : ''}</h4>
+      <table class="dash-list"><tbody>${w.ceremonies
+        .map(
+          (c) => `<tr><td>${esc(c.title.replace(/ CEREMONY$/, ''))}<div class="sub">${esc(fmtDate(c.date, { weekday: 'short', month: 'short', day: 'numeric' }))}</div></td>
+          <td class="small nowrap"><b>${c.present}</b> present<div class="sub">${c.excused} excused · ${c.absent} absent</div></td>
+          <td class="nowrap"><b>${c.rate === null ? '—' : `${c.rate}%`}</b></td></tr>`,
+        )
+        .join('')}</tbody></table>
+      <h4>By division, last week</h4>
+      <table class="dash-list"><tbody>${w.divisions
+        .map((d) => `<tr><td class="small">${esc(d.name)}<div class="sub">${d.present} present · ${d.excused} excused · ${d.absent} absent</div></td>
+          <td class="pct-cell">${pctBar(d.rate)}</td><td class="nowrap"><b>${d.rate === null ? '—' : `${d.rate}%`}</b></td></tr>`)
+        .join('')}</tbody></table>
+      <p class="muted small" style="margin:6px 0 0">Attendance % = present ÷ (present + absent); excused employees are not counted. Counts add up over all of last week's ceremonies.</p>`;
+  }
+
   loaders.dashboard = guard(async () => {
     const d = await api('/admin/dashboard');
     const hour = new Date().getHours();
@@ -185,7 +207,8 @@
           ${tile(f.expected, 'Employees expected')}
           ${tile(f.default_pin, 'Still on the default PIN', { tone: f.default_pin ? 'warn' : '' })}
           ${f.last && !today.some((c) => c.id === f.last.id) ? tile(f.last.rate === null ? '—' : `${f.last.rate}%`, `Last ceremony (${esc(fmtDate(f.last.date, { month: 'short', day: 'numeric' }))})`) : ''}
-        </div>`));
+        </div>
+        ${lastWeekHtml(f.last_week)}`));
     }
     if (d.admin) {
       panels.push(panel('System', null, `

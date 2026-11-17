@@ -1791,6 +1791,58 @@ test('dashboard: a panel per module the user can access', async () => {
   assert.equal((await call('/admin/dashboard', { cookie: rec })).data.records.counts.mine, before.mine + 1);
 });
 
+test("dashboard: last week's flag ceremonies and attendance per division", async () => {
+  const admin = await login();
+  const today = u.todayStr();
+  const monday = u.addDays(today, -((u.dayOfWeek(today) + 6) % 7));
+  const lastMon = u.addDays(monday, -7);
+  const lastFri = u.addDays(monday, -3);
+  // Two divisions with 4 and 2 employees, added well before last week
+  for (const d of ['lw alpha division', 'lw beta division']) await call('/admin/flag/divisions', { method: 'POST', cookie: admin, body: { name: d } });
+  const rows = ['A1', 'A2', 'A3', 'A4'].map((n) => ({ employee_no: `LW-${n}`, last_name: n, first_name: 'x', division: 'lw alpha division' }))
+    .concat(['B1', 'B2'].map((n) => ({ employee_no: `LW-${n}`, last_name: n, first_name: 'x', division: 'lw beta division' })));
+  await call('/admin/flag/employees/import', { method: 'POST', cookie: admin, body: { rows } });
+  await db.query("UPDATE employees SET created_at = now() - interval '60 days' WHERE employee_no LIKE 'LW-%'");
+  const id = async (no) => (await db.one('SELECT id FROM employees WHERE employee_no = $1', [no])).id;
+  const cer = async (date, slot, title, opens, starts, closes) =>
+    (await db.one('INSERT INTO flag_ceremonies (ceremony_date, slot, title, opens_at, starts_at, closes_at, source) VALUES ($1, $2, $3, $4, $5, $6, \'MANUAL\') RETURNING id', [date, slot, title, opens, starts, closes])).id;
+  const raising = await cer(lastMon, 'M-lw1', 'LW FLAG RAISING CEREMONY', '07:00', '08:00', '09:00');
+  const lowering = await cer(lastFri, 'M-lw2', 'LW FLAG LOWERING CEREMONY', '16:30', '17:00', '17:30');
+  const cancelled = await cer(lastFri, 'M-lw3', 'LW CANCELLED CEREMONY', '07:00', '08:00', '09:00');
+  await db.query('UPDATE flag_ceremonies SET cancelled = TRUE WHERE id = $1', [cancelled]);
+  const mark = async (c, no, status) => db.query("INSERT INTO flag_checkins (ceremony_id, employee_id, status, source) VALUES ($1, $2, $3, 'MANUAL')", [c, await id(no), status]);
+  // Raising: A1, A2, A3, B1 present; A4 excused; B2 absent
+  for (const no of ['LW-A1', 'LW-A2', 'LW-A3', 'LW-B1']) await mark(raising, no, 'ON_TIME');
+  await mark(raising, 'LW-A4', 'EXCUSED');
+  // Lowering: A1, B1, B2 present; the rest absent
+  for (const no of ['LW-A1', 'LW-B1', 'LW-B2']) await mark(lowering, no, 'ON_TIME');
+
+  const w = (await call('/admin/dashboard', { cookie: admin })).data.flag.last_week;
+  assert.equal(w.from, lastMon);
+  assert.equal(w.to, u.addDays(monday, -1));
+  const r = w.ceremonies.find((c) => c.title === 'LW FLAG RAISING CEREMONY');
+  const l = w.ceremonies.find((c) => c.title === 'LW FLAG LOWERING CEREMONY');
+  assert.ok(r && l);
+  assert.ok(!w.ceremonies.some((c) => c.title === 'LW CANCELLED CEREMONY'));
+  assert.deepEqual([r.present, r.excused], [4, 1]);
+  assert.deepEqual([l.present, l.excused], [3, 0]);
+  const alpha = w.divisions.find((d) => d.name === 'LW ALPHA DIVISION');
+  const beta = w.divisions.find((d) => d.name === 'LW BETA DIVISION');
+  // Other tests also left ceremonies last week, where these employees count as absent
+  const others = w.ceremonies.length - 2;
+  // Alpha: raising 3 present / 1 excused, lowering 1 present / 3 absent (4 of 7 = 57% with no other ceremonies)
+  const alphaAbsent = 3 + 4 * others;
+  assert.deepEqual([alpha.present, alpha.excused, alpha.absent, alpha.rate], [4, 1, alphaAbsent, Math.round((4 / (4 + alphaAbsent)) * 100)]);
+  // Beta: raising 1 present / 1 absent, lowering 2 present (3 of 4 = 75%)
+  const betaAbsent = 1 + 2 * others;
+  assert.deepEqual([beta.present, beta.excused, beta.absent, beta.rate], [3, 0, betaAbsent, Math.round((3 / (3 + betaAbsent)) * 100)]);
+  // Divisions are listed best first
+  const rates = w.divisions.map((d) => d.rate ?? -1);
+  assert.deepEqual(rates, [...rates].sort((x, y) => y - x));
+  // Staff without Flag Ceremony access don't get it
+  assert.equal((await call('/admin/dashboard', { cookie: (await loginAs('opd.only', 'password123')).cookie })).data.flag, undefined);
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');

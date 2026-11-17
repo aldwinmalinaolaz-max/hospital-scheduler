@@ -785,3 +785,7 @@ body.page-off main > :not(.module-off-notice) { display: none !important; }
 .dash-bars b { font-size: 0.85rem; margin-top: 2px; } .dash-bars small { color: var(--muted); font-size: 0.72rem; }
 .dash-cer { margin-bottom: 6px; }
 @media (max-width: 560px) { .dash-grid { grid-template-columns: 1fr; } }
+.pct-cell { width: 34%; vertical-align: middle !important; }
+.pct-bar { display: block; height: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.pct-bar span { display: block; height: 100%; border-radius: 999px; background: var(--muted); }
+.pct-bar span.ok { background: var(--ok); } .pct-bar span.mid { background: var(--warn); } .pct-bar span.low { background: var(--danger); }

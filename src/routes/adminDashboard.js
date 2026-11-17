@@ -150,7 +150,55 @@ module.exports = function registerDashboard(router, { db, access }) {
       today: await Promise.all(todays.map(withCounts)),
       next: next ? flag.presentCeremony(next) : null,
       last: closed ? await withCounts(closed) : null,
+      last_week: await lastWeek(today),
     };
+  }
+
+  // Last week (Monday to Sunday before this week): each ceremony held (flag raising and lowering)
+  // and attendance per division. Same rules as the Summary tab: cancelled ceremonies don't count,
+  // excused employees are not counted against attendance, and employees added after a ceremony
+  // are not expected at it.
+  async function lastWeek(today) {
+    const dow = u.dayOfWeek(today); // 0 = Sunday
+    const thisMonday = u.addDays(today, -((dow + 6) % 7));
+    const from = u.addDays(thisMonday, -7);
+    const to = u.addDays(thisMonday, -1);
+    const held = (await db.query('SELECT * FROM flag_ceremonies WHERE ceremony_date BETWEEN $1 AND $2 AND NOT cancelled ORDER BY ceremony_date, starts_at', [from, to]))
+      .filter((c) => flag.phase(c) === 'CLOSED');
+    const out = { from, to, ceremonies: [], divisions: [], overall: null };
+    if (!held.length) return out;
+    const ids = held.map((c) => c.id);
+    const [emps, checks] = await Promise.all([
+      db.query('SELECT id, department, active, flag_required, created_at FROM employees'),
+      db.query('SELECT ceremony_id, employee_id, status FROM flag_checkins WHERE ceremony_id = ANY($1::int[])', [ids]),
+    ]);
+    const statusOf = new Map(checks.map((k) => [`${k.ceremony_id}:${k.employee_id}`, k.status]));
+    const div = new Map();
+    let allPresent = 0;
+    let allCounted = 0;
+    for (const c of held) {
+      const t = { present: 0, excused: 0, absent: 0 };
+      for (const e of emps) {
+        const s = statusOf.get(`${c.id}:${e.id}`);
+        const expected = (e.active && e.flag_required && u.toDateStr(new Date(e.created_at)) <= c.ceremony_date) || !!s;
+        if (!expected) continue;
+        const name = e.department || 'NO DIVISION';
+        if (!div.has(name)) div.set(name, { name, present: 0, excused: 0, absent: 0 });
+        const d = div.get(name);
+        if (s === 'ON_TIME') t.present++, d.present++;
+        else if (s === 'EXCUSED') t.excused++, d.excused++;
+        else t.absent++, d.absent++;
+      }
+      const counted = t.present + t.absent;
+      allPresent += t.present;
+      allCounted += counted;
+      out.ceremonies.push({ ...flag.presentCeremony(c), ...t, rate: counted ? Math.round((t.present / counted) * 100) : null });
+    }
+    out.divisions = [...div.values()]
+      .map((d) => ({ ...d, rate: d.present + d.absent ? Math.round((d.present / (d.present + d.absent)) * 100) : null }))
+      .sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || a.name.localeCompare(b.name));
+    out.overall = allCounted ? Math.round((allPresent / allCounted) * 100) : null;
+    return out;
   }
 
   async function smsPanel(a, user) {

@@ -228,6 +228,7 @@ Everything typed into the forms is converted to capital letters, both in the bro
   - *OPD Appointments:* today's total, not yet arrived, checked in, completed, no-shows; today by clinic; bookings for the next 7 days (bar chart); today's schedule.
   - *Referrals:* waiting by urgency (emergency highlighted), accepted but not yet arrived, received and seen this month; the referrals waiting for a reply.
   - *Flag Ceremony:* today's ceremony (present, excused, not yet / absent, attendance %) or the next one; employees expected; employees still on the default PIN; the last ceremony's attendance.
+    **Last week** (Monday–Sunday before this week): each ceremony held (flag raising and flag lowering) with present, excused and absent and its attendance %, the overall %, and **attendance % per division** with a bar (green 90%+, amber 75–89%, red below 75%). Cancelled or moved ceremonies don't count; excused employees are not counted against attendance; employees added after a ceremony are not expected at it.
   - *System* (Administrators): active staff accounts, administrators, SMS in the last 7 days, public services off.
 
   Clicking a number or an alert opens that tab with the matching filter.
