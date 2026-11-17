@@ -456,6 +456,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       const name = e.department || 'NO DIVISION';
       if (!divisions.has(name)) divisions.set(name, { name, rows: [] });
       divisions.get(name).rows.push({
+        id: e.id,
         employee_no: e.employee_no,
         name: `${e.last_name}, ${e.first_name}${e.middle_name ? ` ${e.middle_name[0]}.` : ''}`,
         position: e.position || '',

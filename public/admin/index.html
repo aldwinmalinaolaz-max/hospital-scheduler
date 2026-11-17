@@ -218,12 +218,14 @@
             <label class="field">Employment<select name="employment_type"><option value="">Plantilla &amp; Job Order</option><option value="PLANTILLA">Plantilla</option><option value="JOB_ORDER">Job Order</option></select></label>
             <button class="btn" type="button" id="flagSheetPrint">Print attendance sheet</button>
             <button class="btn secondary" type="button" id="flagSheetCsv">Download (CSV)</button>
+            <button class="btn secondary" type="button" id="flagSheetEdit" title="Show the sheet here and change any entry, e.g. an X to OB">Edit on screen</button>
           </form>
           <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn secondary" type="button" id="flagSheetImportBtn" title="Add attendance kept on paper or in Excel before the system">Import past attendance sheet</button>
             <button class="btn secondary" type="button" id="flagExcuseBtn" title="Rename, add or remove the excuse tags (LEAVE, OB, AM, PM...)">Excuse codes</button>
           </div>
         </div>
+        <div id="flagSheetGrid" class="no-print"></div>
         <h3 class="no-print" style="margin:16px 0 8px">Summary per employee</h3>
         <form class="filters no-print" id="flagSumForm">
           <label class="field">From<input type="date" name="from" required></label>

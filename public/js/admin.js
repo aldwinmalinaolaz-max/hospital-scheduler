@@ -2241,6 +2241,81 @@ ${cat.hospitalName}`;
     w.document.close();
     w.focus();
   }
+  // ---------- Attendance sheet on screen: click any entry to change it (e.g. X → OB) ----------
+  let gridData = null;
+  const cellClass = (v) => (v === 'P' ? 'p' : v === 'X' ? 'x' : v ? 'e' : '');
+  function renderGrid() {
+    const d = gridData;
+    const box = $('#flagSheetGrid');
+    if (!d) return (box.innerHTML = '');
+    if (!d.ceremonies.length) return (box.innerHTML = '<p class="muted small" style="margin-top:12px">No flag ceremonies were held in this period.</p>');
+    box.innerHTML = `<div class="card sheet-grid">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
+        <h3 style="margin:0">Edit attendance · ${esc(periodTitle(d.from, d.to))}</h3>
+        <button class="btn sm secondary" type="button" data-grid-close>Close</button></div>
+      <p class="muted small">Click an entry to change it: e.g. an <b>X</b> (absent) to <b>OB</b> or another excuse, or to <b>P</b>. Changes are saved at once with your username, like Attendance → Change.
+      Codes: ${Object.entries(d.codes).map(([k, v]) => `<b>${esc(k)}</b> ${esc(v)}`).join(' · ')}.</p>
+      ${d.divisions.map((dv, di) => `<h4 style="margin:14px 0 6px">${esc(dv.name)}</h4>
+        <div class="table-wrap"><table><thead><tr><th style="text-align:left">Name of employee</th>
+          ${d.ceremonies.map((c) => `<th title="${esc(c.title)}">${esc(colDate(c.date))}${d.kind === 'ALL' ? `<div class="sub">${/LOWERING|RETREAT/i.test(c.title) ? 'Ret.' : 'Rais.'}</div>` : ''}</th>`).join('')}
+          <th>Total</th></tr></thead><tbody>
+          ${dv.rows.map((r, ri) => `<tr><td class="nm">${esc(r.name)}<div class="sub">${esc(r.position)}</div></td>
+            ${r.cells.map((v, ci) => `<td><button type="button" class="cell ${cellClass(v)}" data-cell="${di}:${ri}:${ci}" aria-label="${esc(r.name)}, ${esc(colDate(d.ceremonies[ci].date))}: ${esc(v ? d.codes[v] || v : 'not on the list')}">${esc(v) || '&nbsp;'}</button></td>`).join('')}
+            <td class="tot">${r.total}</td></tr>`).join('')}
+        </tbody></table></div>`).join('')}
+    </div>`;
+  }
+  async function loadGrid() {
+    if (!sheetF.reportValidity()) return;
+    gridData = await api(`/admin/flag/sheet?${sheetQuery()}`);
+    renderGrid();
+    $('#flagSheetGrid').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  $('#flagSheetEdit').addEventListener('click', guard(loadGrid));
+  $('#flagSheetGrid').addEventListener('click', (e) => {
+    if (e.target.closest('[data-grid-close]')) return ((gridData = null), renderGrid());
+    const b = e.target.closest('[data-cell]');
+    if (!b) return;
+    const [di, ri, ci] = b.dataset.cell.split(':').map(Number);
+    const row = gridData.divisions[di].rows[ri];
+    const cer = gridData.ceremonies[ci];
+    const now = row.cells[ci];
+    const types = flagOpts?.excuse_type_list || [];
+    const opts = [['P', 'Present'], ['X', 'Absent'], ...types.map((x) => [x.code, x.label])];
+    openDialog(
+      `<h2>${esc(row.name)}</h2>
+       <p class="muted small">${esc(cer.title)} · ${esc(fmtDate(cer.date))}. Now: <b>${esc(now || 'blank (not on the list then)')}</b>${now && gridData.codes[now] ? ` – ${esc(gridData.codes[now])}` : ''}</p>
+       <div class="grid">
+         <label class="field"><span class="req">Change to</span><select name="code">${opts.map(([k, l]) => `<option value="${esc(k)}"${k === now ? ' selected' : ''}>${esc(k)} – ${esc(l)}</option>`).join('')}</select></label>
+         <label class="field"><span id="gridRemarksLabel">Remarks (optional)</span><input name="remarks" placeholder="E.G. OB AT DOH-ZP, SEMINAR, ON DUTY AT ER"></label>
+       </div>
+       <p class="muted small">Your username and the remarks are recorded. A check-in from the employee's phone cannot be changed to absent.</p>`,
+      async (f) => {
+        const code = f.code;
+        const body = code === 'P' ? { status: 'ON_TIME' } : code === 'X' ? { status: 'CLEAR' } : { status: 'EXCUSED', excuse_type: code };
+        if (code === now && code !== 'P' && code !== 'X' && !f.remarks) return;
+        if (code === 'X' && (now === 'X' || !now)) return;
+        await api(`/admin/flag/ceremonies/${cer.id}/mark`, { method: 'POST', body: { employee_id: row.id, remarks: f.remarks || (code === 'P' ? 'CORRECTED ON THE ATTENDANCE SHEET' : ''), ...body } });
+        row.cells[ci] = code;
+        row.total = row.cells.filter((x) => x === 'P').length;
+        renderGrid();
+        const again = $(`[data-cell="${di}:${ri}:${ci}"]`);
+        again?.classList.add('flash');
+        again?.focus();
+      },
+      { saveLabel: 'Save' },
+    );
+    const sel = $('#dlgForm [name=code]');
+    const sync = () => {
+      const needs = types.find((x) => x.code === sel.value)?.needs_remarks;
+      $('#gridRemarksLabel').textContent = needs ? 'Reason' : 'Remarks (optional)';
+      $('#gridRemarksLabel').classList.toggle('req', !!needs);
+      $('#dlgForm [name=remarks]').required = !!needs;
+    };
+    sel.addEventListener('change', sync);
+    sync();
+  });
+
   $('#flagSheetPrint').addEventListener('click', async () => {
     if (!sheetF.reportValidity()) return;
     // Open the window now (pop-up blockers allow it only straight after the click), fill it after loading
