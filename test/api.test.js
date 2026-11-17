@@ -1898,6 +1898,31 @@ test('flag ceremony attendance sheet (printed report)', async () => {
   assert.equal((await call('/admin/flag/sheet', { cookie: (await loginAs('opd.only', 'password123')).cookie })).status, 403);
 });
 
+test('attendance sheet includes weekly ceremonies of months nobody opened', async () => {
+  const admin = await login();
+  const today = u.todayStr();
+  const start = u.addDays(today, -42);
+  const row = await db.one('SELECT data FROM flag_settings WHERE id = 1');
+  const settings = JSON.parse(row.data);
+  // The venue was set up six weeks ago; the weekly ceremonies of those weeks were never opened
+  await db.query('UPDATE flag_settings SET data = $1 WHERE id = 1', [JSON.stringify({ ...settings, active_from: start })]);
+  await db.query("DELETE FROM flag_ceremonies WHERE source = 'AUTO' AND ceremony_date >= $1 AND ceremony_date < $2 AND id NOT IN (SELECT ceremony_id FROM flag_checkins)", [start, today]);
+  const expected = [];
+  for (let d = start; d < today; d = u.addDays(d, 1)) for (const s of settings.schedule) if (u.dayOfWeek(d) === s.weekday) expected.push(d);
+  assert.ok(expected.length >= 6);
+  const before = (await db.one("SELECT COUNT(*)::int AS n FROM flag_ceremonies WHERE source = 'AUTO' AND ceremony_date >= $1 AND ceremony_date < $2", [start, today])).n;
+  assert.ok(before < expected.length);
+  const sheet = (await call(`/admin/flag/sheet?from=${u.addDays(start, -30)}&to=${today}&kind=ALL`, { cookie: admin })).data;
+  assert.equal(sheet.recorded_from, start);
+  for (const d of expected) assert.ok(sheet.ceremonies.some((c) => c.date === d), `ceremony on ${d}`);
+  // No weekly ceremonies are created before the venue was set up
+  assert.equal((await db.one("SELECT COUNT(*)::int AS n FROM flag_ceremonies WHERE source = 'AUTO' AND ceremony_date < $1", [start])).n, 0);
+  const summary = (await call(`/admin/flag/summary?from=${start}&to=${today}`, { cookie: admin })).data;
+  assert.equal(summary.recorded_from, start);
+  assert.ok(summary.ceremonies >= expected.length);
+  await db.query('UPDATE flag_settings SET data = $1 WHERE id = 1', [row.data]);
+});
+
 test('mobile normalisation', () => {
   assert.equal(u.normalizeMobile('0917-123-4567'), '+639171234567');
   assert.equal(u.normalizeMobile('639171234567'), '+639171234567');

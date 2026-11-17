@@ -354,6 +354,16 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     res.end(p.image);
   });
 
+  // Weekly ceremonies are created when they are first needed; reports over a past period create
+  // the ones that are missing (from the day the venue was set up). Returns that start date.
+  async function ensurePeriod(from, to) {
+    const settings = await flag.getSettings(db);
+    const today = u.todayStr();
+    const end = to < today ? to : today;
+    if (settings.active_from && from <= end) await flag.ensureCeremonies(db, settings, from, end);
+    return settings.active_from || null;
+  }
+
   // ---------- Summary (per employee, over a date range) ----------
 
   async function summary(q) {
@@ -361,6 +371,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const from = u.parseDate(q.from) ? q.from : `${today.slice(0, 7)}-01`;
     const to = u.parseDate(q.to) ? q.to : today;
     if (from > to) throw new ValidationError('The start date is after the end date.');
+    const recordedFrom = await ensurePeriod(from, to);
     // Only ceremonies whose check-in has closed count
     const held = (await db.query('SELECT * FROM flag_ceremonies WHERE ceremony_date BETWEEN $1 AND $2 AND NOT cancelled ORDER BY ceremony_date, starts_at', [from, to]))
       .filter((c) => flag.phase(c) === 'CLOSED');
@@ -396,7 +407,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       t.rate = counted ? Math.round((t.on_time / counted) * 100) : null;
       return { employee: presentEmployee(e), ...t };
     });
-    return { from, to, ceremonies: held.length, rows };
+    return { from, to, recorded_from: recordedFrom, ceremonies: held.length, rows };
   }
 
   router.get('/flag/summary', can, async (req, res) => res.json(await summary(req.query)));
@@ -410,6 +421,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const to = u.parseDate(q.to) ? q.to : today;
     if (from > to) throw new ValidationError('The start date is after the end date.');
     const kind = ['RAISING', 'LOWERING', 'ALL'].includes(q.kind) ? q.kind : 'ALL';
+    const recordedFrom = await ensurePeriod(from, to);
     const isLowering = (t) => /LOWERING|RETREAT/i.test(t);
     const held = (await db.query('SELECT * FROM flag_ceremonies WHERE ceremony_date BETWEEN $1 AND $2 AND NOT cancelled ORDER BY ceremony_date, starts_at', [from, to]))
       .filter((c) => flag.phase(c) === 'CLOSED')
@@ -450,6 +462,8 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       from,
       to,
       kind,
+      // Attendance is in the system from the day the venue was set up (earlier: none)
+      recorded_from: recordedFrom,
       hospital: config.hospitalName,
       former_name: config.hospitalFormerName || '',
       ceremonies: held.map((c) => ({ id: c.id, date: c.ceremony_date, title: c.title })),

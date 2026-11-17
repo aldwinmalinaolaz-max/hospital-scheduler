@@ -2166,9 +2166,14 @@ ${cat.hospitalName}`;
   }
   async function printSheet(w) {
     const d = await api(`/admin/flag/sheet?${sheetQuery()}`);
+    const since = d.recorded_from ? fmtDate(d.recorded_from, { month: 'long', day: 'numeric', year: 'numeric' }) : null;
     if (!d.ceremonies.length) {
       w.close();
-      return alert('No flag ceremonies were held in this period (cancelled ones and ceremonies still open are not included).');
+      return alert(
+        since && d.to < d.recorded_from
+          ? `There is no flag ceremony attendance in the system for this period: it is recorded from ${since}, when the venue was set up.`
+          : 'No flag ceremonies were held in this period (cancelled ones and ceremonies still open are not included).',
+      );
     }
     if (!d.divisions.length) {
       w.close();
@@ -2176,7 +2181,9 @@ ${cat.hospitalName}`;
     }
     const kindTitle = { LOWERING: 'FLAG RETREAT', RAISING: 'FLAG RAISING', ALL: 'FLAG CEREMONY' }[d.kind];
     const n = d.ceremonies.length;
-    const wide = n > 14;
+    // Always portrait (like the HR form); many dates get a smaller font and upright date headings
+    const dense = n > 14;
+    const tiny = n > 24;
     const cellClass = (v) => (v === 'P' ? 'p' : v === 'X' ? 'x' : v ? 'e' : '');
     const pages = d.divisions
       .map(
@@ -2188,9 +2195,10 @@ ${cat.hospitalName}`;
         </header>
         <h1><u>${kindTitle} Attendance</u> for the month of <u>${esc(periodTitle(d.from, d.to))}</u></h1>
         <h2><u>${esc(dv.name)}</u></h2>
+        ${d.recorded_from && d.from < d.recorded_from ? `<p class="note">Flag ceremony attendance is recorded in the system from ${esc(fmtDate(d.recorded_from, { month: 'long', day: 'numeric', year: 'numeric' }))}.</p>` : ''}
         <table>
           <thead><tr><th>No.</th><th class="nm">NAME OF EMPLOYEE</th><th class="ds">Designation</th>
-            ${d.ceremonies.map((c) => `<th class="dt" title="${esc(c.title)}">${esc(colDate(c.date))}${d.kind === 'ALL' ? `<br><small>${/LOWERING|RETREAT/i.test(c.title) ? 'Ret.' : 'Rais.'}</small>` : ''}</th>`).join('')}
+            ${d.ceremonies.map((c) => `<th class="dt" title="${esc(c.title)}"><span>${esc(colDate(c.date))}${d.kind === 'ALL' ? ` ${/LOWERING|RETREAT/i.test(c.title) ? 'Ret.' : 'Rais.'}` : ''}</span></th>`).join('')}
             <th class="tt">TOTAL (${n})</th></tr></thead>
           <tbody>${dv.rows
             .map(
@@ -2205,6 +2213,7 @@ ${cat.hospitalName}`;
       </section>`,
       )
       .join('');
+    w.document.open(); // replaces the "Preparing…" placeholder
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${kindTitle} attendance ${esc(periodTitle(d.from, d.to))}</title><style>
       body { font-family: Arial, sans-serif; margin: 0; color: #000; }
       .bar { padding: 10px; font-size: 14px; } .bar button { font-size: 14px; padding: 6px 14px; }
@@ -2213,17 +2222,19 @@ ${cat.hospitalName}`;
       .lh img { width: 46px; height: 46px; }
       .rp { font-size: 8pt; } .doh { font-size: 8pt; font-weight: bold; } .hn { font-size: 12pt; font-weight: bold; color: #0f4d26; letter-spacing: .02em; } .fn { font-size: 7.5pt; }
       h1 { font-size: 12.5pt; text-align: center; margin: 8px 0 2px; } h2 { font-size: 10.5pt; text-align: center; margin: 0 0 6px; }
-      table { width: 100%; border-collapse: collapse; font-size: ${wide ? '7pt' : '8.5pt'}; }
-      th, td { border: 1px solid #000; padding: 2px 3px; text-align: center; }
-      th { font-size: ${wide ? '6.5pt' : '7.5pt'}; background: #f1f1f1; } th small { font-weight: normal; }
+      table { width: 100%; border-collapse: collapse; table-layout: auto; font-size: ${tiny ? '6pt' : dense ? '7pt' : '8.5pt'}; }
+      th, td { border: 1px solid #000; padding: ${dense ? '1px' : '2px 3px'}; text-align: center; }
+      th { font-size: ${tiny ? '5.5pt' : dense ? '6pt' : '7.5pt'}; background: #f1f1f1; }
+      th.dt span { ${dense ? 'writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; display: inline-block; padding: 2px 0;' : ''} }
       td.nm, th.nm { text-align: left; white-space: nowrap; font-weight: bold; }
-      td.ds { font-size: ${wide ? '5.5pt' : '6.5pt'}; white-space: nowrap; }
-      td.p { font-weight: bold; } td.x { font-weight: bold; } td.e { font-size: ${wide ? '5.5pt' : '6.5pt'}; font-weight: bold; }
+      td.ds { font-size: ${tiny ? '4.5pt' : dense ? '5pt' : '6.5pt'}; white-space: nowrap; ${dense ? 'max-width: 22mm; overflow: hidden; text-overflow: ellipsis;' : ''} }
+      td.p { font-weight: bold; } td.x { font-weight: bold; } td.e { font-size: ${tiny ? '4pt' : dense ? '4.5pt' : '6.5pt'}; font-weight: bold; }
       td.tt, th.tt { font-weight: bold; background: #f1f1f1; } td.no { width: 1.6em; }
       tfoot td { font-weight: bold; background: #fafafa; }
       .legend { font-size: 7pt; margin: 6px 0 0; }
       .sign { display: flex; gap: 30mm; margin-top: 12mm; font-size: 8.5pt; } .sign div { display: flex; flex-direction: column; } .sign span { display: block; border-bottom: 1px solid #000; width: 60mm; height: 9mm; margin-bottom: 2px; }
-      @media print { .bar { display: none; } @page { size: ${wide ? 'landscape' : 'portrait'}; margin: 8mm; } .page { padding: 0; } }
+      .note { font-size: 8pt; color: #8a5a00; margin: 0 0 4px; text-align: center; }
+      @media print { .bar { display: none; } @page { size: portrait; margin: 8mm; } .page { padding: 0; } }
     </style></head><body><div class="bar"><b>${d.divisions.length} division${d.divisions.length === 1 ? '' : 's'}</b>, ${n} ceremon${n === 1 ? 'y' : 'ies'} — one page per division. <button onclick="print()">Print</button></div>${pages}</body></html>`);
     w.document.close();
     w.focus();
@@ -2234,6 +2245,7 @@ ${cat.hospitalName}`;
     const w = window.open('', '_blank');
     if (!w) return alert('Allow pop-ups for this site to print the attendance sheet.');
     w.document.write('<p style="font-family:Arial;padding:12px">Preparing the attendance sheet…</p>');
+    w.document.close();
     try {
       await printSheet(w);
     } catch (err) {
