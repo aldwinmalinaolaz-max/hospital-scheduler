@@ -2646,44 +2646,86 @@ ${cat.hospitalName}`;
   document.addEventListener('visibilitychange', () => document.hidden && stopScanner());
 
   // ---------- Printable QR cards for employee IDs ----------
-  $('#flagQrCardsBtn').addEventListener('click', guard(async () => {
-    const rows = (empF._rows || []).filter((e) => e.active);
-    if (!rows.length) return alert('No active employees in the list. Change the filters first.');
-    if (rows.length > 500 && !confirm(`Print QR cards for ${rows.length} employees?`)) return;
-    await loadScript('/vendor/qr/qrcode.js', () => window.qrcode);
-    const svg = (text) => {
-      const q = window.qrcode(0, 'M');
-      q.addData(text);
-      q.make();
-      return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
-    };
-    const cards = rows
-      .map(
-        (e) => `<div class="card">
-          <div class="qr">${svg(`ZRMC-EMP:${e.employee_no}`)}</div>
+  // Sizes: an ID-sized card, or a sticker whose QR code (the black squares) is exactly 1" or 0.5";
+  // the white border scanners need (2 squares) is added around it
+  const QR_SIZES = {
+    card: { label: 'ID card (85.6 × 54 mm) — QR about 1.6", with name, number, division and unit' },
+    '1in': { label: '1-inch QR sticker — with employee no. and name', qr: '1in' },
+    '0.5in': { label: '½-inch QR sticker — with employee no. only', qr: '0.5in' },
+  };
+  // Smallest possible QR: the compact (alphanumeric) mode when the text allows it, and the
+  // lowest error correction for the tiny stickers so the squares are as big as possible
+  function qrSvg(text, small, border = true) {
+    const q = window.qrcode(0, small ? 'L' : 'M');
+    q.addData(text, /^[0-9A-Z $%*+\-./:]*$/.test(text) ? 'Alphanumeric' : 'Byte');
+    q.make();
+    // margin is in pixels of the drawing: 2 squares of 4 px; stickers draw their border with padding
+    return q.createSvgTag({ cellSize: 4, margin: border ? 8 : 0, scalable: true });
+  }
+  function printQrCards(w, rows, size) {
+    const code = (e) => `ZRMC-EMP:${e.employee_no}`;
+    const sticker = size !== 'card';
+    const body = sticker
+      ? rows
+          .map(
+            (e) => `<div class="stk"><div class="qr">${qrSvg(code(e), size === '0.5in', false)}</div>
+              <div class="no">${esc(e.employee_no)}</div>${size === '1in' ? `<div class="nm">${esc(e.name)}</div>` : ''}</div>`,
+          )
+          .join('')
+      : rows
+          .map(
+            (e) => `<div class="card">
+          <div class="qr">${qrSvg(code(e), false)}</div>
           <div class="info"><div class="org">${esc(cat.hospitalName)}</div><div class="what">FLAG CEREMONY ATTENDANCE</div>
             <div class="name">${esc(e.name)}</div><div class="no">${esc(e.employee_no)}</div>
             <div class="div">${esc([e.division, e.unit].filter(Boolean).join(' / '))}</div></div>
         </div>`,
-      )
-      .join('');
-    const w = window.open('', '_blank');
-    if (!w) return alert('Allow pop-ups for this site to print the QR cards.');
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Employee QR cards</title><style>
+          )
+          .join('');
+    const qr = QR_SIZES[size].qr;
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Employee QR ${sticker ? 'stickers' : 'cards'}</title><style>
       body { font-family: Arial, sans-serif; margin: 0; padding: 12px; color: #111; }
       .bar { margin-bottom: 12px; font-size: 14px; } .bar button { font-size: 14px; padding: 6px 14px; }
-      .grid { display: flex; flex-wrap: wrap; gap: 6mm; }
+      .grid { display: flex; flex-wrap: wrap; gap: ${sticker ? (size === '1in' ? '4mm' : '3mm') : '6mm'}; }
       .card { width: 85.6mm; height: 54mm; box-sizing: border-box; border: 1px dashed #999; border-radius: 3mm; padding: 3mm; display: flex; gap: 3mm; align-items: center; break-inside: avoid; }
-      .qr { width: 40mm; height: 40mm; flex: none; } .qr svg { width: 100%; height: 100%; }
+      .card .qr { width: 40mm; height: 40mm; flex: none; } .qr svg { width: 100%; height: 100%; display: block; }
       .info { min-width: 0; } .org { font-size: 7pt; color: #0f4d26; font-weight: bold; text-transform: uppercase; }
       .what { font-size: 6.5pt; color: #666; margin-bottom: 2mm; letter-spacing: .03em; }
-      .name { font-size: 10pt; font-weight: bold; line-height: 1.15; } .no { font-family: monospace; font-size: 11pt; margin-top: 1mm; }
+      .name { font-size: 10pt; font-weight: bold; line-height: 1.15; } .card .no { font-family: monospace; font-size: 11pt; margin-top: 1mm; }
       .div { font-size: 7pt; color: #444; margin-top: 1mm; }
+      /* Stickers: the QR code is exactly ${qr || ''} wide, with a white border of about 2 squares around it */
+      .stk { box-sizing: content-box; border: 1px dashed #bbb; padding: calc(${qr || '1in'} * 0.1); padding-bottom: 1mm; text-align: center; break-inside: avoid;
+        width: ${qr || '1in'}; }
+      .stk .qr { width: ${qr || '1in'}; height: ${qr || '1in'}; }
+      .stk .no { font-family: monospace; font-size: ${size === '1in' ? '6.5pt' : '4.5pt'}; line-height: 1.1; margin-top: .4mm; word-break: break-all; }
+      .stk .nm { font-size: 5pt; line-height: 1.1; color: #333; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
       @media print { .bar { display: none; } body { padding: 0; } @page { margin: 10mm; } }
-    </style></head><body><div class="bar"><b>${rows.length} QR card${rows.length === 1 ? '' : 's'}</b> — cut along the dashed lines and attach to the back of each employee's ID. <button onclick="print()">Print</button></div>
-    <div class="grid">${cards}</div></body></html>`);
+    </style></head><body><div class="bar"><b>${rows.length} QR ${sticker ? `sticker${rows.length === 1 ? '' : 's'} (${size === '1in' ? '1 inch' : '½ inch'})` : `card${rows.length === 1 ? '' : 's'}`}</b> —
+      ${sticker ? 'print at <b>100% / Actual size</b> (not "Fit to page") so the codes keep their size, then cut along the dashed lines.' : "cut along the dashed lines and attach to the back of each employee's ID."}
+      <button onclick="print()">Print</button></div>
+    <div class="grid">${body}</div></body></html>`);
     w.document.close();
     w.focus();
+  }
+  $('#flagQrCardsBtn').addEventListener('click', guard(async () => {
+    const rows = (empF._rows || []).filter((e) => e.active);
+    if (!rows.length) return alert('No active employees in the list. Change the filters first.');
+    await loadScript('/vendor/qr/qrcode.js', () => window.qrcode);
+    openDialog(
+      `<h2>Print QR codes</h2>
+       <p class="muted small">For the ${rows.length} active employee${rows.length === 1 ? '' : 's'} in the list (change the filters to print fewer).</p>
+       <div class="copy-choice" style="grid-template-columns:1fr">${Object.entries(QR_SIZES)
+         .map(([k, s], i) => `<label class="copy-opt"><input type="radio" name="size" value="${k}" ${i === 0 ? 'checked' : ''}><span><b>${esc(s.label.split(' — ')[0])}</b><small>${esc(s.label.split(' — ')[1] || '')}</small></span></label>`)
+         .join('')}</div>
+       <p class="muted small">Stickers must be printed at <b>100% / Actual size</b>. The ½-inch code is for close-up scanning: hold the phone about 10–15 cm away.</p>`,
+      async (d) => {
+        // The print window is opened right away (before anything slow) so pop-up blockers allow it
+        const w = window.open('', '_blank');
+        if (!w) throw new Error('Allow pop-ups for this site to print the QR codes.');
+        printQrCards(w, rows, d.size || 'card');
+      },
+      { saveLabel: 'Open for printing' },
+    );
   }));
 
   // Venue, geofence and weekly schedule
