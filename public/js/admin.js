@@ -2217,9 +2217,11 @@ ${cat.hospitalName}`;
       .join('');
     w.document.open(); // replaces the "Preparing…" placeholder
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${kindTitle} attendance ${esc(periodTitle(d.from, d.to))}</title><style>
-      body { font-family: Arial, sans-serif; margin: 0; color: #000; }
-      .bar { padding: 10px; font-size: 14px; } .bar button { font-size: 14px; padding: 6px 14px; }
-      .page { padding: 8mm 6mm; break-after: page; }
+      body { font-family: Arial, sans-serif; margin: 0; color: #000; background: #e5e7e6; }
+      .bar { padding: 10px 16px; font-size: 14px; background: #fff; border-bottom: 1px solid #ccc; position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+      .bar button, .bar select { font-size: 14px; padding: 5px 12px; }
+      /* On screen each division is shown as a portrait sheet of the chosen paper */
+      .page { box-sizing: border-box; width: var(--pw); min-height: var(--ph); padding: 8mm; margin: 14px auto; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.25); break-after: page; overflow: hidden; }
       .lh { display: flex; align-items: center; justify-content: center; gap: 10px; text-align: center; border-bottom: 2px solid #0f4d26; padding-bottom: 4px; }
       .lh img { width: 46px; height: 46px; }
       .rp { font-size: 8pt; } .doh { font-size: 8pt; font-weight: bold; } .hn { font-size: 12pt; font-weight: bold; color: #0f4d26; letter-spacing: .02em; } .fn { font-size: 7.5pt; }
@@ -2236,8 +2238,40 @@ ${cat.hospitalName}`;
       .legend { font-size: 7pt; margin: 6px 0 0; }
       .sign { display: flex; gap: 30mm; margin-top: 12mm; font-size: 8.5pt; } .sign div { display: flex; flex-direction: column; } .sign span { display: block; border-bottom: 1px solid #000; width: 60mm; height: 9mm; margin-bottom: 2px; }
       .note { font-size: 8pt; color: #8a5a00; margin: 0 0 4px; text-align: center; }
-      @media print { .bar { display: none; } @page { size: portrait; margin: 8mm; } .page { padding: 0; } }
-    </style></head><body><div class="bar"><b>${d.divisions.length} division${d.divisions.length === 1 ? '' : 's'}</b>, ${n} ceremon${n === 1 ? 'y' : 'ies'} — one page per division. <button onclick="print()">Print</button></div>${pages}</body></html>`);
+      @media print { body { background: #fff; } .bar { display: none; } .page { width: auto; min-height: 0; padding: 0; margin: 0; box-shadow: none; overflow: visible; } }
+    </style><style id="paper"></style></head><body>
+      <div class="bar"><b>${d.divisions.length} division${d.divisions.length === 1 ? '' : 's'}, ${n} ceremon${n === 1 ? 'y' : 'ies'}</b> — one page per division, portrait.
+        <label>Paper <select id="paperSel">
+          <option value="A4">A4 (210 × 297 mm)</option><option value="LETTER">Letter / short (8.5 × 11 in)</option>
+          <option value="LONG">Long bond (8.5 × 13 in)</option><option value="LEGAL">Legal (8.5 × 14 in)</option></select></label>
+        <button onclick="print()">Print</button>
+        <span style="color:#555;font-size:12px">In the print window keep <b>Layout: Portrait</b> and <b>Scale: Default</b>.</span></div>
+      ${pages}
+      <script>
+        // Portrait on the chosen paper; a table wider than the page is scaled down to fit
+        var PAPER = { A4: ['210mm', '297mm'], LETTER: ['8.5in', '11in'], LONG: ['8.5in', '13in'], LEGAL: ['8.5in', '14in'] };
+        function fit() {
+          document.querySelectorAll('.page table').forEach(function (t) {
+            t.style.zoom = '';
+            var room = t.parentElement.clientWidth;
+            if (t.scrollWidth > room) t.style.zoom = (Math.floor((room / t.scrollWidth) * 1000) / 1000).toString();
+          });
+        }
+        function setPaper(k) {
+          var p = PAPER[k] || PAPER.A4;
+          document.documentElement.style.setProperty('--pw', p[0]);
+          document.documentElement.style.setProperty('--ph', p[1]);
+          document.getElementById('paper').textContent = '@page { size: ' + p[0] + ' ' + p[1] + '; margin: 8mm; }';
+          document.getElementById('paperSel').value = k in PAPER ? k : 'A4';
+          try { localStorage.setItem('flagSheetPaper', k); } catch (e) {}
+          fit();
+        }
+        var saved = 'A4';
+        try { saved = localStorage.getItem('flagSheetPaper') || 'A4'; } catch (e) {}
+        document.getElementById('paperSel').addEventListener('change', function (e) { setPaper(e.target.value); });
+        setPaper(saved);
+        window.addEventListener('load', fit);
+      </script></body></html>`);
     w.document.close();
     w.focus();
   }
