@@ -2183,9 +2183,9 @@ ${cat.hospitalName}`;
     }
     const kindTitle = { LOWERING: 'FLAG RETREAT', RAISING: 'FLAG RAISING', ALL: 'FLAG CEREMONY' }[d.kind];
     const n = d.ceremonies.length;
-    // Always portrait (like the HR form); many dates get a smaller font and upright date headings
-    const dense = n > 14;
-    const tiny = n > 24;
+    // The table is scaled to fill the width of the chosen paper (see fit() in the print window);
+    // with many dates the date headings are written upright to keep the columns narrow
+    const dense = n > 10;
     const cellClass = (v) => (v === 'P' ? 'p' : v === 'X' ? 'x' : v ? 'e' : '');
     const pages = d.divisions
       .map(
@@ -2227,16 +2227,16 @@ ${cat.hospitalName}`;
       .lh img { width: 46px; height: 46px; }
       .rp { font-size: 8pt; } .doh { font-size: 8pt; font-weight: bold; } .hn { font-size: 12pt; font-weight: bold; color: #0f4d26; letter-spacing: .02em; } .fn { font-size: 7.5pt; }
       h1 { font-size: 12.5pt; text-align: center; margin: 8px 0 2px; } h2 { font-size: 10.5pt; text-align: center; margin: 0 0 6px; }
-      /* fixed widths for No., name and TOTAL; the date columns share the rest equally */
-      col.c-no { width: 7mm; } col.c-nm { width: ${dense ? '54mm' : '62mm'}; } col.c-tt { width: 13mm; }
-      td.nm { overflow: hidden; text-overflow: ellipsis; }
-      table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: ${tiny ? '6pt' : dense ? '7pt' : '8.5pt'}; }
-      th, td { border: 1px solid #000; padding: ${dense ? '1px' : '2px 3px'}; text-align: center; }
-      th { font-size: ${tiny ? '5.5pt' : dense ? '6pt' : '7.5pt'}; background: #f1f1f1; }
-      th.dt span { ${dense ? 'writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; display: inline-block; padding: 2px 0;' : ''} }
+      /* Base sizes; fit() then scales each table to the paper width (No., name and TOTAL keep the
+         width they need, the date columns share the rest equally) */
+      table { border-collapse: collapse; table-layout: fixed; font-size: 8pt; }
+      table.measure { table-layout: auto; width: max-content !important; zoom: 1 !important; }
+      table.measure col { width: auto !important; }
+      th, td { border: 1px solid #000; padding: 1px 2px; text-align: center; overflow: hidden; }
+      th { font-size: 7pt; background: #f1f1f1; }
+      th.dt span { ${dense ? 'writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; display: inline-block; padding: 2px 0;' : 'white-space: nowrap;'} }
       td.nm, th.nm { text-align: left; white-space: nowrap; font-weight: bold; }
-      td.ds { font-size: ${tiny ? '4.5pt' : dense ? '5pt' : '6.5pt'}; white-space: nowrap; ${dense ? 'max-width: 22mm; overflow: hidden; text-overflow: ellipsis;' : ''} }
-      td.p { font-weight: bold; } td.x { font-weight: bold; } td.e { font-size: ${tiny ? '4pt' : dense ? '4.5pt' : '6.5pt'}; font-weight: bold; }
+      td.p { font-weight: bold; } td.x { font-weight: bold; } td.e { font-size: 6pt; font-weight: bold; white-space: nowrap; }
       td.tt, th.tt { font-weight: bold; background: #f1f1f1; } td.no { width: 1.6em; }
       tfoot td { font-weight: bold; background: #fafafa; }
       .legend { font-size: 7pt; margin: 6px 0 0; }
@@ -2244,36 +2244,59 @@ ${cat.hospitalName}`;
       .note { font-size: 8pt; color: #8a5a00; margin: 0 0 4px; text-align: center; }
       @media print { body { background: #fff; } .bar { display: none; } .page { width: auto; min-height: 0; padding: 0; margin: 0; box-shadow: none; overflow: visible; } }
     </style><style id="paper"></style></head><body>
-      <div class="bar"><b>${d.divisions.length} division${d.divisions.length === 1 ? '' : 's'}, ${n} ceremon${n === 1 ? 'y' : 'ies'}</b> — one page per division, portrait.
+      <div class="bar"><b>${d.divisions.length} division${d.divisions.length === 1 ? '' : 's'}, ${n} ceremon${n === 1 ? 'y' : 'ies'}</b> — one page per division, fitted to the paper.
         <label>Paper <select id="paperSel">
           <option value="A4">A4 (210 × 297 mm)</option><option value="LETTER">Letter / short (8.5 × 11 in)</option>
           <option value="LONG">Long bond (8.5 × 13 in)</option><option value="LEGAL">Legal (8.5 × 14 in)</option></select></label>
+        <label>Layout <select id="orientSel"><option value="P">Portrait</option><option value="L">Landscape</option></select></label>
         <button onclick="print()">Print</button>
-        <span style="color:#555;font-size:12px">In the print window keep <b>Layout: Portrait</b> and <b>Scale: Default</b>.</span></div>
+        <span style="color:#555;font-size:12px">In the print window keep <b>Scale: Default</b> (100%).</span></div>
       ${pages}
       <script>
-        // Portrait on the chosen paper; a table wider than the page is scaled down to fit
+        // The chosen paper and layout (portrait / landscape) set the page size; each table is then
+        // scaled so it fills the width of the page: smaller to fit many dates, larger when there is room
         var PAPER = { A4: ['210mm', '297mm'], LETTER: ['8.5in', '11in'], LONG: ['8.5in', '13in'], LEGAL: ['8.5in', '14in'] };
+        var paper = 'A4', orient = 'P';
         function fit() {
           document.querySelectorAll('.page table').forEach(function (t) {
-            t.style.zoom = '';
-            var room = t.parentElement.clientWidth;
-            if (t.scrollWidth > room) t.style.zoom = (Math.floor((room / t.scrollWidth) * 1000) / 1000).toString();
+            // the page's inner width (on screen the page has the print margins as padding)
+            var cs = getComputedStyle(t.parentElement);
+            var room = t.parentElement.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+            t.classList.add('measure');
+            var w = function (sel) { var el = t.querySelector(sel); return el ? el.getBoundingClientRect().width : 0; };
+            var dateW = 0;
+            t.querySelectorAll('thead th.dt').forEach(function (th) { dateW = Math.max(dateW, th.getBoundingClientRect().width); });
+            var noW = w('thead th:first-child'), nmW = w('thead th.nm'), ttW = w('thead th.tt');
+            var n = t.querySelectorAll('thead th.dt').length;
+            var natural = noW + nmW + ttW + n * dateW + 2;
+            t.classList.remove('measure');
+            var z = Math.max(0.3, Math.min(1.6, Math.floor((room / natural) * 1000) / 1000));
+            var cols = t.querySelectorAll('col');
+            cols[0].style.width = noW + 'px';
+            cols[1].style.width = nmW + 'px';
+            cols[cols.length - 1].style.width = ttW + 'px';
+            t.style.zoom = z;
+            t.style.width = Math.floor(room / z) + 'px';
           });
         }
-        function setPaper(k) {
-          var p = PAPER[k] || PAPER.A4;
-          document.documentElement.style.setProperty('--pw', p[0]);
-          document.documentElement.style.setProperty('--ph', p[1]);
-          document.getElementById('paper').textContent = '@page { size: ' + p[0] + ' ' + p[1] + '; margin: 8mm; }';
-          document.getElementById('paperSel').value = k in PAPER ? k : 'A4';
-          try { localStorage.setItem('flagSheetPaper', k); } catch (e) {}
+        function setPaper(k, o) {
+          paper = k in PAPER ? k : 'A4';
+          orient = o === 'L' ? 'L' : 'P';
+          var p = PAPER[paper];
+          var pw = orient === 'L' ? p[1] : p[0], ph = orient === 'L' ? p[0] : p[1];
+          document.documentElement.style.setProperty('--pw', pw);
+          document.documentElement.style.setProperty('--ph', ph);
+          document.getElementById('paper').textContent = '@page { size: ' + pw + ' ' + ph + '; margin: 8mm; }';
+          document.getElementById('paperSel').value = paper;
+          document.getElementById('orientSel').value = orient;
+          try { localStorage.setItem('flagSheetPaper', paper); localStorage.setItem('flagSheetOrient', orient); } catch (e) {}
           fit();
         }
-        var saved = 'A4';
-        try { saved = localStorage.getItem('flagSheetPaper') || 'A4'; } catch (e) {}
-        document.getElementById('paperSel').addEventListener('change', function (e) { setPaper(e.target.value); });
-        setPaper(saved);
+        var saved = ['A4', 'P'];
+        try { saved = [localStorage.getItem('flagSheetPaper') || 'A4', localStorage.getItem('flagSheetOrient') || 'P']; } catch (e) {}
+        document.getElementById('paperSel').addEventListener('change', function (e) { setPaper(e.target.value, orient); });
+        document.getElementById('orientSel').addEventListener('change', function (e) { setPaper(paper, e.target.value); });
+        setPaper(saved[0], saved[1]);
         window.addEventListener('load', fit);
       </script></body></html>`);
     w.document.close();
