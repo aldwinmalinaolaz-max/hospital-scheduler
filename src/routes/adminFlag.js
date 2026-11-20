@@ -790,48 +790,57 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const times = pick || (kind === 'LOWERING'
       ? { title: 'FLAG LOWERING CEREMONY', opens: '16:30', starts: '17:00', closes: '17:30' }
       : { title: 'FLAG RAISING CEREMONY', opens: '07:00', starts: '08:00', closes: '09:00' });
+    // A few statements in all (arrays instead of one query per row), so large sheets stay well within
+    // the hosting time limit
     const out = await db.tx(async (t) => {
       if (newTypes.size) {
         const last = await t.one('SELECT COALESCE(MAX(sort_order), 0) AS n FROM flag_excuse_types');
-        let order = Number(last.n);
-        for (const [code, label] of newTypes) {
-          order += 10;
-          await t.query('INSERT INTO flag_excuse_types (code, label, needs_remarks, sort_order) VALUES ($1, $2, FALSE, $3) ON CONFLICT (code) DO NOTHING', [code, label, order]);
-        }
-      }
-      let created = 0;
-      for (const d of sorted) {
-        if (ceremonyOf.has(d)) continue;
-        const c = await t.one(
-          `INSERT INTO flag_ceremonies (ceremony_date, slot, title, opens_at, starts_at, closes_at, source, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6, 'MANUAL', $7) RETURNING *`,
-          [d, `M-${flag.newToken().slice(0, 10)}`, times.title, times.opens, times.starts, times.closes, req.user.username],
+        const list = [...newTypes];
+        await t.query(
+          `INSERT INTO flag_excuse_types (code, label, needs_remarks, sort_order)
+           SELECT x.code, x.label, FALSE, $3::int + x.n * 10 FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS x(code, label, n)
+           ON CONFLICT (code) DO NOTHING`,
+          [list.map((x) => x[0]), list.map((x) => x[1]), Number(last.n)],
         );
-        ceremonyOf.set(d, c);
-        created++;
+      }
+      const missing = sorted.filter((d) => !ceremonyOf.has(d));
+      if (missing.length) {
+        const made = await t.query(
+          `INSERT INTO flag_ceremonies (ceremony_date, slot, title, opens_at, starts_at, closes_at, source, updated_by)
+           SELECT x.d, x.s, $3, $4, $5, $6, 'MANUAL', $7 FROM unnest($1::text[], $2::text[]) AS x(d, s) RETURNING *`,
+          [missing, missing.map(() => `M-${flag.newToken().slice(0, 10)}`), times.title, times.opens, times.starts, times.closes, req.user.username],
+        );
+        for (const c of made) ceremonyOf.set(c.ceremony_date, c);
       }
       let saved = 0;
-      for (let i = 0; i < toSave.length; i += 500) {
-        const params = [];
-        const values = toSave.slice(i, i + 500).map((mk) => {
-          const c = ceremonyOf.get(mk.date);
-          params.push(c.id, mk.employee.id, mk.kind === 'P' ? 'ON_TIME' : 'EXCUSED', u.localDateTime(c.ceremony_date, c.starts_at).toISOString(), req.user.username, mk.code);
-          const n = params.length;
-          return `($${n - 5}, $${n - 4}, $${n - 3}, $${n - 2}, 'IMPORT', 'FROM ATTENDANCE SHEET', $${n - 1}, $${n})`;
-        });
+      for (let i = 0; i < toSave.length; i += 5000) {
+        const part = toSave.slice(i, i + 5000);
         const r = await t.query(
           `INSERT INTO flag_checkins (ceremony_id, employee_id, status, checked_at, source, remarks, created_by, excuse_type)
-           VALUES ${values.join(', ')} ON CONFLICT (ceremony_id, employee_id) DO NOTHING RETURNING id`,
-          params,
+           SELECT x.c, x.e, x.st, x.at, 'IMPORT', 'FROM ATTENDANCE SHEET', $6, x.code
+           FROM unnest($1::int[], $2::int[], $3::text[], $4::timestamptz[], $5::text[]) AS x(c, e, st, at, code)
+           ON CONFLICT (ceremony_id, employee_id) DO NOTHING RETURNING id`,
+          [
+            part.map((mk) => ceremonyOf.get(mk.date).id),
+            part.map((mk) => mk.employee.id),
+            part.map((mk) => (mk.kind === 'P' ? 'ON_TIME' : 'EXCUSED')),
+            part.map((mk) => { const c = ceremonyOf.get(mk.date); return u.localDateTime(c.ceremony_date, c.starts_at).toISOString(); }),
+            part.map((mk) => mk.code),
+            req.user.username,
+          ],
         );
         saved += r.length;
       }
+      // Each employee counts as on the list from their first date on the sheet
       const first = new Map();
       for (const mk of marks) if (!first.has(mk.employee.id) || mk.date < first.get(mk.employee.id)) first.set(mk.employee.id, mk.date);
-      for (const [id, d] of first) {
-        await t.query('UPDATE employees SET created_at = $2 WHERE id = $1 AND created_at > $2', [id, u.localDateTime(d, '00:00').toISOString()]);
+      if (first.size) {
+        await t.query(
+          `UPDATE employees e SET created_at = x.d FROM unnest($1::int[], $2::timestamptz[]) AS x(id, d) WHERE e.id = x.id AND e.created_at > x.d`,
+          [[...first.keys()], [...first.values()].map((d) => u.localDateTime(d, '00:00').toISOString())],
+        );
       }
-      return { created, saved };
+      return { created: missing.length, saved };
     });
     res.status(201).json({ ok: true, ...report, ceremonies_created: out.created, saved: out.saved });
   });
