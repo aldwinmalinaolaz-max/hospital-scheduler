@@ -2430,6 +2430,10 @@ ${cat.hospitalName}`;
          <label class="field"><span class="req">Year of the sheet</span><input type="number" id="shYear" min="2000" max="${year}" value="${year}"></label>
        </div>
        <p class="muted small" style="margin-top:0">Dates without a year (Jan. 2) take this year; a sheet running from December into January moves to the next year by itself.</p>
+       <div class="alert info small"><b>No sheet in this format yet?</b> Download a template: an Excel file with your employee list (one sheet per division), a column for every
+         <select id="shWeekday" aria-label="Ceremony day">${(flagOpts?.weekdays || ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']).map((w, i) => `<option value="${i}">${esc(w)}</option>`).join('')}</select>
+         of the year above (up to yesterday) and a P / X / excuse code dropdown in each cell. Fill it in, then choose it below.
+         <div style="margin-top:6px"><button type="button" class="btn sm secondary" id="shTemplate">Download template (Excel)</button> <span id="shTplMsg"></span></div></div>
        <label class="field">Excel or CSV file<input type="file" id="shFile" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"></label>
        <div id="shSheets" class="small"></div>
        <div id="shCodes" class="small"></div>
@@ -2570,6 +2574,33 @@ ${cat.hospitalName}`;
         picked = new Set();
         renderSheets();
         $('#shResult').innerHTML = `<span style="color:var(--danger)">${esc(err.message)}</span>`;
+      }
+    });
+    // The template's ceremony day: the weekly schedule's day for that ceremony, else Friday (retreat) / Monday (raising)
+    const defaultDay = () => {
+      const lowering = $('#shKind').value === 'LOWERING';
+      const item = (flagOpts?.settings?.schedule || []).find((x) => lowering === /LOWERING|RETREAT/i.test(x.title));
+      $('#shWeekday').value = String(item ? item.weekday : lowering ? 5 : 1);
+    };
+    defaultDay();
+    $('#shKind').addEventListener('change', defaultDay);
+    $('#shTemplate').addEventListener('click', async () => {
+      const msg = $('#shTplMsg');
+      msg.textContent = 'Preparing…';
+      try {
+        const q = new URLSearchParams({ kind: $('#shKind').value, year: $('#shYear').value, weekday: $('#shWeekday').value });
+        const res = await fetch(`/api/admin/flag/attendance-template.xlsx?${q}`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Download failed (${res.status}).`);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(await res.blob());
+        a.download = (/filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '') || [])[1] || 'attendance-template.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        msg.textContent = '';
+      } catch (err) {
+        msg.innerHTML = `<span style="color:var(--danger)">${esc(err.message)}</span>`;
       }
     });
     $('#shKind').addEventListener('change', check);

@@ -556,6 +556,81 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     res.json({ ok: true });
   });
 
+  // ---------- Template for past attendance sheets ----------
+  // An Excel file to fill in and import: one sheet per division with the active employees, a column
+  // for every <weekday> of the year (up to yesterday), and a P / X / excuse code dropdown in each cell.
+  router.get('/flag/attendance-template.xlsx', can, async (req, res) => {
+    const q = req.query;
+    const today = u.todayStr();
+    const kind = q.kind === 'RAISING' ? 'RAISING' : 'LOWERING';
+    const year = Number(q.year) || Number(today.slice(0, 4));
+    if (year < 2000 || year > Number(today.slice(0, 4))) throw new ValidationError('Choose a year up to this year.');
+    const weekday = /^[0-6]$/.test(String(q.weekday)) ? Number(q.weekday) : kind === 'RAISING' ? 1 : 5;
+    const last = `${year}-12-31` < today ? `${year}-12-31` : u.addDays(today, -1);
+    const dates = [];
+    for (let d = `${year}-01-01`; d <= last; d = u.addDays(d, 1)) if (u.dayOfWeek(d) === weekday) dates.push(d);
+    if (!dates.length) throw new ValidationError(`There is no ${flag.WEEKDAYS[weekday]} in ${year} before today.`);
+    const conds = [['active'], ['flag_required']];
+    if (q.division) conds.push(['department = ?', String(q.division)]);
+    const { where, params } = whereClause(conds);
+    const emps = await db.query(`SELECT * FROM employees ${where} ORDER BY last_name, first_name`, params);
+    const order = await flag.getDivisions(db);
+    const groups = new Map();
+    for (const e of emps) {
+      const k = e.department || 'NO DIVISION';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(e);
+    }
+    const names = [...groups.keys()].sort((a, b) => (order.indexOf(a) + 1 || 999) - (order.indexOf(b) + 1 || 999) || a.localeCompare(b));
+    if (!names.length) names.push(q.division ? String(q.division) : 'NO DIVISION');
+    const types = await flag.getExcuseTypes(db);
+    const codes = ['P', 'X', ...types.map((t) => t.code)];
+    const kindTitle = kind === 'RAISING' ? 'FLAG RAISING' : 'FLAG RETREAT';
+    const xw = require('../xlsxWrite');
+    const firstDate = 4; // columns: No., Employee No., Name, Designation, then the dates
+    const lastDateCol = xw.colName(firstDate + dates.length - 1);
+    const sheets = names.map((dv) => {
+      const list = groups.get(dv) || [];
+      const head = 6; // title row of the table (row 6)
+      const rows = [
+        [{ v: config.letterheadName.toUpperCase(), s: 'title' }],
+        [{ v: `${kindTitle} Attendance for the year ${year}`, s: 'bold' }],
+        [{ v: dv, s: 'bold' }],
+        [{ v: `Under each date type P (present), X (absent) or an excuse code: ${types.map((t) => t.code).join(', ')}. Leave the cell blank if the employee was not yet employed then.`, s: 'note' }],
+        [{ v: 'Delete the columns of dates with no ceremony (holiday, cancelled, rain) and add a column for a special ceremony (its date as the column title). Then import: Flag Ceremony → Summary → Import past attendance sheet.', s: 'note' }],
+        [
+          { v: 'No.', s: 'head' }, { v: 'Employee No.', s: 'head' }, { v: 'NAME OF EMPLOYEE', s: 'head' }, { v: 'Designation', s: 'head' },
+          ...dates.map((d) => ({ v: d, s: 'date' })), { v: 'TOTAL', s: 'head' },
+        ],
+        ...list.map((e, i) => {
+          const r = head + i + 1;
+          return [
+            { v: i + 1, s: 'cell' }, { v: e.employee_no, s: 'cell' }, { v: flag.fullName(e), s: 'name' }, { v: e.position || '', s: 'cell' },
+            ...dates.map(() => ({ v: '', s: 'cell' })),
+            { f: `COUNTIF(${xw.colName(firstDate)}${r}:${lastDateCol}${r},"P")`, s: 'cell' },
+          ];
+        }),
+        [],
+        [null, null, { v: 'Legend:', s: 'bold' }],
+        [null, null, 'P – Present'],
+        [null, null, 'X – Absent'],
+        ...types.map((t) => [null, null, `${t.code} – ${t.label}`]),
+      ];
+      return {
+        name: dv,
+        rows,
+        cols: [5, 14, 34, 22, ...dates.map(() => 5.5), 8],
+        freeze: `E${head + 1}`,
+        heights: { [head]: 44 },
+        validations: list.length ? [{ sqref: `${xw.colName(firstDate)}${head + 1}:${lastDateCol}${head + list.length}`, list: codes }] : [],
+      };
+    });
+    const buf = await xw.buildXlsx(sheets);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="ZRMC-${kindTitle.replace(' ', '-').toLowerCase()}-attendance-${year}-template.xlsx"`);
+    res.end(buf);
+  });
+
   // ---------- Import past attendance sheets (the paper / Excel grid kept before the system) ----------
   // Body: rows (the sheet's cells, row by row), kind LOWERING | RAISING, year (for dates such as
   // "Jan. 2"), dry_run. P is saved as present, excuse codes as excused, X stays absent; anything

@@ -2057,6 +2057,43 @@ test('past attendance sheets can be imported from the Excel grid', async () => {
   assert.equal((await call('/admin/flag/attendance-import', { method: 'POST', cookie: admin, body: { rows: [['a', 'b']], kind: 'LOWERING', year: 2025 } })).status, 400);
 });
 
+test('attendance sheet template downloads and imports back', async () => {
+  const admin = await login();
+  await call('/admin/flag/employees/import', { method: 'POST', cookie: admin, body: { rows: [['TP-1', 'templeton', 'tina'], ['TP-2', 'tumbaga', 'tomas']].map(([no, l, f]) => ({ employee_no: no, last_name: l, first_name: f, position: 'clerk', division: 'OMCC' })) } });
+  const res = await fetch(`${base}/admin/flag/attendance-template.xlsx?kind=LOWERING&year=2025&weekday=5&division=OMCC`, { headers: { Cookie: admin } });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-disposition'), /flag-retreat-attendance-2025-template\.xlsx/);
+  const zip = await require('jszip').loadAsync(Buffer.from(await res.arrayBuffer()));
+  assert.match(await zip.file('xl/workbook.xml').async('string'), /<sheet name="OMCC"/);
+  const xml = await zip.file('xl/worksheets/sheet1.xml').async('string');
+  assert.match(xml, /dataValidation type="list".*"P,X,LEAVE,OB/);
+  // Read it back the way the browser does (row by row, cell values), fill in codes and import
+  const rows = [];
+  for (const [, r, body] of xml.matchAll(/<row r="(\d+)"[^>]*>(.*?)<\/row>/g)) {
+    const row = [];
+    for (const [, col, inner] of body.matchAll(/<c r="([A-Z]+)\d+"[^>]*?(?:\/>|>(.*?)<\/c>)/g)) {
+      const i = [...col].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+      row[i] = /<t[^>]*>(.*?)<\/t>/.exec(inner || '')?.[1] ?? /<v>(.*?)<\/v>/.exec(inner || '')?.[1] ?? '';
+    }
+    rows[Number(r) - 1] = Array.from(row, (x) => x ?? '');
+  }
+  const head = rows.findIndex((r) => r && r.includes('NAME OF EMPLOYEE'));
+  assert.deepEqual(rows[head].slice(0, 4), ['No.', 'Employee No.', 'NAME OF EMPLOYEE', 'Designation']);
+  assert.equal(rows[head].length, 4 + 52 + 1); // 52 Fridays in 2025, then TOTAL
+  assert.equal(rows[head][4], '45660'); // 2025-01-03 as an Excel date
+  const tina = rows.findIndex((r) => r && r[1] === 'TP-1');
+  rows[tina][4] = 'P';
+  rows[tina][5] = 'OB';
+  rows[tina + 1][4] = 'X';
+  const r = await call('/admin/flag/attendance-import', { method: 'POST', cookie: admin, body: { rows: rows.map((x) => x || []), kind: 'LOWERING', year: 2025, dry_run: true } });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.employees, 2);
+  assert.deepEqual(r.data.counts, { P: 1, OB: 1, X: 1 });
+  assert.deepEqual(r.data.unmatched, []);
+  assert.deepEqual(r.data.dates.map((d) => d.date), ['2025-01-03', '2025-01-10']);
+  assert.equal((await call('/admin/flag/attendance-template.xlsx?year=2099', { cookie: admin })).status, 400);
+});
+
 test('attendance sheet import reads dates and names', () => {
   const si = require('../src/flagSheetImport');
   assert.deepEqual(si.headerDate('Jan. 2'), { year: null, month: 1, day: 2 });
