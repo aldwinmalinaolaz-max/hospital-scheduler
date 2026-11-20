@@ -136,6 +136,7 @@ module.exports = function publicRoutes(db) {
     res.json({
       hospitalName: config.hospitalName,
       letterheadName: config.letterheadName,
+      letterheadFormerName: config.hospitalFormerName || '',
       systemName: config.systemName,
       recordTypes: catalog.RECORD_TYPES.map((t) => ({ ...t, fee: fees.get(t.code) ?? 0 })),
       payment,
@@ -386,6 +387,7 @@ module.exports = function publicRoutes(db) {
     res.json({
       hospitalName: config.hospitalName,
       letterheadName: config.letterheadName,
+      letterheadFormerName: config.hospitalFormerName || '',
       systemName: config.systemName,
       // Parts that are turned off are left out; "Find your way" also needs the maps
       sections: Object.fromEntries(['list', 'schedules', 'requirements', 'contact', 'wayfinding', 'maps'].map((k) => [k, on(k)])),

@@ -3210,6 +3210,146 @@ ${cat.hospitalName}`;
     w.document.close();
     w.focus();
   }
+  // ---------- Print the employee list (the employees listed with the current filters) ----------
+  const EMP_COLS = [
+    ['employee_no', 'Employee No.', true],
+    ['position', 'Position', true],
+    ['unit', 'Unit', true],
+    ['employment_type', 'Employment', true],
+    ['flag_required', 'Flag ceremony', false],
+    ['active', 'Status', false],
+    ['signature', 'Signature (blank column)', false],
+  ];
+  $('#flagEmpPrintBtn').addEventListener('click', () => {
+    const rows = empF._rows || [];
+    if (!rows.length) return alert('No employees in the list. Change the filters first.');
+    const mixed = rows.some((e) => !e.active) && rows.some((e) => e.active);
+    openDialog(
+      `<h2>Print employee list</h2>
+       <p class="muted small">The ${rows.length} employee${rows.length === 1 ? '' : 's'} in the list now (change the search or filters to print fewer). Paper and layout are chosen in the print window.</p>
+       <label class="field">Arrange<select name="group"><option value="DIVISION">By division (each division starts a new page)</option><option value="ALL">One list (division as a column)</option></select></label>
+       <fieldset class="field" style="border:0;padding:0;margin:8px 0 0"><legend>Columns (No. and name are always printed)</legend>
+         <div style="display:flex;flex-wrap:wrap;gap:4px 16px">${EMP_COLS.map(([k, l, on]) => `<label class="check"><input type="checkbox" name="col_${k}"${on || (k === 'active' && mixed) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}</div></fieldset>`,
+      async () => {
+        const f = $('#dlgForm');
+        const cols = EMP_COLS.filter(([k]) => f[`col_${k}`].checked);
+        const w = window.open('', '_blank');
+        if (!w) throw new Error('Allow pop-ups for this site to print the list.');
+        printEmployeeList(w, rows, { group: f.group.value, cols });
+      },
+      { saveLabel: 'Open for printing' },
+    );
+  });
+
+  function printEmployeeList(w, rows, { group, cols }) {
+    const f = formData(empF);
+    const label = { PLANTILLA: 'Plantilla', JOB_ORDER: 'Job Order', NONE: 'Not tagged' };
+    const filters = [
+      f.division && `Division: ${f.division}`,
+      f.unit && `Unit: ${f.unit}`,
+      f.employment_type && label[f.employment_type],
+      f.active === '1' ? 'Active employees' : f.active === '0' ? 'Inactive employees' : 'Active and inactive employees',
+      f.q && `Search: “${f.q}”`,
+    ].filter(Boolean);
+    const cell = (e, k) =>
+      k === 'employment_type' ? label[e.employment_type] || '' : k === 'flag_required' ? (e.flag_required ? 'Required' : 'Not required') : k === 'active' ? (e.active ? 'Active' : 'Inactive') : k === 'signature' ? '' : e[k] || '';
+    const order = flagOpts?.division_choices || [];
+    const groups = new Map();
+    for (const e of rows) {
+      const k = group === 'ALL' ? '' : e.division || 'NO DIVISION';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(e);
+    }
+    const names = [...groups.keys()].sort((a, b) => (order.indexOf(a) + 1 || 999) - (order.indexOf(b) + 1 || 999) || a.localeCompare(b));
+    // No. · Employee No. · (Division, in one list) · Name · the other chosen columns
+    const showNo = cols.some(([k]) => k === 'employee_no');
+    const showDiv = group === 'ALL';
+    const rest = cols.filter(([k]) => k !== 'employee_no');
+    const today = fmtDate(flagOpts?.today || new Date().toISOString().slice(0, 10), { month: 'long', day: 'numeric', year: 'numeric' });
+    const pages = names
+      .map((dv) => {
+        const list = groups.get(dv);
+        return `<section class="page">
+          <header class="lh"><img src="${location.origin}/img/logo.png" alt="">
+            <div><div class="rp">Republic of the Philippines</div><div class="doh">DEPARTMENT OF HEALTH</div>
+              <div class="hn">${esc((cat.letterheadName || cat.hospitalName).toUpperCase())}</div>${cat.letterheadFormerName ? `<div class="fn">(FORMERLY ${esc(cat.letterheadFormerName.toUpperCase())})</div>` : ''}</div></header>
+          <h1>LIST OF EMPLOYEES</h1>
+          ${dv ? `<h2>${esc(dv)}</h2>` : ''}
+          <p class="sub">As of ${esc(today)}${filters.length ? ` · ${esc(filters.join(' · '))}` : ''}</p>
+          <table><thead><tr><th class="no">No.</th>${showNo ? '<th>Employee No.</th>' : ''}${showDiv ? '<th>Division</th>' : ''}<th class="nm">Name of Employee</th>
+            ${rest.map(([k, l]) => `<th class="${k === 'signature' ? 'sig' : ''}">${esc(k === 'signature' ? 'Signature' : l)}</th>`).join('')}</tr></thead>
+          <tbody>${list
+            .map(
+              (e, i) => `<tr><td class="no">${i + 1}</td>${showNo ? `<td class="mono">${esc(e.employee_no)}</td>` : ''}${showDiv ? `<td>${esc(e.division || '')}</td>` : ''}<td class="nm">${esc(e.name)}</td>
+              ${rest.map(([k]) => `<td class="${k === 'signature' ? 'sig' : 'l'}">${esc(cell(e, k))}</td>`).join('')}</tr>`,
+            )
+            .join('')}</tbody></table>
+          <p class="total">Total: ${list.length} employee${list.length === 1 ? '' : 's'}${list.some((e) => e.employment_type) ? ` (Plantilla ${list.filter((e) => e.employment_type === 'PLANTILLA').length} · Job Order ${list.filter((e) => e.employment_type === 'JOB_ORDER').length}${list.some((e) => !e.employment_type) ? ` · not tagged ${list.filter((e) => !e.employment_type).length}` : ''})` : ''}</p>
+          <div class="sign"><div>Prepared by:<span></span>Human Resource Management Office</div></div>
+        </section>`;
+      })
+      .join('');
+    w.document.open();
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>List of employees ${esc(today)}</title><style>
+      body { font-family: Arial, sans-serif; margin: 0; color: #000; background: #e5e7e6; }
+      .bar { padding: 10px 16px; font-size: 14px; background: #fff; border-bottom: 1px solid #ccc; position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+      .bar button, .bar select { font-size: 14px; padding: 5px 12px; }
+      .page { box-sizing: border-box; width: var(--pw); min-height: var(--ph); padding: 8mm; margin: 14px auto; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.25); break-after: page; }
+      .lh { display: flex; align-items: center; justify-content: center; gap: 10px; text-align: center; border-bottom: 2px solid #0f4d26; padding-bottom: 4px; }
+      .lh img { width: 46px; height: 46px; }
+      .rp { font-size: 8pt; } .doh { font-size: 8pt; font-weight: bold; } .hn { font-size: 12pt; font-weight: bold; color: #0f4d26; letter-spacing: .02em; } .fn { font-size: 7.5pt; }
+      h1 { font-size: 13pt; text-align: center; margin: 10px 0 2px; } h2 { font-size: 10.5pt; text-align: center; margin: 0 0 2px; text-decoration: underline; }
+      .sub { font-size: 8pt; text-align: center; margin: 0 0 6px; color: #333; }
+      table { border-collapse: collapse; width: 100%; font-size: 9pt; }
+      th, td { border: 1px solid #000; padding: 3px 5px; } th { background: #f1f1f1; font-size: 8pt; text-align: left; }
+      td.no, th.no { text-align: center; width: 1%; white-space: nowrap; } td.nm { font-weight: bold; white-space: nowrap; } td.mono { white-space: nowrap; }
+      td.sig, th.sig { min-width: 40mm; } tr { break-inside: avoid; } thead { display: table-header-group; }
+      .total { font-size: 9pt; font-weight: bold; margin: 6px 0 0; }
+      .sign { display: flex; gap: 30mm; margin-top: 12mm; font-size: 9pt; } .sign div { display: flex; flex-direction: column; } .sign span { display: block; border-bottom: 1px solid #000; width: 60mm; height: 9mm; margin-bottom: 2px; }
+      @media print { body { background: #fff; } .bar { display: none; } .page { width: auto; min-height: 0; padding: 0; margin: 0; box-shadow: none; } }
+    </style><style id="paper"></style></head><body>
+      <div class="bar"><b>${rows.length} employee${rows.length === 1 ? '' : 's'}</b>${names.length > 1 ? ` — ${names.length} divisions, each starting a new page` : ''}.
+        <label>Paper <select id="paperSel"><option value="A4">A4 (210 × 297 mm)</option><option value="LETTER">Letter / short (8.5 × 11 in)</option>
+          <option value="LONG">Long bond (8.5 × 13 in)</option><option value="LEGAL">Legal (8.5 × 14 in)</option></select></label>
+        <label>Layout <select id="orientSel"><option value="P">Portrait</option><option value="L">Landscape</option></select></label>
+        <button onclick="print()">Print</button></div>
+      ${pages}
+      <script>
+        // Paper and layout set the page size; a table wider than the page is scaled down to fit
+        var PAPER = { A4: ['210mm', '297mm'], LETTER: ['8.5in', '11in'], LONG: ['8.5in', '13in'], LEGAL: ['8.5in', '14in'] };
+        var paper = 'A4', orient = 'P';
+        function fit() {
+          document.querySelectorAll('.page table').forEach(function (t) {
+            t.style.zoom = '';
+            var cs = getComputedStyle(t.parentElement);
+            var room = t.parentElement.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+            if (t.scrollWidth > room + 1) t.style.zoom = Math.floor((room / t.scrollWidth) * 1000) / 1000;
+          });
+        }
+        function setPaper(k, o) {
+          paper = k in PAPER ? k : 'A4';
+          orient = o === 'L' ? 'L' : 'P';
+          var p = PAPER[paper];
+          var pw = orient === 'L' ? p[1] : p[0], ph = orient === 'L' ? p[0] : p[1];
+          document.documentElement.style.setProperty('--pw', pw);
+          document.documentElement.style.setProperty('--ph', ph);
+          document.getElementById('paper').textContent = '@page { size: ' + pw + ' ' + ph + '; margin: 8mm; }';
+          document.getElementById('paperSel').value = paper;
+          document.getElementById('orientSel').value = orient;
+          try { localStorage.setItem('empListPaper', paper); localStorage.setItem('empListOrient', orient); } catch (e) {}
+          fit();
+        }
+        var saved = ['A4', 'P'];
+        try { saved = [localStorage.getItem('empListPaper') || 'A4', localStorage.getItem('empListOrient') || 'P']; } catch (e) {}
+        document.getElementById('paperSel').addEventListener('change', function (e) { setPaper(e.target.value, orient); });
+        document.getElementById('orientSel').addEventListener('change', function (e) { setPaper(paper, e.target.value); });
+        setPaper(saved[0], saved[1]);
+        window.addEventListener('load', fit);
+      </script></body></html>`);
+    w.document.close();
+    w.focus();
+  }
+
   $('#flagQrCardsBtn').addEventListener('click', guard(async () => {
     const rows = (empF._rows || []).filter((e) => e.active);
     if (!rows.length) return alert('No active employees in the list. Change the filters first.');
