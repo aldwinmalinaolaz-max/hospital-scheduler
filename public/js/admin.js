@@ -971,7 +971,7 @@ ${cat.hospitalName}`;
     form.innerHTML = refDetailHtml(r);
     form.onclick = async (e) => {
       const p = e.target.closest('[data-print]');
-      if (p) return printReferral(r, { kind: p.dataset.print, systemName: cat.systemName, hospitalName: cat.hospitalName });
+      if (p) return printReferral(r, { kind: p.dataset.print, systemName: cat.systemName, hospitalName: cat.hospitalName, letterheadName: cat.letterheadName });
       const act = e.target.closest('[data-act]')?.dataset.act;
       if (!act) return;
       form.onclick = null;
@@ -1853,7 +1853,7 @@ ${cat.hospitalName}`;
       const signs = starts
         .map((p) => {
           const url = `${location.origin}/directory?from=${p.id}`;
-          return `<section class="sign"><div class="org">${esc(cat.hospitalName)}</div>
+          return `<section class="sign"><div class="org">${esc(cat.letterheadName || cat.hospitalName)}</div>
             <div class="here">YOU ARE HERE</div><div class="name">${esc(p.name)}${p.code ? ` <span>(Bldg. ${esc(p.code)})</span>` : ''}</div>
             <div class="qr">${qr(url)}</div>
             <div class="how">Scan with your phone camera for <b>directions</b> to any building, clinic or office.</div>
@@ -3121,7 +3121,7 @@ ${cat.hospitalName}`;
           .map(
             (e) => `<div class="card">
           <div class="qr">${qrSvg(code(e), false)}</div>
-          <div class="info"><div class="org">${esc(cat.hospitalName)}</div><div class="what">FLAG CEREMONY ATTENDANCE</div>
+          <div class="info"><div class="org">${esc(cat.letterheadName || cat.hospitalName)}</div><div class="what">FLAG CEREMONY ATTENDANCE</div>
             <div class="name">${esc(e.name)}</div><div class="no">${esc(e.employee_no)}</div>
             <div class="div">${esc([e.division, e.unit].filter(Boolean).join(' / '))}</div></div>
         </div>`,

@@ -59,7 +59,8 @@ In Vercel, open your project and go to **Settings → Environment Variables**. A
 | `SESSION_SECRET` | a long random string (40+ letters and numbers) |
 | `ADMIN_PASSWORD` | the first staff password (you can change it later in Settings) |
 | `CRON_SECRET` | another long random string, used for reminders (step 3) |
-| `HOSPITAL_NAME` | your hospital's name |
+| `HOSPITAL_NAME` | your hospital's name (a short form such as ZRMC is fine) |
+| `LETTERHEAD_NAME` | full name on letterheads and printouts (attendance sheet, referral printouts, QR cards); default Zamboanga Regional Medical Center, or `HOSPITAL_NAME` when that is not an abbreviation |
 | `SMS_PROVIDER`, `SEMAPHORE_API_KEY`, … | see [SMS setup](#sms-setup) |
 
 Then go to **Deployments**, open the **⋯** menu on the latest deployment and choose **Redeploy**. Environment variable changes only take effect after a redeploy.

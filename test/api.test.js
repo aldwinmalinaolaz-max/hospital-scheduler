@@ -1883,6 +1883,7 @@ test('flag ceremony attendance sheet (printed report)', async () => {
   assert.equal(by['SH-1'].name, 'ABAGA, REYMAR');
   assert.deepEqual(dv.rows.map((r) => r.employee_no), ['SH-1', 'SH-2', 'SH-3']); // alphabetical
   assert.equal(retreat.codes.OB, 'Official business');
+  assert.equal(retreat.hospital, 'Zamboanga Regional Medical Center'); // the letterhead uses the full name
   // Flag raising only, and both kinds
   const rais = await get('kind=RAISING');
   assert.deepEqual(rais.ceremonies.map((c) => c.date), ['2026-01-05']);

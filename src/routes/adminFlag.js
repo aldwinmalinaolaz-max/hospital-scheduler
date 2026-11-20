@@ -472,7 +472,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       kind,
       // Attendance is in the system from the day the venue was set up (earlier: none)
       recorded_from: recordedFrom,
-      hospital: config.hospitalName,
+      hospital: config.letterheadName,
       former_name: config.hospitalFormerName || '',
       ceremonies: held.map((c) => ({ id: c.id, date: c.ceremony_date, title: c.title })),
       divisions: [...divisions.values()].map((d) => ({ ...d, present_per_ceremony: held.map((_, i) => d.rows.filter((r) => r.cells[i] === 'P').length) })),

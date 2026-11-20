@@ -115,7 +115,7 @@
     $('#dlgBody').onclick = async (e) => {
       if (e.target.closest('[data-close]')) return dlg.close();
       const p = e.target.closest('[data-print]');
-      if (p) return printReferral(r, { kind: p.dataset.print, systemName: cat.systemName, hospitalName: cat.hospitalName });
+      if (p) return printReferral(r, { kind: p.dataset.print, systemName: cat.systemName, hospitalName: cat.hospitalName, letterheadName: cat.letterheadName });
       if (e.target.closest('[data-cancel]') && confirm('Cancel this referral?')) {
         try {
           await fapi(`/referrals/${id}/cancel`, { method: 'POST', body: {} });
@@ -210,7 +210,7 @@
       done.innerHTML = `<h2>Referral sent to ZRMC</h2><p class="muted">Referral number</p><div class="ref-no">${esc(r.ref_no)}</div>
         <p>ZRMC will review it and respond here${r.urgency === 'EMERGENCY' ? '. <b>For emergencies, send the patient to the ZRMC Emergency Room now</b> with the printed referral slip' : ''}.</p>
         <div class="actions" style="justify-content:center"><button class="btn secondary" type="button" id="printNew">Print referral slip</button><button class="btn" type="button" data-goto="list">Back to my referrals</button></div>`;
-      $('#printNew').onclick = () => printReferral(r, { systemName: cat.systemName, hospitalName: cat.hospitalName });
+      $('#printNew').onclick = () => printReferral(r, { systemName: cat.systemName, hospitalName: cat.hospitalName, letterheadName: cat.letterheadName });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       if (err.status === 401) return start();

@@ -1,6 +1,6 @@
 // Printable referral slip and return (feedback) slip, used by the facility portal and the staff panel.
 // Opens a new window with the slip and the browser's print dialog.
-function printReferral(r, { kind = 'referral', systemName = '', hospitalName = '' } = {}) {
+function printReferral(r, { kind = 'referral', systemName = '', hospitalName = '', letterheadName = '' } = {}) {
   const e = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const row = (label, value) => `<tr><th>${e(label)}</th><td>${e(value) || '&nbsp;'}</td></tr>`;
   const fmt = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '');
@@ -65,7 +65,7 @@ function printReferral(r, { kind = 'referral', systemName = '', hospitalName = '
       .sign { margin-top: 48px; text-align: right; }
       @media print { body { margin: 0; } }
     </style></head><body>
-    <header><img src="/img/logo.png" alt=""><div><b>${e(hospitalName)}</b><small>${e(systemName)}</small></div></header>
+    <header><img src="/img/logo.png" alt=""><div><b>${e(letterheadName || hospitalName)}</b><small>${e(systemName)}</small></div></header>
     <h2>${e(title)}</h2>${body}
     <script>window.onload = () => window.print();<\/script></body></html>`);
   w.document.close();
