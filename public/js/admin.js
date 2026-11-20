@@ -2199,16 +2199,17 @@ ${cat.hospitalName}`;
         <h2><u>${esc(dv.name)}</u></h2>
         ${d.recorded_from && d.from < d.recorded_from ? `<p class="note">Flag ceremony attendance is recorded in the system from ${esc(fmtDate(d.recorded_from, { month: 'long', day: 'numeric', year: 'numeric' }))}.</p>` : ''}
         <table>
-          <thead><tr><th>No.</th><th class="nm">NAME OF EMPLOYEE</th><th class="ds">Designation</th>
+          <colgroup><col class="c-no"><col class="c-nm"><col span="${n}"><col class="c-tt"></colgroup>
+          <thead><tr><th>No.</th><th class="nm">NAME OF EMPLOYEE</th>
             ${d.ceremonies.map((c) => `<th class="dt" title="${esc(c.title)}"><span>${esc(colDate(c.date))}${d.kind === 'ALL' ? ` ${/LOWERING|RETREAT/i.test(c.title) ? 'Ret.' : 'Rais.'}` : ''}</span></th>`).join('')}
             <th class="tt">TOTAL (${n})</th></tr></thead>
           <tbody>${dv.rows
             .map(
-              (r, i) => `<tr><td class="no">${i + 1}</td><td class="nm">${esc(r.name)}</td><td class="ds">${esc(r.position)}</td>
+              (r, i) => `<tr><td class="no">${i + 1}</td><td class="nm">${esc(r.name)}</td>
               ${r.cells.map((v) => `<td class="${cellClass(v)}">${esc(v)}</td>`).join('')}<td class="tt">${r.total}</td></tr>`,
             )
             .join('')}</tbody>
-          <tfoot><tr><td></td><td class="nm" colspan="2">Present</td>${dv.present_per_ceremony.map((p) => `<td>${p}</td>`).join('')}<td class="tt">${dv.rows.length} emp.</td></tr></tfoot>
+          <tfoot><tr><td></td><td class="nm">Present</td>${dv.present_per_ceremony.map((p) => `<td>${p}</td>`).join('')}<td class="tt">${dv.rows.length} emp.</td></tr></tfoot>
         </table>
         <p class="legend">${Object.entries(d.codes).map(([k, v]) => `<b>${esc(k)}</b> – ${esc(v)}`).join(' &nbsp;·&nbsp; ')}. TOTAL = number of P.</p>
         <div class="sign"><div>Prepared by:<span></span>Human Resource Management Office</div><div>Noted by:<span></span>Division Chief</div></div>
@@ -2226,7 +2227,10 @@ ${cat.hospitalName}`;
       .lh img { width: 46px; height: 46px; }
       .rp { font-size: 8pt; } .doh { font-size: 8pt; font-weight: bold; } .hn { font-size: 12pt; font-weight: bold; color: #0f4d26; letter-spacing: .02em; } .fn { font-size: 7.5pt; }
       h1 { font-size: 12.5pt; text-align: center; margin: 8px 0 2px; } h2 { font-size: 10.5pt; text-align: center; margin: 0 0 6px; }
-      table { width: 100%; border-collapse: collapse; table-layout: auto; font-size: ${tiny ? '6pt' : dense ? '7pt' : '8.5pt'}; }
+      /* fixed widths for No., name and TOTAL; the date columns share the rest equally */
+      col.c-no { width: 7mm; } col.c-nm { width: ${dense ? '54mm' : '62mm'}; } col.c-tt { width: 13mm; }
+      td.nm { overflow: hidden; text-overflow: ellipsis; }
+      table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: ${tiny ? '6pt' : dense ? '7pt' : '8.5pt'}; }
       th, td { border: 1px solid #000; padding: ${dense ? '1px' : '2px 3px'}; text-align: center; }
       th { font-size: ${tiny ? '5.5pt' : dense ? '6pt' : '7.5pt'}; background: #f1f1f1; }
       th.dt span { ${dense ? 'writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; display: inline-block; padding: 2px 0;' : ''} }
@@ -2293,7 +2297,7 @@ ${cat.hospitalName}`;
         <div class="table-wrap"><table><thead><tr><th style="text-align:left">Name of employee</th>
           ${d.ceremonies.map((c) => `<th title="${esc(c.title)}">${esc(colDate(c.date))}${d.kind === 'ALL' ? `<div class="sub">${/LOWERING|RETREAT/i.test(c.title) ? 'Ret.' : 'Rais.'}</div>` : ''}</th>`).join('')}
           <th>Total</th></tr></thead><tbody>
-          ${dv.rows.map((r, ri) => `<tr><td class="nm">${esc(r.name)}<div class="sub">${esc(r.position)}</div></td>
+          ${dv.rows.map((r, ri) => `<tr><td class="nm">${esc(r.name)}</td>
             ${r.cells.map((v, ci) => `<td><button type="button" class="cell ${cellClass(v)}" data-cell="${di}:${ri}:${ci}" aria-label="${esc(r.name)}, ${esc(colDate(d.ceremonies[ci].date))}: ${esc(v ? d.codes[v] || v : 'not on the list')}">${esc(v) || '&nbsp;'}</button></td>`).join('')}
             <td class="tot">${r.total}</td></tr>`).join('')}
         </tbody></table></div>`).join('')}
@@ -2423,7 +2427,7 @@ ${cat.hospitalName}`;
       `<h2>Import past attendance sheet</h2>
        <p class="muted small">For attendance kept before the system, typed in Excel like the printed form: a <b>NAME OF EMPLOYEE</b> column
        (e.g. ROJAS-TURCO, HANNAH M.) and one column per ceremony date (e.g. <i>Jan. 2</i>, an Excel date, or <i>Date: 5-06-24</i>) with <b>P</b>, <b>X</b> or an excuse code
-       (${esc(codes.join(', '))}). An <i>Employee No.</i> column is used when there is one; No., Designation and TOTAL are ignored.
+       (${esc(codes.join(', '))}). An <i>Employee No.</i> column is used when there is one; No., Designation and TOTAL columns are ignored.
        Several divisions on one sheet (or side by side) and several sheets are fine. Employees must already be in the employee list.</p>
        <div class="grid">
          <label class="field"><span class="req">Ceremony</span><select id="shKind"><option value="LOWERING">Flag retreat (lowering)</option><option value="RAISING">Flag raising</option></select></label>

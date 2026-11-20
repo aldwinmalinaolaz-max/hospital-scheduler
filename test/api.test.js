@@ -1892,8 +1892,8 @@ test('flag ceremony attendance sheet (printed report)', async () => {
   assert.equal((await get('kind=ALL')).ceremonies.length, 3);
   // CSV
   const csv = await (await fetch(`${base}/admin/flag/sheet.csv?from=2026-01-01&to=2026-06-30&kind=LOWERING&division=SHEET%20TEST%20DIVISION`, { headers: { Cookie: admin } })).text();
-  assert.match(csv, /Division,No\.,Employee No\.,Name of Employee,Designation,Unit,2026-01-02,2026-01-23,Total Present \(2\)/);
-  assert.match(csv, /SHEET TEST DIVISION,2,SH-2,"ABIERA, NICCA",ADMIN AIDE,,LEAVE,P,1/);
+  assert.match(csv, /Division,No\.,Employee No\.,Name of Employee,Unit,2026-01-02,2026-01-23,Total Present \(2\)/);
+  assert.match(csv, /SHEET TEST DIVISION,2,SH-2,"ABIERA, NICCA",,LEAVE,P,1/);
   // Bad range and access
   assert.equal((await call('/admin/flag/sheet?from=2026-06-30&to=2026-01-01', { cookie: admin })).status, 400);
   assert.equal((await call('/admin/flag/sheet', { cookie: (await loginAs('opd.only', 'password123')).cookie })).status, 403);
@@ -2078,13 +2078,13 @@ test('attendance sheet template downloads and imports back', async () => {
     rows[Number(r) - 1] = Array.from(row, (x) => x ?? '');
   }
   const head = rows.findIndex((r) => r && r.includes('NAME OF EMPLOYEE'));
-  assert.deepEqual(rows[head].slice(0, 4), ['No.', 'Employee No.', 'NAME OF EMPLOYEE', 'Designation']);
-  assert.equal(rows[head].length, 4 + 52 + 1); // 52 Fridays in 2025, then TOTAL
-  assert.equal(rows[head][4], '45660'); // 2025-01-03 as an Excel date
+  assert.deepEqual(rows[head].slice(0, 3), ['No.', 'Employee No.', 'NAME OF EMPLOYEE']); // no Designation
+  assert.equal(rows[head].length, 3 + 52 + 1); // 52 Fridays in 2025, then TOTAL
+  assert.equal(rows[head][3], '45660'); // 2025-01-03 as an Excel date
   const tina = rows.findIndex((r) => r && r[1] === 'TP-1');
-  rows[tina][4] = 'P';
-  rows[tina][5] = 'OB';
-  rows[tina + 1][4] = 'X';
+  rows[tina][3] = 'P';
+  rows[tina][4] = 'OB';
+  rows[tina + 1][3] = 'X';
   const r = await call('/admin/flag/attendance-import', { method: 'POST', cookie: admin, body: { rows: rows.map((x) => x || []), kind: 'LOWERING', year: 2025, dry_run: true } });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal(r.data.employees, 2);

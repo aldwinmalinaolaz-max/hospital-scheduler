@@ -482,8 +482,8 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
   router.get('/flag/sheet', can, async (req, res) => res.json(await sheet(req.query)));
   router.get('/flag/sheet.csv', can, async (req, res) => {
     const d = await sheet(req.query);
-    const head = ['Division', 'No.', 'Employee No.', 'Name of Employee', 'Designation', 'Unit', ...d.ceremonies.map((c) => c.date), `Total Present (${d.ceremonies.length})`];
-    const lines = d.divisions.flatMap((dv) => dv.rows.map((r, i) => [dv.name, i + 1, r.employee_no, r.name, r.position, r.unit, ...r.cells, r.total]));
+    const head = ['Division', 'No.', 'Employee No.', 'Name of Employee', 'Unit', ...d.ceremonies.map((c) => c.date), `Total Present (${d.ceremonies.length})`];
+    const lines = d.divisions.flatMap((dv) => dv.rows.map((r, i) => [dv.name, i + 1, r.employee_no, r.name, r.unit, ...r.cells, r.total]));
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="ZRMC-flag-attendance-sheet-${d.from}-to-${d.to}.csv"`);
     res.end(flag.toCsv([head, ...lines]));
@@ -587,7 +587,7 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
     const codes = ['P', 'X', ...types.map((t) => t.code)];
     const kindTitle = kind === 'RAISING' ? 'FLAG RAISING' : 'FLAG RETREAT';
     const xw = require('../xlsxWrite');
-    const firstDate = 4; // columns: No., Employee No., Name, Designation, then the dates
+    const firstDate = 3; // columns: No., Employee No., Name, then the dates
     const lastDateCol = xw.colName(firstDate + dates.length - 1);
     const sheets = names.map((dv) => {
       const list = groups.get(dv) || [];
@@ -599,13 +599,13 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
         [{ v: `Under each date type P (present), X (absent) or an excuse code: ${types.map((t) => t.code).join(', ')}. Leave the cell blank if the employee was not yet employed then.`, s: 'note' }],
         [{ v: 'Delete the columns of dates with no ceremony (holiday, cancelled, rain) and add a column for a special ceremony (its date as the column title). Then import: Flag Ceremony → Summary → Import past attendance sheet.', s: 'note' }],
         [
-          { v: 'No.', s: 'head' }, { v: 'Employee No.', s: 'head' }, { v: 'NAME OF EMPLOYEE', s: 'head' }, { v: 'Designation', s: 'head' },
+          { v: 'No.', s: 'head' }, { v: 'Employee No.', s: 'head' }, { v: 'NAME OF EMPLOYEE', s: 'head' },
           ...dates.map((d) => ({ v: d, s: 'date' })), { v: 'TOTAL', s: 'head' },
         ],
         ...list.map((e, i) => {
           const r = head + i + 1;
           return [
-            { v: i + 1, s: 'cell' }, { v: e.employee_no, s: 'cell' }, { v: flag.fullName(e), s: 'name' }, { v: e.position || '', s: 'cell' },
+            { v: i + 1, s: 'cell' }, { v: e.employee_no, s: 'cell' }, { v: flag.fullName(e), s: 'name' },
             ...dates.map(() => ({ v: '', s: 'cell' })),
             { f: `COUNTIF(${xw.colName(firstDate)}${r}:${lastDateCol}${r},"P")`, s: 'cell' },
           ];
@@ -619,8 +619,8 @@ module.exports = function registerFlagRoutes(router, { db, requireAccess, Valida
       return {
         name: dv,
         rows,
-        cols: [5, 14, 34, 22, ...dates.map(() => 5.5), 8],
-        freeze: `E${head + 1}`,
+        cols: [5, 14, 34, ...dates.map(() => 5.5), 8],
+        freeze: `D${head + 1}`,
         heights: { [head]: 44 },
         validations: list.length ? [{ sqref: `${xw.colName(firstDate)}${head + 1}:${lastDateCol}${head + list.length}`, list: codes }] : [],
       };
